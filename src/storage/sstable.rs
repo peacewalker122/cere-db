@@ -852,7 +852,7 @@ pub fn read_sstable_index<R: Read + Seek>(
     cursor.read_exact(&mut count_buf)?;
     let entry_count = u64::from_be_bytes(count_buf);
 
-    // Read all index entries
+    // Read all index entries
     let mut index = BTreeMap::new();
     for _ in 0..entry_count {
         let entry = IndexEntry::decode(&mut cursor)?;
@@ -975,12 +975,12 @@ where
         let mid = left + (right - left) / 2;
         let entry = &sparse_index[mid];
 
-        println!(
-            "Comparing key {:?} with block range {:?} - {:?}",
-            String::from_utf8_lossy(key),
-            String::from_utf8_lossy(&entry.first_key),
-            String::from_utf8_lossy(&entry.last_key),
-        );
+        // println!(
+        //     "Comparing key {:?} with block range {:?} - {:?}",
+        //     String::from_utf8_lossy(key),
+        //     String::from_utf8_lossy(&entry.first_key),
+        //     String::from_utf8_lossy(&entry.last_key),
+        // );
 
         if key < entry.first_key.as_slice() {
             // Key is before this block
@@ -991,7 +991,7 @@ where
         } else {
             // Key is within this block's range (first_key <= key <= last_key)
             target_block = Some(entry);
-            println!("Target block found at offset {}", entry.block_offset);
+            // println!("Target block found at offset {}", entry.block_offset);
             break;
         }
     }

@@ -131,6 +131,7 @@ impl KVEngine for PersistentKV {
 
             let sstable = SSTable::decode(&file)?;
 
+            // check bloom filter first
             if !sstable.bloom.contains(key) {
                 log::trace!("Key not in bloom filter of {}", filename);
                 return Ok(None);
