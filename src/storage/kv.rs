@@ -1,10 +1,5 @@
 use crossbeam_skiplist::SkipMap;
-use std::{
-    borrow::Cow,
-    fs::File,
-    str::FromStr,
-    sync::{Arc, Mutex, mpsc},
-};
+use std::{borrow::Cow, fs::File, sync::Mutex};
 
 use crate::{
     api::api::KVEngine,
@@ -98,7 +93,6 @@ impl Default for PersistentKV {
 impl KVEngine for PersistentKV {
     fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError> {
         log::trace!("Getting key: {:?}", String::from_utf8_lossy(key));
-        println!("Getting key: {:?}", String::from_utf8_lossy(key));
 
         // 1. Search in memtable first (most recent data)
         if let Some(entry) = self.memtable.get(key) {
@@ -137,21 +131,12 @@ impl KVEngine for PersistentKV {
 
             let sstable = SSTable::decode(&file)?;
 
-            // check bloom filter first
-            println!(
-                "Checking bloom filter for key: {:?}",
-                String::from_utf8_lossy(key)
-            );
             if !sstable.bloom.contains(key) {
                 log::trace!("Key not in bloom filter of {}", filename);
                 return Ok(None);
                 // continue; // Key definitely not in this SSTable
             }
 
-            println!(
-                "Bloom filter positive for key: {:?}",
-                String::from_utf8_lossy(key)
-            );
             match search_sstable_sparse(&file, key, &sstable.index)? {
                 Some(val) => {
                     log::debug!(
@@ -210,7 +195,6 @@ impl KVEngine for PersistentKV {
 
         // Check if memtable size exceeds threshold
         if self.memtable_size >= storage::constant::MEMTABLE_SIZE_THRESHOLD {
-            println!("Memtable size threshold reached, initiating flush to SSTable");
             log::info!(
                 "Memtable size threshold reached ({} >= {}), flushing to SSTable",
                 self.memtable_size,
@@ -251,8 +235,6 @@ impl KVEngine for PersistentKV {
 fn flush_watcher(flush_receiver: &crossbeam_channel::Receiver<FlushSignal>) {
     // Non-blocking check for flush signal
     if let Ok(signal) = flush_receiver.recv() {
-        println!("Flush watcher received memtable to flush");
-
         match storage::log::flush_memtable(signal.value, "app.db", 0, "app.log") {
             Ok(_) => {
                 manifest::add_file(0, "app.db")

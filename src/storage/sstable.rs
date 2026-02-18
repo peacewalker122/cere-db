@@ -1,5 +1,5 @@
 use std::{
-    cmp::Reverse,
+    cmp::{Ordering, Reverse},
     collections::{BTreeMap, BinaryHeap},
     fs::{File, OpenOptions},
     io::{BufReader, Read, Seek, SeekFrom, Write},
@@ -607,113 +607,184 @@ pub fn flush_memtable(
     Ok(())
 }
 
-// TODO:
-// 1. change this later to be streaming merge instead of load all into memory
-// 2. implement multi sources merging
+pub trait SortedRecordSource {
+    fn next_record(&mut self) -> Result<Option<Record>, DBError>;
+}
+
+type MemtableIter<'a> = crossbeam_skiplist::map::Iter<'a, Vec<u8>, (RecordType, Vec<u8>)>;
+
+struct MemtableSource<'a> {
+    iter: MemtableIter<'a>,
+}
+
+impl<'a> MemtableSource<'a> {
+    fn new(memtable: &'a SkipMap<Vec<u8>, (RecordType, Vec<u8>)>) -> Self {
+        Self {
+            iter: memtable.iter(),
+        }
+    }
+}
+
+impl<'a> SortedRecordSource for MemtableSource<'a> {
+    fn next_record(&mut self) -> Result<Option<Record>, DBError> {
+        let entry = match self.iter.next() {
+            Some(entry) => entry,
+            None => return Ok(None),
+        };
+
+        let (record_type, value) = entry.value();
+        Ok(Some(Record::new(
+            entry.key().to_owned(),
+            value.to_owned(),
+            *record_type,
+            crate::storage::record::current_timestamp_millis(),
+        )))
+    }
+}
+
+type BlockIter<'a> = std::collections::btree_map::Iter<'a, Vec<u8>, Record>;
+
+struct SSTableSource<'a> {
+    blocks: std::slice::Iter<'a, Block>,
+    current_iter: Option<BlockIter<'a>>,
+}
+
+impl<'a> SSTableSource<'a> {
+    fn new(blocks: &'a [Block]) -> Self {
+        let mut source = Self {
+            blocks: blocks.iter(),
+            current_iter: None,
+        };
+        source.load_next_block();
+        source
+    }
+
+    fn load_next_block(&mut self) {
+        self.current_iter = None;
+        while let Some(block) = self.blocks.next() {
+            if let Some(records) = block.data.as_ref() {
+                if !records.is_empty() {
+                    self.current_iter = Some(records.iter());
+                    break;
+                }
+            }
+        }
+    }
+}
+
+impl<'a> SortedRecordSource for SSTableSource<'a> {
+    fn next_record(&mut self) -> Result<Option<Record>, DBError> {
+        loop {
+            let iter = match self.current_iter.as_mut() {
+                Some(iter) => iter,
+                None => return Ok(None),
+            };
+
+            if let Some((_key, record)) = iter.next() {
+                return Ok(Some(record.clone()));
+            }
+
+            self.load_next_block();
+            if self.current_iter.is_none() {
+                return Ok(None);
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct HeapItem {
+    record: Record,
+    source_id: usize,
+}
+
+impl PartialEq for HeapItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.record == other.record && self.source_id == other.source_id
+    }
+}
+
+impl Eq for HeapItem {}
+
+impl PartialOrd for HeapItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HeapItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.record.cmp(&other.record) {
+            Ordering::Equal => self.source_id.cmp(&other.source_id),
+            ordering => ordering,
+        }
+    }
+}
+
+fn build_merge_sources<'a>(
+    memtable: &'a SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
+    sstables: &'a [Block],
+) -> Vec<Box<dyn SortedRecordSource + 'a>> {
+    let mut sources: Vec<Box<dyn SortedRecordSource + 'a>> = Vec::new();
+    sources.push(Box::new(MemtableSource::new(memtable)));
+    sources.push(Box::new(SSTableSource::new(sstables)));
+    sources
+}
+
+pub fn merge_record_sources<'a>(
+    mut sources: Vec<Box<dyn SortedRecordSource + 'a>>,
+) -> Result<Vec<Record>, DBError> {
+    let mut minheap = BinaryHeap::with_capacity(sources.len());
+
+    for (source_id, source) in sources.iter_mut().enumerate() {
+        if let Some(record) = source.next_record()? {
+            minheap.push(Reverse(HeapItem { record, source_id }));
+        }
+    }
+
+    let mut merged_records = Vec::new();
+    while let Some(Reverse(item)) = minheap.pop() {
+        let mut current = item.record;
+        let key = current.key.clone();
+
+        if let Some(next) = sources[item.source_id].next_record()? {
+            minheap.push(Reverse(HeapItem {
+                record: next,
+                source_id: item.source_id,
+            }));
+        }
+
+        while let Some(Reverse(peek)) = minheap.peek() {
+            if peek.record.key != key {
+                break;
+            }
+
+            let Reverse(duplicate) = minheap.pop().expect("peeked entry exists");
+            if duplicate.record.timestamp > current.timestamp {
+                current = duplicate.record;
+            }
+
+            if let Some(next) = sources[duplicate.source_id].next_record()? {
+                minheap.push(Reverse(HeapItem {
+                    record: next,
+                    source_id: duplicate.source_id,
+                }));
+            }
+        }
+
+        merged_records.push(current);
+    }
+
+    Ok(merged_records)
+}
+
+// k-way streaming merge: O(K) heap where K = number of sources
 pub fn merge_sstables(
     memtable: &SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
     sstables: &Vec<Block>,
 ) -> Result<Vec<Record>, DBError> {
-    let mut minheap = BinaryHeap::with_capacity(memtable.len() + sstables.len());
-
-    // how to solve duplicate keys here?
-    // if we pop the same key that already inserted and that value were having lower timestamp we
-    // need to remove the old and insert the newest one.
-    //
-    // the math is like this:
-    // - for popping the same key it cost us with O(log n) where n is the number of elements in the heap
-    // - for checking if the key exists in the heap it cost us O(n) since BinaryHeap doesn't support efficient search
-    // - for removing an element from the heap it cost us O(n) as well since we need to find it first
-    //
-    // so the math conclude that the operation weren't scallable enough for large number of keys.
-    //
-    // we need to map first, so we can have O(1) and solve the "conflict" easily. The map will store the key and the latest record.
-    // This operation took O(2m) where m is the number of entries in memtable + sstables, where
-    // each m is O(n) for operation to mapping it to the map.
-    // And m is O(n) for sorting it
-
-    // sstable
-    let mut seen_keys: BTreeMap<Vec<u8>, Record> = BTreeMap::new();
-
-    // streaming merge using iteration, side by side
-    for block in sstables.iter() {
-        if let Some(records) = &block.data {
-            for (key, record) in records.into_iter() {
-                let existing = seen_keys.get(key);
-                if let Some(existing_record) = existing {
-                    // compare timestamp
-                    if record.timestamp > existing_record.timestamp {
-                        // update with latest record
-                        seen_keys.insert(key.clone(), record.to_owned());
-                    }
-                } else {
-                    // insert new record
-                    seen_keys.insert(key.clone(), record.clone());
-                }
-            }
-        }
-    }
-
-    // memtable
-    for entry in memtable.iter() {
-        // the solution is need to be assessed, the correct solution should be move the variable
-        // ownership to avoid cloning the value here.
-        let key = entry.key();
-        let (record_type, value) = entry.value();
-        let record = Record::new(
-            key.clone(),
-            value.clone(),
-            *record_type,
-            crate::storage::record::current_timestamp_millis(),
-        );
-
-        let existing = seen_keys.get(key);
-        if let Some(existing_record) = existing {
-            // compare timestamp
-            if record.timestamp > existing_record.timestamp {
-                // update with latest record
-                seen_keys.insert(key.clone(), record);
-            }
-        } else {
-            // insert new record
-            seen_keys.insert(key.clone(), record);
-        }
-    }
-
-    seen_keys.into_values().for_each(|record| {
-        minheap.push(Reverse(record));
-    });
-
-    // Extract records from min-heap in sorted order
-    let mut merged_records = Vec::with_capacity(minheap.len());
-    while let Some(Reverse(record)) = minheap.pop() {
-        // check if current key having duplicate key on the next record,
-        // if so we need to compare the timestamp and only keep the latest one
-
-        let val = minheap.peek();
-
-        if let Some(Reverse(next_record)) = val {
-            if record.key == next_record.key {
-                // same key found, compare timestamp
-                if record.timestamp >= next_record.timestamp {
-                    // current record is latest, keep it and skip the next one
-                    merged_records.push(record.clone());
-                    minheap.pop(); // remove the next record
-                } else {
-                    // next record is latest, skip current one
-                    continue;
-                }
-            } else {
-                // no duplicate key, just add current record
-                merged_records.push(record.clone());
-            }
-        } else {
-            // no next record, just add current record
-            merged_records.push(record.clone());
-        }
-    }
-
-    Ok(merged_records)
+    let sources = build_merge_sources(memtable, sstables);
+    merge_record_sources(sources)
 }
 
 /// Read the footer from an SSTable file
