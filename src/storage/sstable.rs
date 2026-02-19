@@ -3,10 +3,7 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
     fs::{File, OpenOptions},
     io::{BufReader, Read, Seek, SeekFrom, Write},
-    time::UNIX_EPOCH,
 };
-
-use chrono::Utc;
 use crossbeam_skiplist::SkipMap;
 
 use crate::{
@@ -35,7 +32,19 @@ impl SSTable {
 
         // Read footer
         cursor.seek(SeekFrom::End(-(FOOTER_SIZE as i64)))?;
+
         let footer = SSTableFooter::decode(&mut cursor)?;
+        log::debug!(
+            "Decoded SSTable footer: data=[{}-{}], sparse_index=[{}-{}], bloom=[{}-{}], index_crc=0x{:X}, bloom_crc=0x{:X}",
+            footer.data_block_start,
+            footer.data_block_end,
+            footer.index_block_start,
+            footer.index_block_end,
+            footer.bloom_block_start,
+            footer.bloom_block_end,
+            footer.index_checksum,
+            footer.bloom_checksum
+        );
 
         // Read index block
         cursor.seek(SeekFrom::Start(footer.index_block_start))?;
@@ -145,6 +154,7 @@ impl SSTableFooter {
     }
 
     pub fn decode<R: Read>(mut reader: R) -> Result<Self, std::io::Error> {
+        log::debug!("Decoding SSTable footer...");
         let mut buf = [0u8; 8];
         let mut footer_data = Vec::with_capacity(60); // All data except final checksum
 
@@ -354,101 +364,58 @@ fn verify_bloom_checksum(data: &[u8], expected: u32) -> Result<(), std::io::Erro
     Ok(())
 }
 
-static DBFILENAME: &str = "app.db";
+const DATA_DIR: &str = "data";
+const ARCHIVE_DIR: &str = "archive";
+
+fn level_dir(level: u32) -> std::path::PathBuf {
+    std::path::Path::new(DATA_DIR).join(format!("level-{level}"))
+}
+
+fn sstable_path(level: u32, file_id: u64) -> std::path::PathBuf {
+    level_dir(level).join(format!("{file_id}.db"))
+}
+
+fn archive_wal_path(file_path: &str) -> std::path::PathBuf {
+    let wal_name = std::path::Path::new(file_path)
+        .file_name()
+        .unwrap_or_default();
+    std::path::Path::new(ARCHIVE_DIR).join(wal_name)
+}
+
 pub fn flush_memtable(
     memtable: SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
-    filename: &str,
-    _level: u32,
+    level: u32,
+    file_id: u64,
     file_path: &str,
-) -> Result<(), std::io::Error> {
+) -> Result<String, std::io::Error> {
+    let sstable_path = sstable_path(level, file_id);
+    let sstable_filename = sstable_path.to_string_lossy().to_string();
+
     log::info!(
         "Starting memtable flush to SSTable '{}' with 4KB blocks, entries: {}",
-        filename,
+        sstable_filename,
         memtable.len()
     );
 
-    // Check if file exists and has data to merge
-    let file_exists = std::path::Path::new(filename).exists();
-    let existing_blocks = if file_exists {
-        let existing_file = File::open(filename)?;
-        let file_size = existing_file.metadata()?.len();
-
-        if file_size > FOOTER_SIZE {
-            // File has data, decode it
-            log::info!("Existing SSTable found, will merge with memtable");
-            match SSTable::decode(&existing_file) {
-                Ok(sstable) => {
-                    log::info!(
-                        "Decoded {} existing blocks for merging",
-                        sstable.block.len()
-                    );
-                    sstable.block
-                }
-                Err(e) => {
-                    log::warn!("Failed to decode existing SSTable, will overwrite: {:?}", e);
-                    Vec::new()
-                }
-            }
-        } else {
-            log::debug!("Existing file is empty or incomplete, will overwrite");
-            Vec::new()
-        }
-    } else {
-        log::debug!("No existing SSTable found, creating new one");
-        Vec::new()
-    };
-
-    // Perform merge if we have existing blocks
-    let records_to_write: Vec<Record> = if !existing_blocks.is_empty() {
-        log::info!(
-            "Merging memtable with {} existing blocks",
-            existing_blocks.len()
-        );
-
-        // Merge and get sorted records
-        match merge_sstables(&memtable, &existing_blocks) {
-            Ok(merged) => {
-                log::info!("Merge completed, writing {} records", merged.len());
-                merged
-            }
-            Err(e) => {
-                log::error!("Merge failed: {:?}, falling back to memtable only", e);
-                // Fallback: convert memtable directly from static data
-                memtable
-                    .iter()
-                    .map(|entry| {
-                        Record::new(
-                            entry.key().to_owned(),
-                            entry.value().1.to_owned(),
-                            entry.value().0,
-                            crate::storage::record::current_timestamp_millis(),
-                        )
-                    })
-                    .collect()
-            }
-        }
-    } else {
-        // No existing data, just convert memtable to records from static data
-        log::debug!("No merge needed, writing memtable only");
-        memtable
-            .iter()
-            .map(|entry| {
-                Record::new(
-                    entry.key().to_owned(),
-                    entry.value().1.to_owned(),
-                    entry.value().0,
-                    crate::storage::record::current_timestamp_millis(),
-                )
-            })
-            .collect()
-    };
+    log::debug!("No merge needed, writing memtable only");
+    let records_to_write: Vec<Record> = memtable
+        .iter()
+        .map(|entry| {
+            Record::new(
+                entry.key().to_owned(),
+                entry.value().1.to_owned(),
+                entry.value().0,
+                crate::storage::record::current_timestamp_millis(),
+            )
+        })
+        .collect();
 
     // Now write merged/new data to file (truncate and rewrite)
     let mut file = OpenOptions::new()
         .write(true)
         .truncate(true) // Overwrite existing content
         .create(true)
-        .open(filename)?;
+        .open(&sstable_path)?;
 
     let data_block_start = 0u64; // Starting from beginning of file
 
@@ -592,7 +559,7 @@ pub fn flush_memtable(
 
     log::info!(
         "Flushed SSTable '{}': {} blocks, data=[{}-{}], sparse_index=[{}-{}], bloom=[{}-{}], index_crc=0x{:X}, bloom_crc=0x{:X}",
-        DBFILENAME,
+        sstable_filename,
         blocks.len(),
         data_block_start,
         data_block_end,
@@ -604,7 +571,13 @@ pub fn flush_memtable(
         bloom_checksum
     );
 
-    Ok(())
+    std::fs::create_dir_all(ARCHIVE_DIR)?;
+    let archived_wal = archive_wal_path(file_path);
+    if let Err(err) = std::fs::rename(file_path, archived_wal) {
+        log::warn!("Failed to archive WAL '{}': {}", file_path, err);
+    }
+
+    Ok(sstable_filename)
 }
 
 pub trait SortedRecordSource {
@@ -1082,6 +1055,121 @@ pub fn search_sstable_with_bloom<R: Read + Seek>(
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::{path::Path, sync::{Mutex, OnceLock}, time::UNIX_EPOCH};
+
+    fn with_temp_dir<T>(test_name: &str, test: impl FnOnce() -> T) -> T {
+        static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = TEST_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap();
+
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = std::env::temp_dir()
+            .join(format!("wasm-kv-sstable-{test_name}-{unique_id}"));
+
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_root).unwrap();
+
+        let result = test();
+
+        std::env::set_current_dir(original_dir).unwrap();
+        std::fs::remove_dir_all(&temp_root).ok();
+
+        result
+    }
+
+    fn flush_for_test(
+        memtable: SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
+        file_id: u64,
+    ) -> String {
+        let wal_path = format!("test_wal_{file_id}.log");
+
+        std::fs::create_dir_all("archive").ok();
+        std::fs::create_dir_all("data/level-0").ok();
+        std::fs::write(&wal_path, b"").ok();
+
+        flush_memtable(memtable, 0, file_id, &wal_path).unwrap()
+    }
+
+    #[test]
+    fn test_flush_memtable_writes_level0_path() {
+        // Arrange: set up memtable and directories for level-0 output.
+        with_temp_dir("flush-level0-path", || {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+            let file_id = 42;
+            let wal_path = format!("wal_{file_id}.log");
+            std::fs::create_dir_all("data/level-0").unwrap();
+            std::fs::write(&wal_path, b"wal").unwrap();
+
+            // Act: flush memtable to SSTable.
+            let filename = flush_memtable(memtable, 0, file_id, &wal_path).unwrap();
+
+            // Assert: SSTable flush writes to data/level-0/{id}.db per objective.
+            assert_eq!(filename, "data/level-0/42.db");
+            assert!(Path::new(&filename).exists(), "expected SSTable to exist");
+        });
+    }
+
+    #[test]
+    fn test_flush_memtable_errors_without_level_dir() {
+        // Arrange: set up memtable without creating level-0 directory.
+        with_temp_dir("flush-missing-level0", || {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+            let file_id = 77;
+            let wal_path = format!("wal_{file_id}.log");
+            std::fs::write(&wal_path, b"wal").unwrap();
+
+            // Act: attempt to flush without required directory.
+            let result = flush_memtable(memtable, 0, file_id, &wal_path);
+
+            // Assert: missing level-0 directory is handled as an error (negative case).
+            assert!(result.is_err(), "expected error when level directory is missing");
+        });
+    }
+
+    #[test]
+    fn test_flush_archives_wal_with_matching_id() {
+        // Arrange: WAL file named with the same ID used for SSTable.
+        with_temp_dir("flush-archives-wal", || {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+            let file_id = 9001;
+            let wal_path = format!("wal_{file_id}.log");
+            std::fs::create_dir_all("data/level-0").unwrap();
+            std::fs::write(&wal_path, b"wal").unwrap();
+
+            // Act: flush memtable, which archives the WAL.
+            let filename = flush_memtable(memtable, 0, file_id, &wal_path).unwrap();
+
+            // Assert: WAL file naming uses same ID and is archived after flush.
+            assert_eq!(filename, "data/level-0/9001.db");
+            assert!(Path::new("archive/wal_9001.log").exists());
+            assert!(!Path::new(&wal_path).exists(), "expected WAL to be archived");
+        });
+    }
+
+    #[test]
+    fn test_flush_skips_archive_when_wal_missing() {
+        // Arrange: WAL path does not exist to simulate improper input.
+        with_temp_dir("flush-missing-wal", || {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+            let file_id = 811;
+            let wal_path = format!("wal_{file_id}.log");
+            std::fs::create_dir_all("data/level-0").unwrap();
+
+            // Act: flush without a WAL file on disk.
+            let result = flush_memtable(memtable, 0, file_id, &wal_path).unwrap();
+
+            // Assert: flush succeeds but WAL archive is not created (negative case).
+            assert_eq!(result, "data/level-0/811.db");
+            assert!(!Path::new("archive/wal_811.log").exists());
+        });
+    }
 
     #[test]
     fn test_sstable_footer() {
@@ -1250,14 +1338,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!("test_sstable_decode_valid_{}.db", file_id);
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Open the file for decoding
         let file = File::open(&filename).unwrap();
@@ -1322,14 +1403,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!("test_sstable_decode_single_block_{}.db", file_id);
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Open the file for decoding
         let file = File::open(&filename).unwrap();
@@ -1389,14 +1463,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!("test_sstable_decode_empty_sstable_{}.db", file_id);
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Open the file for decoding
         let file = File::open(&filename).unwrap();
@@ -1423,17 +1490,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!(
-            "test_sstable_decode_corrupted_index_checksum_{}.db",
-            file_id
-        );
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Read the file data to corrupt it
         let mut sstable_data = std::fs::read(&filename).unwrap();
@@ -1477,17 +1534,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!(
-            "test_sstable_decode_corrupted_bloom_checksum_{}.db",
-            file_id
-        );
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Read the file data to corrupt it
         let mut sstable_data = std::fs::read(&filename).unwrap();
@@ -1526,17 +1573,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!(
-            "test_sstable_decode_corrupted_footer_checksum_{}.db",
-            file_id
-        );
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Read the file data to corrupt it
         let mut sstable_data = std::fs::read(&filename).unwrap();
@@ -1574,14 +1611,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!("test_sstable_decode_invalid_magic_number_{}.db", file_id);
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Read the file data to corrupt it
         let mut sstable_data = std::fs::read(&filename).unwrap();
@@ -1622,17 +1652,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!(
-            "test_sstable_decode_verifies_bloom_contains_keys_{}.db",
-            file_id
-        );
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Open the file for decoding
         let file = File::open(&filename).unwrap();
@@ -1709,17 +1729,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!(
-            "test_sstable_decode_block_data_single_record_{}.db",
-            file_id
-        );
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Open the file for decoding
         let file = File::open(&filename).unwrap();
@@ -1775,17 +1785,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!(
-            "test_sstable_decode_block_data_multiple_records_{}.db",
-            file_id
-        );
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Open the file for decoding
         let file = File::open(&filename).unwrap();
@@ -1870,17 +1870,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!(
-            "test_sstable_decode_block_data_preserves_tombstones_{}.db",
-            file_id
-        );
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Open the file for decoding
         let file = File::open(&filename).unwrap();
@@ -1977,17 +1967,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let filename = format!(
-            "test_sstable_decode_block_data_multiple_blocks_{}.db",
-            file_id
-        );
-        let wal_path = format!("test_wal_{}.log", file_id);
-
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Open the file for decoding
         let file = File::open(&filename).unwrap();
@@ -2491,10 +2471,9 @@ mod tests {
     fn test_flush_memtable_merge_with_existing_sstable() {
         use std::sync::atomic::{AtomicU64, Ordering};
 
-        // Test that flush_memtable correctly merges with existing SSTable data
+        // Test that flush_memtable overwrites when called twice
         static FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
         let file_id = FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let filename = format!("test_flush_merge_{}.db", file_id);
 
         // Step 1: Create initial SSTable with 3 records
         let memtable1 = SkipMap::new();
@@ -2502,12 +2481,7 @@ mod tests {
         memtable1.insert(b"banana".to_vec(), (RecordType::Put, b"yellow".to_vec()));
         memtable1.insert(b"cherry".to_vec(), (RecordType::Put, b"dark_red".to_vec()));
 
-        let wal_path1 = format!("test_wal_{}_1.log", file_id);
-        // Create archive directory and dummy WAL file for test
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path1, b"").ok();
-
-        flush_memtable(memtable1, &filename, 0, &wal_path1).unwrap();
+        let filename = flush_for_test(memtable1, file_id);
 
         // Verify initial SSTable was created
         assert!(
@@ -2528,11 +2502,8 @@ mod tests {
         // Delete an existing key
         memtable2.insert(b"cherry".to_vec(), (RecordType::Delete, b"".to_vec()));
 
-        // Step 3: Flush second memtable to same file (should trigger merge)
-        let wal_path2 = format!("test_wal_{}_2.log", file_id);
-        std::fs::write(&wal_path2, b"").ok();
-
-        flush_memtable(memtable2, &filename, 0, &wal_path2).unwrap();
+        // Step 3: Flush second memtable using the same file_id (overwrites)
+        let filename = flush_for_test(memtable2, file_id);
 
         // Step 4: Decode the merged SSTable and verify results
         let file = File::open(&filename).unwrap();
@@ -2548,43 +2519,32 @@ mod tests {
             }
         }
 
-        // Should have 5 unique keys: apple, banana (updated), cherry (deleted), date, elderberry
+        // Should have 4 keys from the second flush
         assert_eq!(
             all_records.len(),
-            5,
-            "Should have 5 records after merge (3 original + 2 new)"
+            4,
+            "Should have 4 records after overwrite"
         );
 
         // Verify keys are sorted
         let keys: Vec<&[u8]> = all_records.iter().map(|r| r.key.as_slice()).collect();
-        assert_eq!(keys[0], b"apple");
-        assert_eq!(keys[1], b"banana");
-        assert_eq!(keys[2], b"cherry");
-        assert_eq!(keys[3], b"date");
-        assert_eq!(keys[4], b"elderberry");
+        assert_eq!(keys[0], b"banana");
+        assert_eq!(keys[1], b"cherry");
+        assert_eq!(keys[2], b"date");
+        assert_eq!(keys[3], b"elderberry");
 
         // Verify values and record types
-        assert_eq!(all_records[0].value, b"red"); // apple unchanged
+        assert_eq!(all_records[0].value, b"green"); // banana updated to green
         assert_eq!(all_records[0].record_type, RecordType::Put);
 
-        assert_eq!(all_records[1].value, b"green"); // banana updated to green
-        assert_eq!(all_records[1].record_type, RecordType::Put);
+        assert_eq!(all_records[1].record_type, RecordType::Delete); // cherry deleted
+        assert_eq!(all_records[1].value, b""); // Delete records have empty value
 
-        assert_eq!(all_records[2].record_type, RecordType::Delete); // cherry deleted
-        assert_eq!(all_records[2].value, b""); // Delete records have empty value
+        assert_eq!(all_records[2].value, b"brown"); // date is new
+        assert_eq!(all_records[2].record_type, RecordType::Put);
 
-        assert_eq!(all_records[3].value, b"brown"); // date is new
+        assert_eq!(all_records[3].value, b"purple"); // elderberry is new
         assert_eq!(all_records[3].record_type, RecordType::Put);
-
-        assert_eq!(all_records[4].value, b"purple"); // elderberry is new
-        assert_eq!(all_records[4].record_type, RecordType::Put);
-
-        // Verify timestamps (newer records should have higher timestamps)
-        // banana (updated) should have a newer timestamp than apple (original)
-        assert!(
-            all_records[1].timestamp >= all_records[0].timestamp,
-            "Updated banana should have timestamp >= original apple"
-        );
 
         // Cleanup
         std::fs::remove_file(&filename).ok();
@@ -2597,10 +2557,6 @@ mod tests {
         // Test that flush_memtable works correctly with a new file (no merge needed)
         static FILE_COUNTER: AtomicU64 = AtomicU64::new(1000);
         let file_id = FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let filename = format!("test_flush_no_merge_{}.db", file_id);
-
-        // Ensure file doesn't exist
-        std::fs::remove_file(&filename).ok();
 
         // Create memtable
         let memtable = SkipMap::new();
@@ -2608,11 +2564,7 @@ mod tests {
         memtable.insert(b"key2".to_vec(), (RecordType::Put, b"value2".to_vec()));
 
         // Flush to new file
-        let wal_path = format!("test_wal_{}.log", file_id);
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Verify file was created
         assert!(
@@ -2650,25 +2602,9 @@ mod tests {
         // Test that flush_memtable handles an empty/incomplete existing file correctly
         static FILE_COUNTER: AtomicU64 = AtomicU64::new(2000);
         let file_id = FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let filename = format!("test_flush_empty_existing_{}.db", file_id);
-
-        // Create an empty file
-        File::create(&filename).unwrap();
-
-        // Verify file exists but is empty
-        let metadata = std::fs::metadata(&filename).unwrap();
-        assert_eq!(metadata.len(), 0, "File should be empty");
-
-        // Create memtable
         let memtable = SkipMap::new();
         memtable.insert(b"key1".to_vec(), (RecordType::Put, b"value1".to_vec()));
-
-        // Flush should handle empty file gracefully (no merge, just write)
-        let wal_path = format!("test_wal_{}.log", file_id);
-        std::fs::create_dir_all("archive").ok();
-        std::fs::write(&wal_path, b"").ok();
-
-        flush_memtable(memtable, &filename, 0, &wal_path).unwrap();
+        let filename = flush_for_test(memtable, file_id);
 
         // Decode and verify
         let file = File::open(&filename).unwrap();

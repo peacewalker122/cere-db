@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DBError {
-    #[error("io error")]
+    #[error("io error occurred: {0}")]
     IO(#[from] std::io::Error),
 
     #[error("serialization error: {0}")]

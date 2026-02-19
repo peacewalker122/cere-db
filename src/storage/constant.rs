@@ -1,4 +1,4 @@
-pub const MEMTABLE_SIZE_THRESHOLD: u64 = 40960; // 4oKB
+pub const MEMTABLE_SIZE_THRESHOLD: u64 = 409600; // 4MB
 pub const SSTABLE_BLOCK_SIZE: usize = 4096; // 4KB
 
 // WAL (Write-Ahead Log) constants

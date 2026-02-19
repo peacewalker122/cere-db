@@ -42,4 +42,3 @@ dhat: Total:     16,362,289 bytes in 185,518 blocks
 dhat: At t-gmax: 3,261,329 bytes in 41,583 blocks
 dhat: At t-end:  1,817,922 bytes in 25,268 blocks
 test storage::kv::tests::test_active_data ... ok
-
