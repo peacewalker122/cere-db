@@ -1,10 +1,11 @@
+use crossbeam_skiplist::SkipMap;
 use std::{
     cmp::{Ordering, Reverse},
     collections::{BTreeMap, BinaryHeap},
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io::{BufReader, Read, Seek, SeekFrom, Write},
 };
-use crossbeam_skiplist::SkipMap;
+use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt};
 
 use crate::{
     error::DBError,
@@ -27,9 +28,7 @@ pub struct SSTable {
 }
 
 impl SSTable {
-    pub fn decode(mut file: &File) -> Result<Self, DBError> {
-        let mut cursor = BufReader::new(&mut file);
-
+    pub fn decode<R: Read + Seek>(mut cursor: R) -> Result<Self, DBError> {
         // Read footer
         cursor.seek(SeekFrom::End(-(FOOTER_SIZE as i64)))?;
 
@@ -61,7 +60,7 @@ impl SSTable {
 
         // Read number of entries
         let mut count_buf = [0u8; 8];
-        index_cursor.read_exact(&mut count_buf)?;
+        std::io::Read::read_exact(&mut index_cursor, &mut count_buf)?;
         let entry_count = u64::from_be_bytes(count_buf);
 
         let mut block_buf = vec![0u8; (footer.data_block_end - footer.data_block_start) as usize];
@@ -101,6 +100,219 @@ impl SSTable {
             block: blocks,
             index,
             bloom,
+            footer,
+        })
+    }
+
+    pub async fn decode_async<R>(mut reader: R) -> Result<Self, DBError>
+    where
+        R: AsyncRead + AsyncSeek + Unpin,
+    {
+        reader.seek(SeekFrom::End(-(FOOTER_SIZE as i64))).await?;
+        let mut footer_bytes = vec![0u8; FOOTER_SIZE as usize];
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut footer_bytes).await?;
+        let footer = SSTableFooter::decode(std::io::Cursor::new(&footer_bytes))?;
+        log::debug!(
+            "Decoded SSTable footer: data=[{}-{}], sparse_index=[{}-{}], bloom=[{}-{}], index_crc=0x{:X}, bloom_crc=0x{:X}",
+            footer.data_block_start,
+            footer.data_block_end,
+            footer.index_block_start,
+            footer.index_block_end,
+            footer.bloom_block_start,
+            footer.bloom_block_end,
+            footer.index_checksum,
+            footer.bloom_checksum
+        );
+
+        reader
+            .seek(SeekFrom::Start(footer.index_block_start))
+            .await?;
+        let mut index_data =
+            vec![0u8; (footer.index_block_end - footer.index_block_start) as usize];
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut index_data).await?;
+        verify_index_checksum(&index_data, footer.index_checksum)?;
+
+        let mut index_cursor = std::io::Cursor::new(&index_data);
+        let mut index = Vec::new();
+
+        let mut count_buf = [0u8; 8];
+        std::io::Read::read_exact(&mut index_cursor, &mut count_buf)?;
+        let entry_count = u64::from_be_bytes(count_buf);
+
+        reader
+            .seek(SeekFrom::Start(footer.data_block_start))
+            .await?;
+        let mut block_buf = vec![0u8; (footer.data_block_end - footer.data_block_start) as usize];
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut block_buf).await?;
+        let mut block_cursor = std::io::Cursor::new(block_buf);
+
+        let mut blocks = Vec::new();
+        for _ in 0..entry_count {
+            let entry = SparseIndexEntry::decode(&mut index_cursor)?;
+            let relative_offset = entry.block_offset - footer.data_block_start;
+            index.push(entry);
+
+            let block = Block::decode(&mut block_cursor, relative_offset)?;
+            blocks.push(block);
+        }
+
+        reader
+            .seek(SeekFrom::Start(footer.bloom_block_start))
+            .await?;
+        let mut bloom_data =
+            vec![0u8; (footer.bloom_block_end - footer.bloom_block_start) as usize];
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut bloom_data).await?;
+        verify_bloom_checksum(&bloom_data, footer.bloom_checksum)?;
+
+        let bloom_cursor = std::io::Cursor::new(&bloom_data);
+        let bloom = BloomFilter::decode(bloom_cursor)?;
+
+        Ok(SSTable {
+            block: blocks,
+            index,
+            bloom,
+            footer,
+        })
+    }
+
+    pub async fn build_from_records(records: Vec<Record>, _level: u32) -> Result<SSTable, DBError> {
+        // this function will build an SSTable from the list of records, it will build the index,
+        // bloom filter and footer, but it will not write to disk, the caller can use the build SSTable and write it to disk using the flush_memtable function
+
+        // Build sparse index and bloom filter as we write data blocks
+        let mut sparse_index: Vec<SparseIndexEntry> = Vec::new();
+        let mut blocks: Vec<Block> = Vec::new();
+        let mut block_data_sizes: Vec<u64> = Vec::new();
+
+        // Create Bloom filter with appropriate capacity
+        let mut bloom_filter = BloomFilter::with_rate(records.len(), 0.01);
+
+        log::debug!("Writing {} records to 4KB blocks...", records.len());
+
+        let data_block_start = 0u64;
+        let mut current_offset = data_block_start;
+        let mut block_builder = BlockBuilder::new(current_offset);
+
+        // Write all merged records to blocks
+        for record in records.iter() {
+            // Insert key into Bloom filter
+            bloom_filter.insert(record.key.to_owned());
+
+            // Try to add record to current block
+            match block_builder.add_record(record) {
+                Ok(()) => {
+                    // Record added successfully
+                }
+                Err(_record) => {
+                    // Block is full, finalize it and create a new one
+                    if let Some((block_meta, block_data)) = block_builder.build() {
+                        log::trace!(
+                            "Block filled: offset={}, size={} bytes, records={}, first_key={:?}, last_key={:?}",
+                            block_meta.offset,
+                            block_meta.data_size,
+                            block_meta.record_count,
+                            String::from_utf8_lossy(&block_meta.first_key),
+                            String::from_utf8_lossy(&block_meta.last_key)
+                        );
+
+                        // Add to sparse index
+                        sparse_index.push(SparseIndexEntry {
+                            first_key: block_meta.first_key.clone(),
+                            block_offset: block_meta.offset,
+                            last_key: block_meta.last_key.clone(),
+                            record_count: block_meta.record_count,
+                        });
+
+                        // Store block data
+                        let block_total_size = block_data.len() as u64;
+                        blocks.push(block_meta);
+                        block_data_sizes.push(block_total_size);
+                        current_offset += block_total_size;
+                    }
+
+                    // Create new block and add the record that didn't fit
+                    block_builder = BlockBuilder::new(current_offset);
+                    block_builder
+                        .add_record(record)
+                        .expect("Fresh block should have space for record");
+                }
+            }
+        }
+
+        // Finalize the last block if it has data
+        if !block_builder.is_empty()
+            && let Some((block_meta, block_data)) = block_builder.build()
+        {
+            log::trace!(
+                "Final block: offset={}, size={} bytes, records={}, first_key={:?}, last_key={:?}",
+                block_meta.offset,
+                block_meta.data_size,
+                block_meta.record_count,
+                String::from_utf8_lossy(&block_meta.first_key),
+                String::from_utf8_lossy(&block_meta.last_key)
+            );
+
+            sparse_index.push(SparseIndexEntry {
+                first_key: block_meta.first_key.clone(),
+                block_offset: block_meta.offset,
+                last_key: block_meta.last_key.clone(),
+                record_count: block_meta.record_count,
+            });
+
+            let block_total_size = block_data.len() as u64;
+            blocks.push(block_meta);
+            block_data_sizes.push(block_total_size);
+        }
+
+        log::info!(
+            "Created {} blocks from {} entries",
+            blocks.len(),
+            records.len()
+        );
+
+        let data_block_end = data_block_start + block_data_sizes.iter().sum::<u64>();
+
+        // Build sparse index block
+        let mut index_blocks: Vec<u8> = Vec::new();
+
+        // Write number of sparse index entries
+        index_blocks.extend_from_slice(&(sparse_index.len() as u64).to_be_bytes());
+
+        // Write each sparse index entry
+        for entry in sparse_index.iter() {
+            index_blocks.append(&mut entry.encode());
+        }
+
+        // Calculate index block checksum
+        let index_checksum = crc32fast::hash(&index_blocks);
+
+        // Write Bloom filter block
+        let bloom_data = bloom_filter.encode();
+
+        // Calculate bloom filter checksum
+        let bloom_checksum = crc32fast::hash(&bloom_data);
+
+        let index_block_start = data_block_end;
+        let index_block_end = index_block_start + index_blocks.len() as u64;
+        let bloom_block_start = index_block_end;
+        let bloom_block_end = bloom_block_start + bloom_data.len() as u64;
+
+        // Write footer
+        let footer = SSTableFooter {
+            data_block_start,
+            data_block_end,
+            index_block_start,
+            index_block_end,
+            index_checksum,
+            bloom_block_start,
+            bloom_block_end,
+            bloom_checksum,
+        };
+
+        Ok(SSTable {
+            block: blocks,
+            index: sparse_index,
+            bloom: bloom_filter,
             footer,
         })
     }
@@ -153,7 +365,7 @@ impl SSTableFooter {
         buf
     }
 
-    pub fn decode<R: Read>(mut reader: R) -> Result<Self, std::io::Error> {
+    pub fn decode<R: Read + Seek>(mut reader: R) -> Result<Self, std::io::Error> {
         log::debug!("Decoding SSTable footer...");
         let mut buf = [0u8; 8];
         let mut footer_data = Vec::with_capacity(60); // All data except final checksum
@@ -615,51 +827,60 @@ impl<'a> SortedRecordSource for MemtableSource<'a> {
     }
 }
 
-type BlockIter<'a> = std::collections::btree_map::Iter<'a, Vec<u8>, Record>;
-
-struct SSTableSource<'a> {
-    blocks: std::slice::Iter<'a, Block>,
-    current_iter: Option<BlockIter<'a>>,
+pub struct SSTableSource {
+    blocks: Vec<Block>,
+    current_block_idx: usize,
+    current_block_record_idx: usize,
 }
 
-impl<'a> SSTableSource<'a> {
-    fn new(blocks: &'a [Block]) -> Self {
+impl SSTableSource {
+    pub fn new(blocks: Vec<Block>) -> Self {
         let mut source = Self {
-            blocks: blocks.iter(),
-            current_iter: None,
+            blocks,
+            current_block_idx: 0,
+            current_block_record_idx: 0,
         };
         source.load_next_block();
         source
     }
 
     fn load_next_block(&mut self) {
-        self.current_iter = None;
-        while let Some(block) = self.blocks.next() {
-            if let Some(records) = block.data.as_ref() {
-                if !records.is_empty() {
-                    self.current_iter = Some(records.iter());
-                    break;
-                }
-            }
+        if self.current_block_idx >= self.blocks.len() {
+            return;
         }
+
+        let _block = &self.blocks[self.current_block_idx];
+        self.current_block_record_idx = 0;
+        self.current_block_idx += 1;
     }
 }
 
-impl<'a> SortedRecordSource for SSTableSource<'a> {
+#[cfg(test)]
+fn find_record<'a>(records: &'a [Record], key: &[u8]) -> Option<&'a Record> {
+    records
+        .binary_search_by(|record| record.key.as_slice().cmp(key))
+        .ok()
+        .map(|index| &records[index])
+}
+
+impl SortedRecordSource for SSTableSource {
     fn next_record(&mut self) -> Result<Option<Record>, DBError> {
         loop {
-            let iter = match self.current_iter.as_mut() {
-                Some(iter) => iter,
-                None => return Ok(None),
-            };
-
-            if let Some((_key, record)) = iter.next() {
-                return Ok(Some(record.clone()));
+            if self.current_block_idx == 0 || self.current_block_idx > self.blocks.len() {
+                return Ok(None);
             }
 
-            self.load_next_block();
-            if self.current_iter.is_none() {
-                return Ok(None);
+            let block = &self.blocks[self.current_block_idx - 1];
+            if let Some(records) = block.data.as_ref() {
+                if self.current_block_record_idx < records.len() {
+                    let rec = records[self.current_block_record_idx].clone();
+                    self.current_block_record_idx += 1;
+                    return Ok(Some(rec));
+                } else {
+                    self.load_next_block();
+                }
+            } else {
+                self.load_next_block();
             }
         }
     }
@@ -700,7 +921,7 @@ fn build_merge_sources<'a>(
 ) -> Vec<Box<dyn SortedRecordSource + 'a>> {
     let mut sources: Vec<Box<dyn SortedRecordSource + 'a>> = Vec::new();
     sources.push(Box::new(MemtableSource::new(memtable)));
-    sources.push(Box::new(SSTableSource::new(sstables)));
+    sources.push(Box::new(SSTableSource::new(sstables.to_vec())));
     sources
 }
 
@@ -788,7 +1009,7 @@ pub fn read_sstable_sparse_index<R: Read + Seek>(
 
     // Read number of entries
     let mut count_buf = [0u8; 8];
-    cursor.read_exact(&mut count_buf)?;
+    std::io::Read::read_exact(&mut cursor, &mut count_buf)?;
     let entry_count = u64::from_be_bytes(count_buf);
 
     // Read all sparse index entries
@@ -822,7 +1043,7 @@ pub fn read_sstable_index<R: Read + Seek>(
 
     // Read number of entries
     let mut count_buf = [0u8; 8];
-    cursor.read_exact(&mut count_buf)?;
+    std::io::Read::read_exact(&mut cursor, &mut count_buf)?;
     let entry_count = u64::from_be_bytes(count_buf);
 
     // Read all index entries
@@ -993,12 +1214,13 @@ where
     let block = Block::decode(&mut reader, block.block_offset)?;
     // get the data block. Traverse through the key
 
-    if let Some(data) = block.data
-        && let Some(record) = data.get(key)
-    {
-        match record.record_type {
-            RecordType::Put => return Ok(Some(record.value.clone())),
-            RecordType::Delete => return Ok(None), // Tombstone
+    if let Some(records) = block.data.as_ref() {
+        if let Ok(index) = records.binary_search_by(|record| record.key.as_slice().cmp(key)) {
+            let record = &records[index];
+            match record.record_type {
+                RecordType::Put => return Ok(Some(record.value.clone())),
+                RecordType::Delete => return Ok(None), // Tombstone
+            }
         }
     }
 
@@ -1054,8 +1276,13 @@ pub fn search_sstable_with_bloom<R: Read + Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Cursor;
-    use std::{path::Path, sync::{Mutex, OnceLock}, time::UNIX_EPOCH};
+    use std::{
+        path::Path,
+        sync::{Mutex, OnceLock},
+        time::UNIX_EPOCH,
+    };
 
     fn with_temp_dir<T>(test_name: &str, test: impl FnOnce() -> T) -> T {
         static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1065,8 +1292,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let temp_root = std::env::temp_dir()
-            .join(format!("wasm-kv-sstable-{test_name}-{unique_id}"));
+        let temp_root =
+            std::env::temp_dir().join(format!("wasm-kv-sstable-{test_name}-{unique_id}"));
 
         std::fs::create_dir_all(&temp_root).unwrap();
         let original_dir = std::env::current_dir().unwrap();
@@ -1080,10 +1307,7 @@ mod tests {
         result
     }
 
-    fn flush_for_test(
-        memtable: SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
-        file_id: u64,
-    ) -> String {
+    fn flush_for_test(memtable: SkipMap<Vec<u8>, (RecordType, Vec<u8>)>, file_id: u64) -> String {
         let wal_path = format!("test_wal_{file_id}.log");
 
         std::fs::create_dir_all("archive").ok();
@@ -1091,6 +1315,12 @@ mod tests {
         std::fs::write(&wal_path, b"").ok();
 
         flush_memtable(memtable, 0, file_id, &wal_path).unwrap()
+    }
+
+    fn run_async_test<T>(test: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Runtime::new()
+            .expect("runtime should build")
+            .block_on(test)
     }
 
     #[test]
@@ -1127,7 +1357,10 @@ mod tests {
             let result = flush_memtable(memtable, 0, file_id, &wal_path);
 
             // Assert: missing level-0 directory is handled as an error (negative case).
-            assert!(result.is_err(), "expected error when level directory is missing");
+            assert!(
+                result.is_err(),
+                "expected error when level directory is missing"
+            );
         });
     }
 
@@ -1148,7 +1381,10 @@ mod tests {
             // Assert: WAL file naming uses same ID and is archived after flush.
             assert_eq!(filename, "data/level-0/9001.db");
             assert!(Path::new("archive/wal_9001.log").exists());
-            assert!(!Path::new(&wal_path).exists(), "expected WAL to be archived");
+            assert!(
+                !Path::new(&wal_path).exists(),
+                "expected WAL to be archived"
+            );
         });
     }
 
@@ -1756,9 +1992,7 @@ mod tests {
         );
 
         // Verify the record's key, value, and type match expected
-        let record = records
-            .get(b"testkey" as &[u8])
-            .expect("Key 'testkey' should exist");
+        let record = find_record(records, b"testkey").expect("Key 'testkey' should exist");
         assert_eq!(record.key, b"testkey", "Record key should match");
         assert_eq!(record.value, b"testvalue", "Record value should match");
         assert_eq!(
@@ -1813,9 +2047,7 @@ mod tests {
 
         // Verify records are in sorted order (SkipMap sorts keys)
         // Access each record by key using BTreeMap.get()
-        let record_bird = records
-            .get(b"bird" as &[u8])
-            .expect("Key 'bird' should exist");
+        let record_bird = find_record(records, b"bird").expect("Key 'bird' should exist");
         assert_eq!(record_bird.key, b"bird", "First record should be 'bird'");
         assert_eq!(
             record_bird.value, b"tweet",
@@ -1823,9 +2055,7 @@ mod tests {
         );
         assert_eq!(record_bird.record_type, RecordType::Put);
 
-        let record_cat = records
-            .get(b"cat" as &[u8])
-            .expect("Key 'cat' should exist");
+        let record_cat = find_record(records, b"cat").expect("Key 'cat' should exist");
         assert_eq!(record_cat.key, b"cat", "Second record should be 'cat'");
         assert_eq!(
             record_cat.value, b"meow",
@@ -1833,16 +2063,12 @@ mod tests {
         );
         assert_eq!(record_cat.record_type, RecordType::Put);
 
-        let record_dog = records
-            .get(b"dog" as &[u8])
-            .expect("Key 'dog' should exist");
+        let record_dog = find_record(records, b"dog").expect("Key 'dog' should exist");
         assert_eq!(record_dog.key, b"dog", "Third record should be 'dog'");
         assert_eq!(record_dog.value, b"woof", "Third record value should match");
         assert_eq!(record_dog.record_type, RecordType::Put);
 
-        let record_fish = records
-            .get(b"fish" as &[u8])
-            .expect("Key 'fish' should exist");
+        let record_fish = find_record(records, b"fish").expect("Key 'fish' should exist");
         assert_eq!(record_fish.key, b"fish", "Fourth record should be 'fish'");
         assert_eq!(
             record_fish.value, b"blub",
@@ -1898,9 +2124,7 @@ mod tests {
 
         // SkipMap sorts keys: active, deleted, updated
         // Access each record by key using BTreeMap.get()
-        let record_active = records
-            .get(b"active" as &[u8])
-            .expect("Key 'active' should exist");
+        let record_active = find_record(records, b"active").expect("Key 'active' should exist");
         assert_eq!(
             record_active.key, b"active",
             "First record should be 'active'"
@@ -1912,9 +2136,7 @@ mod tests {
             "First record should be Put"
         );
 
-        let record_deleted = records
-            .get(b"deleted" as &[u8])
-            .expect("Key 'deleted' should exist");
+        let record_deleted = find_record(records, b"deleted").expect("Key 'deleted' should exist");
         assert_eq!(
             record_deleted.key, b"deleted",
             "Second record should be 'deleted'"
@@ -1929,9 +2151,7 @@ mod tests {
             "Second record should be Delete (tombstone)"
         );
 
-        let record_updated = records
-            .get(b"updated" as &[u8])
-            .expect("Key 'updated' should exist");
+        let record_updated = find_record(records, b"updated").expect("Key 'updated' should exist");
         assert_eq!(
             record_updated.key, b"updated",
             "Third record should be 'updated'"
@@ -1998,7 +2218,7 @@ mod tests {
             );
 
             // Verify each record in this block is valid
-            for (_key, record) in records.iter() {
+            for record in records.iter() {
                 assert!(
                     !record.key.is_empty(),
                     "Block {} record should have non-empty key",
@@ -2025,6 +2245,478 @@ mod tests {
             total_records, 50,
             "Should have decoded all 50 records across all blocks"
         );
+    }
+
+    #[test]
+    fn test_async_sstable_decode_valid() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"apple".to_vec(), (RecordType::Put, b"red".to_vec()));
+            memtable.insert(b"banana".to_vec(), (RecordType::Put, b"yellow".to_vec()));
+            memtable.insert(b"cherry".to_vec(), (RecordType::Put, b"red".to_vec()));
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let decoded = SSTable::decode_async(file).await.unwrap();
+
+            std::fs::remove_file(&filename).unwrap();
+
+            assert_eq!(decoded.block.len(), 1, "Should have exactly one block");
+            assert_eq!(
+                decoded.index.len(),
+                1,
+                "Should have exactly one index entry"
+            );
+
+            let block = &decoded.block[0];
+            assert_eq!(block.first_key, b"apple", "First key should be 'apple'");
+            assert_eq!(
+                block.last_key, b"cherry",
+                "Last key should be 'cherry' (sorted order)"
+            );
+            assert_eq!(block.record_count, 3, "Block should contain 3 records");
+            assert!(block.data_size > 0, "Block should have data");
+
+            let index_entry = &decoded.index[0];
+            assert_eq!(index_entry.first_key, b"apple");
+            assert_eq!(index_entry.last_key, b"cherry");
+            assert_eq!(index_entry.block_offset, block.offset);
+            assert_eq!(index_entry.record_count, 3);
+
+            assert!(decoded.bloom.contains(b"apple"));
+            assert!(decoded.bloom.contains(b"banana"));
+            assert!(decoded.bloom.contains(b"cherry"));
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_single_block() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let decoded = SSTable::decode_async(file).await.unwrap();
+
+            std::fs::remove_file(&filename).unwrap();
+
+            assert_eq!(decoded.block.len(), 1, "Should have exactly one block");
+            assert_eq!(
+                decoded.index.len(),
+                1,
+                "Should have exactly one index entry"
+            );
+
+            let block = &decoded.block[0];
+            assert_eq!(block.first_key, b"key", "First key should be 'key'");
+            assert_eq!(block.last_key, b"key", "Last key should be 'key'");
+            assert_eq!(block.record_count, 1, "Block should contain 1 record");
+            assert!(block.data_size > 0, "Block should have data");
+
+            let index_entry = &decoded.index[0];
+            assert_eq!(index_entry.first_key, b"key");
+            assert_eq!(index_entry.last_key, b"key");
+            assert_eq!(index_entry.block_offset, block.offset);
+            assert_eq!(index_entry.record_count, 1);
+
+            assert!(decoded.bloom.contains(b"key"));
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_empty_sstable() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let decoded = SSTable::decode_async(file).await.unwrap();
+
+            std::fs::remove_file(&filename).unwrap();
+
+            assert_eq!(decoded.block.len(), 0, "Should have no blocks");
+            assert_eq!(decoded.index.len(), 0, "Should have no index entries");
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_corrupted_index_checksum() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let mut sstable_data = std::fs::read(&filename).unwrap();
+
+            let footer_offset = sstable_data.len() - FOOTER_SIZE as usize;
+            let checksum_offset = footer_offset + 32;
+            sstable_data[checksum_offset] ^= 0xFF;
+
+            std::fs::write(&filename, &sstable_data).unwrap();
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let result = SSTable::decode_async(file).await;
+
+            std::fs::remove_file(&filename).unwrap();
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                DBError::IO(_) => {}
+                other => panic!("Expected IO error, got: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_corrupted_bloom_checksum() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let mut sstable_data = std::fs::read(&filename).unwrap();
+
+            let footer_offset = sstable_data.len() - FOOTER_SIZE as usize;
+            let checksum_offset = footer_offset + 48;
+            sstable_data[checksum_offset] ^= 0xFF;
+
+            std::fs::write(&filename, &sstable_data).unwrap();
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let result = SSTable::decode_async(file).await;
+
+            std::fs::remove_file(&filename).unwrap();
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                DBError::IO(_) => {}
+                other => panic!("Expected IO error, got: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_corrupted_footer_checksum() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let mut sstable_data = std::fs::read(&filename).unwrap();
+
+            let len = sstable_data.len();
+            sstable_data[len - 1] ^= 0xFF;
+
+            std::fs::write(&filename, &sstable_data).unwrap();
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let result = SSTable::decode_async(file).await;
+
+            std::fs::remove_file(&filename).unwrap();
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                DBError::IO(_) => {}
+                other => panic!("Expected IO error, got: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_invalid_magic_number() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"key".to_vec(), (RecordType::Put, b"value".to_vec()));
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let mut sstable_data = std::fs::read(&filename).unwrap();
+
+            let footer_offset = sstable_data.len() - FOOTER_SIZE as usize;
+            let magic_offset = footer_offset + 52;
+            sstable_data[magic_offset] ^= 0xFF;
+
+            std::fs::write(&filename, &sstable_data).unwrap();
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let result = SSTable::decode_async(file).await;
+
+            std::fs::remove_file(&filename).unwrap();
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                DBError::IO(_) => {}
+                other => panic!("Expected IO error, got: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_verifies_bloom_contains_keys() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"alpha".to_vec(), (RecordType::Put, b"1".to_vec()));
+            memtable.insert(b"beta".to_vec(), (RecordType::Put, b"2".to_vec()));
+            memtable.insert(b"gamma".to_vec(), (RecordType::Put, b"3".to_vec()));
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let decoded = SSTable::decode_async(file).await.unwrap();
+
+            std::fs::remove_file(&filename).unwrap();
+
+            assert_eq!(decoded.block.len(), 1, "Should have exactly one block");
+            let block = &decoded.block[0];
+            assert_eq!(block.first_key, b"alpha");
+            assert_eq!(block.last_key, b"gamma");
+            assert_eq!(block.record_count, 3);
+
+            assert_eq!(
+                decoded.index.len(),
+                1,
+                "Should have exactly one index entry"
+            );
+            let index_entry = &decoded.index[0];
+            assert_eq!(index_entry.first_key, b"alpha");
+            assert_eq!(index_entry.last_key, b"gamma");
+            assert_eq!(index_entry.record_count, 3);
+
+            assert!(decoded.bloom.contains(b"alpha"));
+            assert!(decoded.bloom.contains(b"beta"));
+            assert!(decoded.bloom.contains(b"gamma"));
+            assert!(!decoded.bloom.contains(b"nonexistent"));
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_block_data_single_record() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(
+                b"testkey".to_vec(),
+                (RecordType::Put, b"testvalue".to_vec()),
+            );
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let decoded = SSTable::decode_async(file).await.unwrap();
+
+            std::fs::remove_file(&filename).unwrap();
+
+            assert_eq!(decoded.block.len(), 1, "Should have exactly one block");
+            let block = &decoded.block[0];
+
+            assert!(block.data.is_some(), "block.data should be populated");
+
+            let records = block.data.as_ref().unwrap();
+            assert_eq!(records.len(), 1, "block.data should contain 1 record");
+
+            let record = find_record(records, b"testkey").expect("Key 'testkey' should exist");
+            assert_eq!(record.key, b"testkey");
+            assert_eq!(record.value, b"testvalue");
+            assert_eq!(record.record_type, RecordType::Put);
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_block_data_multiple_records() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"dog".to_vec(), (RecordType::Put, b"woof".to_vec()));
+            memtable.insert(b"cat".to_vec(), (RecordType::Put, b"meow".to_vec()));
+            memtable.insert(b"bird".to_vec(), (RecordType::Put, b"tweet".to_vec()));
+            memtable.insert(b"fish".to_vec(), (RecordType::Put, b"blub".to_vec()));
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let decoded = SSTable::decode_async(file).await.unwrap();
+
+            std::fs::remove_file(&filename).unwrap();
+
+            assert_eq!(decoded.block.len(), 1, "Should have exactly one block");
+            let block = &decoded.block[0];
+
+            assert!(block.data.is_some(), "block.data should be populated");
+
+            let records = block.data.as_ref().unwrap();
+            assert_eq!(records.len(), 4, "block.data should contain 4 records");
+
+            let record_bird = find_record(records, b"bird").unwrap();
+            assert_eq!(record_bird.key, b"bird");
+            assert_eq!(record_bird.value, b"tweet");
+            assert_eq!(record_bird.record_type, RecordType::Put);
+
+            let record_cat = find_record(records, b"cat").unwrap();
+            assert_eq!(record_cat.key, b"cat");
+            assert_eq!(record_cat.value, b"meow");
+            assert_eq!(record_cat.record_type, RecordType::Put);
+
+            let record_dog = find_record(records, b"dog").unwrap();
+            assert_eq!(record_dog.key, b"dog");
+            assert_eq!(record_dog.value, b"woof");
+            assert_eq!(record_dog.record_type, RecordType::Put);
+
+            let record_fish = find_record(records, b"fish").unwrap();
+            assert_eq!(record_fish.key, b"fish");
+            assert_eq!(record_fish.value, b"blub");
+            assert_eq!(record_fish.record_type, RecordType::Put);
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_block_data_preserves_tombstones() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            memtable.insert(b"active".to_vec(), (RecordType::Put, b"alive".to_vec()));
+            memtable.insert(b"deleted".to_vec(), (RecordType::Delete, b"".to_vec()));
+            memtable.insert(
+                b"updated".to_vec(),
+                (RecordType::Put, b"new_value".to_vec()),
+            );
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let decoded = SSTable::decode_async(file).await.unwrap();
+
+            std::fs::remove_file(&filename).unwrap();
+
+            assert_eq!(decoded.block.len(), 1, "Should have exactly one block");
+            let block = &decoded.block[0];
+
+            assert!(block.data.is_some(), "block.data should be populated");
+
+            let records = block.data.as_ref().unwrap();
+            assert_eq!(records.len(), 3, "block.data should contain 3 records");
+
+            let record_active = find_record(records, b"active").unwrap();
+            assert_eq!(record_active.key, b"active");
+            assert_eq!(record_active.value, b"alive");
+            assert_eq!(record_active.record_type, RecordType::Put);
+
+            let record_deleted = find_record(records, b"deleted").unwrap();
+            assert_eq!(record_deleted.key, b"deleted");
+            assert_eq!(record_deleted.value, b"");
+            assert_eq!(record_deleted.record_type, RecordType::Delete);
+
+            let record_updated = find_record(records, b"updated").unwrap();
+            assert_eq!(record_updated.key, b"updated");
+            assert_eq!(record_updated.value, b"new_value");
+            assert_eq!(record_updated.record_type, RecordType::Put);
+        });
+    }
+
+    #[test]
+    fn test_async_sstable_decode_block_data_multiple_blocks() {
+        run_async_test(async {
+            let memtable = SkipMap::new();
+            for i in 0..50 {
+                let key = format!("testkey{:03}", i);
+                let value = format!("testvalue{:03}", i);
+                memtable.insert(
+                    key.as_bytes().to_vec(),
+                    (RecordType::Put, value.as_bytes().to_vec()),
+                );
+            }
+
+            let file_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
+            let filename = flush_for_test(memtable, file_id);
+
+            let file = tokio::fs::File::open(&filename).await.unwrap();
+            let decoded = SSTable::decode_async(file).await.unwrap();
+
+            std::fs::remove_file(&filename).unwrap();
+
+            assert!(decoded.block.len() >= 1, "Should have at least 1 block");
+
+            let mut total_records = 0;
+            for (i, block) in decoded.block.iter().enumerate() {
+                assert!(block.data.is_some(), "Block {} should have data", i);
+
+                let records = block.data.as_ref().unwrap();
+                assert_eq!(
+                    records.len() as u32,
+                    block.record_count,
+                    "Block {} data length should match record_count",
+                    i
+                );
+
+                for record in records.iter() {
+                    assert!(!record.key.is_empty(), "Block {} record should have key", i);
+                    assert!(
+                        !record.value.is_empty(),
+                        "Block {} record should have value",
+                        i
+                    );
+                    assert_eq!(
+                        record.record_type,
+                        RecordType::Put,
+                        "Block {} record should be Put",
+                        i
+                    );
+                }
+
+                total_records += records.len();
+            }
+
+            assert_eq!(
+                total_records, 50,
+                "Should have decoded all 50 records across all blocks"
+            );
+        });
     }
 
     // ============================================================================
@@ -2078,20 +2770,15 @@ mod tests {
         let memtable: SkipMap<Vec<u8>, (RecordType, Vec<u8>)> = SkipMap::new();
 
         // Create a block with data
-        let mut block_data = BTreeMap::new();
-        block_data.insert(
-            b"apple".to_vec(),
+        let block_data = vec![
             Record::new(b"apple".to_vec(), b"red".to_vec(), RecordType::Put, 1000),
-        );
-        block_data.insert(
-            b"banana".to_vec(),
             Record::new(
                 b"banana".to_vec(),
                 b"yellow".to_vec(),
                 RecordType::Put,
                 1000,
             ),
-        );
+        ];
 
         let block = Block {
             offset: 0,
@@ -2125,20 +2812,15 @@ mod tests {
         memtable.insert(b"cat".to_vec(), (RecordType::Put, b"meow".to_vec()));
 
         // Create SSTable block
-        let mut block_data = BTreeMap::new();
-        block_data.insert(
-            b"apple".to_vec(),
+        let block_data = vec![
             Record::new(b"apple".to_vec(), b"red".to_vec(), RecordType::Put, 1000),
-        );
-        block_data.insert(
-            b"banana".to_vec(),
             Record::new(
                 b"banana".to_vec(),
                 b"yellow".to_vec(),
                 RecordType::Put,
                 1000,
             ),
-        );
+        ];
 
         let block = Block {
             offset: 0,
@@ -2170,16 +2852,12 @@ mod tests {
         memtable.insert(b"key1".to_vec(), (RecordType::Put, b"new_value".to_vec()));
 
         // Create SSTable block with same key
-        let mut block_data = BTreeMap::new();
-        block_data.insert(
+        let block_data = vec![Record::new(
             b"key1".to_vec(),
-            Record::new(
-                b"key1".to_vec(),
-                b"old_value".to_vec(),
-                RecordType::Put,
-                1000,
-            ),
-        );
+            b"old_value".to_vec(),
+            RecordType::Put,
+            1000,
+        )];
 
         let block = Block {
             offset: 0,
@@ -2218,16 +2896,12 @@ mod tests {
         let memtable: SkipMap<Vec<u8>, (RecordType, Vec<u8>)> = SkipMap::new();
 
         // Create two SSTable blocks with same key but different timestamps
-        let mut block_data1 = BTreeMap::new();
-        block_data1.insert(
+        let block_data1 = vec![Record::new(
             b"key1".to_vec(),
-            Record::new(
-                b"key1".to_vec(),
-                b"old_value".to_vec(),
-                RecordType::Put,
-                1000,
-            ), // older
-        );
+            b"old_value".to_vec(),
+            RecordType::Put,
+            1000,
+        )];
 
         let block1 = Block {
             offset: 0,
@@ -2238,16 +2912,12 @@ mod tests {
             data: Some(block_data1),
         };
 
-        let mut block_data2 = BTreeMap::new();
-        block_data2.insert(
+        let block_data2 = vec![Record::new(
             b"key1".to_vec(),
-            Record::new(
-                b"key1".to_vec(),
-                b"new_value".to_vec(),
-                RecordType::Put,
-                2000,
-            ), // newer
-        );
+            b"new_value".to_vec(),
+            RecordType::Put,
+            2000,
+        )];
 
         let block2 = Block {
             offset: 100,
@@ -2290,11 +2960,12 @@ mod tests {
         memtable.insert(b"zebra".to_vec(), (RecordType::Put, b"stripes".to_vec()));
 
         // SSTable 1
-        let mut block_data1 = BTreeMap::new();
-        block_data1.insert(
+        let block_data1 = vec![Record::new(
             b"apple".to_vec(),
-            Record::new(b"apple".to_vec(), b"red".to_vec(), RecordType::Put, 1000),
-        );
+            b"red".to_vec(),
+            RecordType::Put,
+            1000,
+        )];
 
         let block1 = Block {
             offset: 0,
@@ -2306,11 +2977,12 @@ mod tests {
         };
 
         // SSTable 2
-        let mut block_data2 = BTreeMap::new();
-        block_data2.insert(
+        let block_data2 = vec![Record::new(
             b"mango".to_vec(),
-            Record::new(b"mango".to_vec(), b"orange".to_vec(), RecordType::Put, 1000),
-        );
+            b"orange".to_vec(),
+            RecordType::Put,
+            1000,
+        )];
 
         let block2 = Block {
             offset: 100,
@@ -2341,25 +3013,20 @@ mod tests {
         memtable.insert(b"active_key".to_vec(), (RecordType::Put, b"value".to_vec()));
 
         // Create SSTable block with mixed types
-        let mut block_data = BTreeMap::new();
-        block_data.insert(
-            b"another_deleted".to_vec(),
+        let block_data = vec![
             Record::new(
                 b"another_deleted".to_vec(),
                 b"".to_vec(),
                 RecordType::Delete,
                 1000,
             ),
-        );
-        block_data.insert(
-            b"another_active".to_vec(),
             Record::new(
                 b"another_active".to_vec(),
                 b"data".to_vec(),
                 RecordType::Put,
                 1000,
             ),
-        );
+        ];
 
         let block = Block {
             offset: 0,
@@ -2401,15 +3068,10 @@ mod tests {
         memtable.insert(b"m_middle".to_vec(), (RecordType::Put, b"mmm".to_vec()));
 
         // Create SSTable block with random order keys
-        let mut block_data = BTreeMap::new();
-        block_data.insert(
-            b"d_four".to_vec(),
-            Record::new(b"d_four".to_vec(), b"ddd".to_vec(), RecordType::Put, 1000),
-        );
-        block_data.insert(
-            b"b_two".to_vec(),
+        let block_data = vec![
             Record::new(b"b_two".to_vec(), b"bbb".to_vec(), RecordType::Put, 1000),
-        );
+            Record::new(b"d_four".to_vec(), b"ddd".to_vec(), RecordType::Put, 1000),
+        ];
 
         let block = Block {
             offset: 0,
@@ -2513,7 +3175,7 @@ mod tests {
         let mut all_records = Vec::new();
         for block in &sstable.block {
             if let Some(ref data) = block.data {
-                for (_key, record) in data.iter() {
+                for record in data.iter() {
                     all_records.push(record);
                 }
             }
@@ -2579,7 +3241,7 @@ mod tests {
         let mut all_records = Vec::new();
         for block in &sstable.block {
             if let Some(ref data) = block.data {
-                for (_key, record) in data.iter() {
+                for record in data.iter() {
                     all_records.push(record);
                 }
             }
@@ -2613,7 +3275,7 @@ mod tests {
         let mut all_records = Vec::new();
         for block in &sstable.block {
             if let Some(ref data) = block.data {
-                for (_key, record) in data.iter() {
+                for record in data.iter() {
                     all_records.push(record);
                 }
             }

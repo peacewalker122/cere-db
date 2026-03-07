@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    io::{Read, Seek, SeekFrom},
-};
+use std::io::{Read, Seek, SeekFrom};
 
 use crate::{
     error::DBError,
@@ -26,7 +23,7 @@ pub struct Block {
     pub data_size: u32,
 
     /// Add this when decode the data / load the data
-    pub data: Option<BTreeMap<Vec<u8>, Record>>,
+    pub data: Option<Vec<Record>>,
 }
 
 /// Builder for creating fixed-size blocks
@@ -163,16 +160,16 @@ impl Block {
         data.read_exact(&mut len_buf)?;
         let data_size = u32::from_be_bytes(len_buf);
 
-        let mut records = BTreeMap::new();
+        let mut records = Vec::with_capacity(record_count as usize);
         for _ in 0..record_count {
             // we want to traverse and decode each record that available in
             // this block
 
             let record = record::Record::decode(data)?;
-
-            let key = record.key.clone();
-            records.insert(key, record);
+            records.push(record);
         }
+
+        records.sort_by(|left, right| left.key.cmp(&right.key));
 
         Ok(Block {
             offset,
@@ -190,6 +187,13 @@ mod tests {
     use super::*;
     use crate::storage::record::{Record, RecordType};
     use std::io::Cursor;
+
+    fn find_record<'a>(records: &'a [Record], key: &[u8]) -> &'a Record {
+        records
+            .iter()
+            .find(|record| record.key.as_slice() == key)
+            .unwrap_or_else(|| panic!("Key {:?} should exist", key))
+    }
 
     #[test]
     fn test_block_builder() {
@@ -237,9 +241,7 @@ mod tests {
         let records = block.data.as_ref().unwrap();
         assert_eq!(records.len(), 1, "block should contain 1 record");
 
-        let decoded_record = records
-            .get(b"key1" as &[u8])
-            .expect("Key 'key1' should exist");
+        let decoded_record = find_record(records, b"key1");
         assert_eq!(decoded_record.key, b"key1");
         assert_eq!(decoded_record.value, b"value1");
         assert_eq!(decoded_record.record_type, RecordType::Put);
@@ -267,9 +269,7 @@ mod tests {
         let records = block.data.as_ref().unwrap();
         assert_eq!(records.len(), 1, "block should contain exactly 1 record");
 
-        let decoded_record = records
-            .get(b"test_key" as &[u8])
-            .expect("Key 'test_key' should exist");
+        let decoded_record = find_record(records, b"test_key");
 
         assert_eq!(decoded_record.key, b"test_key");
         assert_eq!(decoded_record.value, b"test_value");
@@ -312,9 +312,7 @@ mod tests {
         // Verify each record matches expected data by key lookup
         // Note: BTreeMap sorts by key, so keys will be in sorted order
         for (expected_key, expected_value) in records_data.iter() {
-            let record = decoded_records
-                .get(*expected_key as &[u8])
-                .unwrap_or_else(|| panic!("Key {:?} should exist", expected_key));
+            let record = find_record(decoded_records, *expected_key);
             assert_eq!(
                 record.key, *expected_key,
                 "Key mismatch for {:?}",
@@ -372,9 +370,7 @@ mod tests {
         );
 
         // Verify record types are preserved - access by key
-        let record0 = decoded_records
-            .get(b"key1" as &[u8])
-            .expect("Key 'key1' should exist");
+        let record0 = find_record(decoded_records, b"key1");
         assert_eq!(
             record0.record_type,
             RecordType::Put,
@@ -382,9 +378,7 @@ mod tests {
         );
         assert_eq!(record0.key, b"key1");
 
-        let record1 = decoded_records
-            .get(b"key2" as &[u8])
-            .expect("Key 'key2' should exist");
+        let record1 = find_record(decoded_records, b"key2");
         assert_eq!(
             record1.record_type,
             RecordType::Put,
@@ -392,9 +386,7 @@ mod tests {
         );
         assert_eq!(record1.key, b"key2");
 
-        let record2 = decoded_records
-            .get(b"key3" as &[u8])
-            .expect("Key 'key3' should exist");
+        let record2 = find_record(decoded_records, b"key3");
         assert_eq!(
             record2.record_type,
             RecordType::Delete,
@@ -403,9 +395,7 @@ mod tests {
         assert_eq!(record2.key, b"key3");
         assert_eq!(record2.value, b"", "Delete records should have empty value");
 
-        let record3 = decoded_records
-            .get(b"key4" as &[u8])
-            .expect("Key 'key4' should exist");
+        let record3 = find_record(decoded_records, b"key4");
         assert_eq!(
             record3.record_type,
             RecordType::Delete,
@@ -465,23 +455,17 @@ mod tests {
         );
 
         // Verify short key
-        let record0 = decoded_records
-            .get(short_key as &[u8])
-            .expect("Short key should exist");
+        let record0 = find_record(decoded_records, short_key);
         assert_eq!(record0.key, short_key, "Short key mismatch");
         assert_eq!(record0.key.len(), 4, "Short key should be 4 bytes");
 
         // Verify medium key
-        let record1 = decoded_records
-            .get(medium_key as &[u8])
-            .expect("Medium key should exist");
+        let record1 = find_record(decoded_records, medium_key);
         assert_eq!(record1.key, medium_key, "Medium key mismatch");
         assert_eq!(record1.key.len(), 50, "Medium key should be 50 bytes");
 
         // Verify long key
-        let record2 = decoded_records
-            .get(long_key.as_slice() as &[u8])
-            .expect("Long key should exist");
+        let record2 = find_record(decoded_records, long_key.as_slice());
         assert_eq!(record2.key, long_key.as_slice(), "Long key mismatch");
         assert_eq!(record2.key.len(), 200, "Long key should be 200 bytes");
     }

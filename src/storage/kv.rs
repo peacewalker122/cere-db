@@ -4,6 +4,7 @@ use std::{
     fs::File,
     sync::{Arc, Mutex, RwLock},
 };
+use tokio::sync::mpsc;
 
 use crate::{
     api::api::KVEngine,
@@ -12,8 +13,10 @@ use crate::{
         self,
         log::{RecordType, search_sstable_sparse},
         manifest,
+        signal::{CompactionSignal, FlushSignal},
         sstable::SSTable,
         wal::WALRecord,
+        watcher::{compaction_watcher, flush_watcher},
     },
 };
 
@@ -29,12 +32,7 @@ pub struct PersistentKV {
     wal_id: Mutex<u64>,
 
     flush_sender: crossbeam_channel::Sender<FlushSignal>,
-}
-
-struct FlushSignal {
-    value: SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
-    wal_path: String,
-    file_id: u64,
+    compaction_sender: mpsc::Sender<CompactionSignal>,
 }
 
 fn current_millis() -> u64 {
@@ -63,7 +61,6 @@ impl PersistentKV {
                 levelstore.push(filename.as_bytes().to_vec());
             }
         }
-        levelstore.push(b"app.db".to_vec()); // for testing purpose
 
         let levelstore = Arc::new(RwLock::new(levelstore));
 
@@ -91,6 +88,8 @@ impl PersistentKV {
 
         // channel to send the "event" of current memtable to be flushed to SSTable
         let (flush_sender, flush_receiver) = crossbeam_channel::bounded::<FlushSignal>(1);
+        let (compaction_sender, mut compaction_receiver) =
+            mpsc::channel::<CompactionSignal>(storage::constant::MAXIMUM_LEVEL_FILES);
 
         let result = PersistentKV {
             memtable: SkipMap::new(),
@@ -101,12 +100,18 @@ impl PersistentKV {
             wal_path: Mutex::new(initial_wal_path),
             wal_id: Mutex::new(initial_wal_id),
             flush_sender,
+            compaction_sender,
         };
 
-        std::thread::spawn(move || {
-            loop {
-                flush_watcher(&flush_receiver, Arc::clone(&levelstore));
-            }
+        tokio::task::spawn_blocking(move || {
+            flush_watcher(&flush_receiver, Arc::clone(&levelstore));
+        });
+
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                compaction_watcher(&mut compaction_receiver).await;
+            });
         });
 
         result
@@ -232,8 +237,6 @@ impl KVEngine for PersistentKV {
         // add the size of key and value to memtable_size
         self.memtable_size += size as u64;
 
-        log::debug!("Memtable size: {} bytes", self.memtable_size);
-
         // Check if memtable size exceeds threshold
         if self.memtable_size >= storage::constant::MEMTABLE_SIZE_THRESHOLD {
             log::info!(
@@ -266,6 +269,8 @@ impl KVEngine for PersistentKV {
                     file_id: current_wal_id,
                 })
                 .expect("Failed to send memtable to flush watcher");
+
+            self.trigger_compaction_if_needed(current_wal_id)?;
 
             let next_wal_id = current_millis();
             let next_wal_path = format!("wal_{next_wal_id}.log");
@@ -305,28 +310,46 @@ impl KVEngine for PersistentKV {
     }
 }
 
-fn flush_watcher(
-    flush_receiver: &crossbeam_channel::Receiver<FlushSignal>,
-    levelstore: Arc<RwLock<Vec<Vec<u8>>>>,
-) {
-    // Non-blocking check for flush signal
-    if let Ok(signal) = flush_receiver.recv() {
-        log::info!("Received flush signal, flushing memtable to SSTable");
-        match storage::log::flush_memtable(signal.value, 0, signal.file_id, &signal.wal_path) {
-            Ok(sstable_filename) => {
-                manifest::add_file(0, &sstable_filename)
-                    .expect("Failed to update manifest after flushing SSTable");
+impl PersistentKV {
+    fn trigger_compaction_if_needed(&self, file_id: u64) -> Result<(), DBError> {
+        let levelstore = self
+            .levelstore
+            .read()
+            .map_err(|_| DBError::MutexPoisoned("mutex was poisioned".to_owned()))?;
 
-                if let Ok(mut store) = levelstore.write() {
-                    store.push(sstable_filename.as_bytes().to_vec());
-                } else {
-                    log::warn!("Failed to update levelstore after flush");
-                }
-            }
-            Err(e) => panic!("Failed to flush memtable to SSTable: {}", e),
+        log::debug!(
+            "Checking if compaction is needed, current levelstore size: {}",
+            levelstore.len()
+        );
+
+        if levelstore.len() < storage::constant::MAXIMUM_LEVEL_FILES {
+            return Ok(());
         }
 
-        log::info!("Memtable flushed successfully");
+        let files_to_compact: Vec<std::path::PathBuf> = levelstore
+            .iter()
+            .map(|filename| std::path::PathBuf::from(String::from_utf8_lossy(filename).to_string()))
+            .collect();
+
+        let compaction_signal = CompactionSignal {
+            files_to_compact,
+            compaction_level: 1,
+            file_id,
+        };
+
+        log::info!(
+            "Compaction triggered: {} files to compact at level {}, file_id: {}",
+            compaction_signal.files_to_compact.len(),
+            compaction_signal.compaction_level,
+            compaction_signal.file_id
+        );
+        self.compaction_sender
+            .try_send(compaction_signal)
+            .map_err(|err| {
+                DBError::StorageError(format!("Failed to send compaction signal: {err}"))
+            })?;
+
+        Ok(())
     }
 }
 
@@ -399,8 +422,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_active_data() {
+    #[tokio::test]
+    async fn test_active_data() {
         #[cfg(feature = "dhat-heap")]
         let _profiler = dhat::Profiler::new_heap();
 
@@ -448,6 +471,8 @@ mod tests {
 
         let result3 = kv.get(b"key99").unwrap();
         assert!(result3.is_none(), "expected None after deleting key99");
+
+        log::info!("test_active_data completed successfully");
     }
 
     #[test]

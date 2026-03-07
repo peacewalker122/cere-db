@@ -1,7 +1,3 @@
-#[cfg(feature = "dhat-heap")]
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
-
 pub mod api;
 pub mod config;
 pub mod error;

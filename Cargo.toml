@@ -16,6 +16,14 @@ crossbeam-skiplist = "0.1"
 dhat = "0.3.3"
 chrono = "0.4.43"
 crossbeam-channel = "0.5.15"
+tokio = { version = "1.43", features = [
+  "rt-multi-thread", # Enables the M:N work-stealing scheduler
+  "macros",          # Enables #[tokio::main]
+  "io-util",         # Essential for AsyncRead/AsyncWrite helpers
+  "fs",              # Asynchronous file operations for SSTables/WAL
+  "sync",            # MPSC channels for MemTable -> Flush communication
+  "time",            # Needed for timeouts (e.g., during network calls)
+] }
 
 [profile.release]
 debug = 1
