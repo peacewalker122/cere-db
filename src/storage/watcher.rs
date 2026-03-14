@@ -3,7 +3,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use tokio::{fs::File, sync::mpsc};
+use rayon::prelude::*;
+use tokio::sync::mpsc;
 
 use crate::storage::{
     self,
@@ -43,8 +44,17 @@ pub fn flush_watcher(
 // Current implementation it check the data/ directory and check each level for the number of
 // files if the count exceeds a certain threshold, it triggers a compaction process to merge
 // those files into a single SSTable and move it to the next level. This helps to optimize read performance and manage storage space effectively.
-pub async fn compaction_watcher(mut receiver: &mut mpsc::Receiver<CompactionSignal>) {
+pub async fn compaction_watcher(receiver: &mut mpsc::Receiver<CompactionSignal>) {
     while let Some(recv) = receiver.recv().await {
+        let compaction_result = tokio::task::spawn_blocking(move || process_compaction_signal(recv))
+            .await
+            .expect("Compaction worker task panicked");
+
+        compaction_result.expect("Compaction process failed");
+    }
+}
+
+fn process_compaction_signal(recv: CompactionSignal) -> Result<(), String> {
         // TODO: implement page / buffer management for this process
         // for example if the user trying to read from particular level that were being
         // compacted. We still can allowed the read request to it but there's need to handle
@@ -58,16 +68,36 @@ pub async fn compaction_watcher(mut receiver: &mut mpsc::Receiver<CompactionSign
         );
 
         // for now just compact the files and add the new sstable file to the manifest
-        let mut sources: Vec<Vec<Block>> = Vec::new();
+        let mut indexed_sources: Vec<(usize, Vec<Block>)> = recv
+            .files_to_compact
+            .iter()
+            .enumerate()
+            .collect::<Vec<_>>()
+            .par_iter()
+            .map(|(source_idx, filename)| {
+                let file_source = std::fs::File::open(filename).map_err(|error| {
+                    format!(
+                        "Failed to open SSTable for compaction '{}': {error}",
+                        filename.display()
+                    )
+                })?;
 
-        for filename in &recv.files_to_compact {
-            let file_source = File::open(filename).await.unwrap();
+                let sstable = SSTable::decode(file_source).map_err(|error| {
+                    format!(
+                        "Failed to decode SSTable for compaction '{}': {error}",
+                        filename.display()
+                    )
+                })?;
 
-            // parse the sstable file and create a SortedRecordSource
-            let sstable = SSTable::decode_async(file_source).await.unwrap();
+                Ok::<(usize, Vec<Block>), String>((*source_idx, sstable.block))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-            sources.push(sstable.block);
-        }
+        indexed_sources.sort_unstable_by_key(|(source_idx, _)| *source_idx);
+        let sources: Vec<Vec<Block>> = indexed_sources
+            .into_iter()
+            .map(|(_, blocks)| blocks)
+            .collect();
 
         log::info!(
             "Parsed {} files for compaction, preparing to merge records",
@@ -79,7 +109,8 @@ pub async fn compaction_watcher(mut receiver: &mut mpsc::Receiver<CompactionSign
             .map(|blocks| Box::new(SSTableSource::new(blocks)) as Box<dyn SortedRecordSource>)
             .collect();
 
-        let merged_records = merge_record_sources(merge_source).unwrap();
+        let merged_records = merge_record_sources(merge_source)
+            .map_err(|error| format!("Failed to merge records during compaction: {error}"))?;
 
         log::info!(
             "Merged {} records from {} files for compaction",
@@ -88,12 +119,15 @@ pub async fn compaction_watcher(mut receiver: &mut mpsc::Receiver<CompactionSign
         );
 
         let next_level = recv.compaction_level + 1;
-        let sstable_filename =
-            write_compacted_sstable_from_records(&merged_records, next_level, recv.file_id)
-                .expect("Failed to write compacted SSTable");
+        let sstable_filename = write_compacted_sstable_from_records(
+            &merged_records,
+            next_level,
+            recv.file_id,
+        )
+        .map_err(|error| format!("Failed to write compacted SSTable: {error}"))?;
 
         manifest::add_file(next_level, &sstable_filename)
-            .expect("Failed to update manifest after compaction");
+            .map_err(|error| format!("Failed to update manifest after compaction: {error}"))?;
 
         for filename in &recv.files_to_compact {
             if let Err(e) = std::fs::remove_file(filename) {
@@ -108,7 +142,8 @@ pub async fn compaction_watcher(mut receiver: &mut mpsc::Receiver<CompactionSign
             "Compaction completed successfully, new SSTable created: {}",
             sstable_filename
         );
-    }
+
+    Ok(())
 }
 
 fn write_compacted_sstable_from_records(
@@ -211,4 +246,167 @@ fn write_compacted_sstable_from_records(
     file.sync_data()?;
 
     Ok(sstable_filename)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::{
+        log::RecordType,
+        manifest,
+        record::Record,
+        sstable::{self, SSTable},
+    };
+    use crossbeam_skiplist::SkipMap;
+    use std::{
+        path::{Path, PathBuf},
+        sync::{Mutex, OnceLock},
+    };
+
+    fn with_temp_dir<T>(test_name: &str, test: impl FnOnce() -> T) -> T {
+        static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = TEST_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap();
+
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root =
+            std::env::temp_dir().join(format!("wasm-kv-watcher-{test_name}-{unique_id}"));
+
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_root).unwrap();
+
+        let result = test();
+
+        std::env::set_current_dir(original_dir).unwrap();
+        std::fs::remove_dir_all(&temp_root).ok();
+
+        result
+    }
+
+    fn build_source_sstable(
+        level: u32,
+        file_id: u64,
+        entries: &[(&[u8], &[u8], u64)],
+    ) -> PathBuf {
+        let memtable = SkipMap::new();
+        for (key, value, _timestamp) in entries {
+            memtable.insert(key.to_vec(), (RecordType::Put, value.to_vec()));
+        }
+
+        let wal_path = format!("wal_{file_id}.log");
+        std::fs::write(&wal_path, b"wal").unwrap();
+
+        let path = sstable::flush_memtable(memtable, level, file_id, &wal_path).unwrap();
+        PathBuf::from(path)
+    }
+
+    fn read_records(path: &Path) -> Vec<Record> {
+        let file = std::fs::File::open(path).unwrap();
+        let sstable = SSTable::decode(file).unwrap();
+        sstable
+            .block
+            .into_iter()
+            .flat_map(|block| block.data.unwrap_or_default().into_iter())
+            .collect()
+    }
+
+    #[test]
+    fn test_compaction_creates_next_level_and_removes_sources() {
+        with_temp_dir("compaction-next-level-removes-sources", || {
+            std::fs::create_dir_all("data/level-0").unwrap();
+            std::fs::create_dir_all("data/level-2").unwrap();
+
+            let src1 = build_source_sstable(0, 100, &[(b"k-a", b"v-a", 1)]);
+            let src2 = build_source_sstable(0, 101, &[(b"k-b", b"v-b", 2)]);
+
+            process_compaction_signal(CompactionSignal {
+                files_to_compact: vec![src1.clone(), src2.clone()],
+                compaction_level: 1,
+                file_id: 202,
+            })
+            .expect("compaction should succeed");
+
+            let compacted = Path::new("data/level-2/202.db");
+            assert!(compacted.exists(), "expected compacted SSTable at level 2");
+            assert!(!src1.exists(), "expected source file 1 to be deleted");
+            assert!(!src2.exists(), "expected source file 2 to be deleted");
+        });
+    }
+
+    #[test]
+    fn test_compaction_merges_all_input_records_into_output() {
+        with_temp_dir("compaction-merge-all-records", || {
+            std::fs::create_dir_all("data/level-0").unwrap();
+            std::fs::create_dir_all("data/level-2").unwrap();
+
+            let src1 = build_source_sstable(
+                0,
+                110,
+                &[(b"alpha", b"value-alpha", 1), (b"beta", b"value-beta", 2)],
+            );
+            let src2 = build_source_sstable(
+                0,
+                111,
+                &[(b"gamma", b"value-gamma", 3), (b"delta", b"value-delta", 4)],
+            );
+
+            process_compaction_signal(CompactionSignal {
+                files_to_compact: vec![src1, src2],
+                compaction_level: 1,
+                file_id: 303,
+            })
+            .expect("compaction should succeed");
+
+            let records = read_records(Path::new("data/level-2/303.db"));
+            assert_eq!(records.len(), 4, "expected all records to be merged");
+
+            let keys: std::collections::HashSet<Vec<u8>> =
+                records.into_iter().map(|record| record.key).collect();
+
+            assert!(keys.contains(b"alpha" as &[u8]));
+            assert!(keys.contains(b"beta" as &[u8]));
+            assert!(keys.contains(b"gamma" as &[u8]));
+            assert!(keys.contains(b"delta" as &[u8]));
+        });
+    }
+
+    #[test]
+    fn test_compaction_overlapping_keys_selects_latest_record() {
+        with_temp_dir("compaction-overlap-selects-latest", || {
+            std::fs::create_dir_all("data/level-2").unwrap();
+
+            let old = Record::new(
+                b"same-key".to_vec(),
+                b"old-value".to_vec(),
+                RecordType::Put,
+                1,
+            );
+            let new = Record::new(
+                b"same-key".to_vec(),
+                b"new-value".to_vec(),
+                RecordType::Put,
+                2,
+            );
+            let merged = vec![old, new];
+
+            let out = write_compacted_sstable_from_records(&merged, 2, 404).unwrap();
+            manifest::add_file(2, &out).unwrap();
+
+            let file = std::fs::File::open(&out).unwrap();
+            let sstable = SSTable::decode(file).unwrap();
+
+            let merge_source: Vec<Box<dyn SortedRecordSource>> = vec![Box::new(SSTableSource::new(
+                sstable.block,
+            ))];
+            let deduped = merge_record_sources(merge_source).unwrap();
+
+            assert_eq!(deduped.len(), 1, "expected dedupe to keep one record");
+            assert_eq!(deduped[0].key.as_slice(), b"same-key");
+            assert_eq!(deduped[0].value.as_slice(), b"new-value");
+            assert_eq!(deduped[0].timestamp, 2);
+        });
+    }
 }

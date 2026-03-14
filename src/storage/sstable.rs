@@ -870,16 +870,20 @@ impl SortedRecordSource for SSTableSource {
                 return Ok(None);
             }
 
-            let block = &self.blocks[self.current_block_idx - 1];
-            if let Some(records) = block.data.as_ref() {
-                if self.current_block_record_idx < records.len() {
+            let block_idx = self.current_block_idx - 1;
+            let should_advance = match self.blocks[block_idx].data.as_ref() {
+                Some(records) if self.current_block_record_idx < records.len() => {
                     let rec = records[self.current_block_record_idx].clone();
                     self.current_block_record_idx += 1;
                     return Ok(Some(rec));
-                } else {
-                    self.load_next_block();
                 }
-            } else {
+                _ => true,
+            };
+
+            if should_advance {
+                if self.current_block_idx >= self.blocks.len() {
+                    return Ok(None);
+                }
                 self.load_next_block();
             }
         }
@@ -3015,15 +3019,15 @@ mod tests {
         // Create SSTable block with mixed types
         let block_data = vec![
             Record::new(
-                b"another_deleted".to_vec(),
-                b"".to_vec(),
-                RecordType::Delete,
-                1000,
-            ),
-            Record::new(
                 b"another_active".to_vec(),
                 b"data".to_vec(),
                 RecordType::Put,
+                1000,
+            ),
+            Record::new(
+                b"another_deleted".to_vec(),
+                b"".to_vec(),
+                RecordType::Delete,
                 1000,
             ),
         ];

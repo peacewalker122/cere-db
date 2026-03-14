@@ -107,11 +107,8 @@ impl PersistentKV {
             flush_watcher(&flush_receiver, Arc::clone(&levelstore));
         });
 
-        tokio::task::spawn_blocking(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async move {
-                compaction_watcher(&mut compaction_receiver).await;
-            });
+        tokio::task::spawn(async move {
+            compaction_watcher(&mut compaction_receiver).await;
         });
 
         result
@@ -733,5 +730,65 @@ mod tests {
             let missing = kv.get(b"key-missing").unwrap();
             assert!(missing.is_none(), "expected None for missing key");
         });
+    }
+
+    #[tokio::test]
+    async fn test_compaction_pipeline_integrates_with_kv_signaling() {
+        with_temp_dir("kv-compaction-integration", || async {
+            init_logger();
+            std::fs::create_dir_all("data/level-0").unwrap();
+            std::fs::create_dir_all("data/level-2").unwrap();
+            std::fs::create_dir_all("archive").unwrap();
+
+            let wal_path_0 = "wal_9100.log";
+            let wal_path_1 = "wal_9101.log";
+            std::fs::write(wal_path_0, b"wal").unwrap();
+            std::fs::write(wal_path_1, b"wal").unwrap();
+
+            let memtable_0 = SkipMap::new();
+            memtable_0.insert(b"key-a".to_vec(), (RecordType::Put, b"value-a".to_vec()));
+            let memtable_1 = SkipMap::new();
+            memtable_1.insert(b"key-b".to_vec(), (RecordType::Put, b"value-b".to_vec()));
+
+            let sstable_0 = sstable::flush_memtable(memtable_0, 0, 9100, wal_path_0).unwrap();
+            let sstable_1 = sstable::flush_memtable(memtable_1, 0, 9101, wal_path_1).unwrap();
+
+            let kv = PersistentKV::new();
+            {
+                let mut store = kv.levelstore.write().unwrap();
+                store.clear();
+                store.push(sstable_0.as_bytes().to_vec());
+                store.push(sstable_1.as_bytes().to_vec());
+            }
+
+            kv.trigger_compaction_if_needed(9999).unwrap();
+
+            let compacted_path = Path::new("data/level-2/9999.db");
+            let mut seen_compacted = false;
+            for _ in 0..40 {
+                if compacted_path.exists() {
+                    seen_compacted = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+
+            assert!(
+                seen_compacted,
+                "expected compaction output to be created at data/level-2/9999.db"
+            );
+            assert!(
+                !Path::new(&sstable_0).exists() && !Path::new(&sstable_1).exists(),
+                "expected source SSTables to be removed after compaction"
+            );
+
+            let manifest_map = manifest::read_manifest().unwrap();
+            let level2_files = manifest_map.get(&2).expect("expected level-2 entries in manifest");
+            assert!(
+                level2_files.iter().any(|file| file.ends_with("data/level-2/9999.db")),
+                "expected compacted file in manifest level-2 entries"
+            );
+        })
+        .await;
     }
 }
