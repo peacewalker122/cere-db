@@ -1,16 +1,16 @@
 pub use super::block::{Block, BlockBuilder};
 pub use super::constant::{WAL_HEADER_SIZE, WAL_MAGIC, WAL_VERSION};
 pub use super::record::{
+    decode_record,
     // Backward compatibility exports (deprecated)
     DecodeRecordResult,
     Record,
     RecordType,
-    decode_record,
 };
 pub use super::sstable::{
-    IndexEntry, SSTableFooter, SparseIndexEntry, flush_memtable, read_sstable_bloom,
-    read_sstable_footer, read_sstable_index, read_sstable_sparse_index, search_sstable,
-    search_sstable_sparse, search_sstable_with_bloom,
+    flush_memtable, read_sstable_bloom, read_sstable_footer, read_sstable_index,
+    read_sstable_sparse_index, search_sstable, search_sstable_sparse, search_sstable_with_bloom,
+    IndexEntry, SSTableFooter, SparseIndexEntry,
 };
 use crate::storage::wal::{WALHeader, WALRecord};
 use std::fs::File;
@@ -65,7 +65,8 @@ mod tests {
 
     #[test]
     fn test_store_and_decode_log() {
-        let test_file = "test_wal.log";
+        let test_file_path = std::env::temp_dir().join("wasm-kv-test_store_and_decode_log.log");
+        let test_file = test_file_path.to_str().unwrap();
 
         // Clean up any existing test file
         let _ = std::fs::remove_file(test_file);
@@ -107,7 +108,8 @@ mod tests {
 
     #[test]
     fn test_store_tombstone() {
-        let test_file = "test_wal_tombstone.log";
+        let test_file_path = std::env::temp_dir().join("wasm-kv-test_store_tombstone.log");
+        let test_file = test_file_path.to_str().unwrap();
 
         // Clean up any existing test file
         let _ = std::fs::remove_file(test_file);
@@ -134,7 +136,7 @@ mod tests {
         // Read it back
         let file = std::fs::File::open(test_file).unwrap();
         let result = WAL::decode(file).unwrap(); // this is doesn't
-        // directly read the wal, it read the header first, hence we need an approach that // can skip the header
+                                                 // directly read the wal, it read the header first, hence we need an approach that // can skip the header
 
         for record in result.records {
             if record.key == b"deleted_key" {
@@ -150,7 +152,8 @@ mod tests {
 
     #[test]
     fn test_wal_header() {
-        let test_file = "test_wal_header.log";
+        let test_file_path = std::env::temp_dir().join("wasm-kv-test_wal_header.log");
+        let test_file = test_file_path.to_str().unwrap();
 
         // Clean up any existing test file
         let _ = std::fs::remove_file(test_file);
@@ -185,7 +188,8 @@ mod tests {
 
     #[test]
     fn test_lsn_increment() {
-        let test_file = "test_wal_lsn.log";
+        let test_file = std::env::temp_dir().join("wasm-kv-test_wal_lsn.log");
+        let test_file = test_file.to_str().unwrap();
 
         // Clean up any existing test file
         let _ = std::fs::remove_file(test_file);
@@ -228,7 +232,8 @@ mod tests {
 
     #[test]
     fn test_lsn_increment_concurrent() {
-        let test_file = "test_wal_lsn_concurrent.log";
+        let test_file_path = std::env::temp_dir().join("wasm-kv-test_wal_lsn_concurrent.log");
+        let test_file = test_file_path.to_str().unwrap();
         let _ = std::fs::remove_file(test_file);
 
         const THREADS: usize = 8;

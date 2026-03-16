@@ -1,6 +1,8 @@
 pub mod block;
 pub mod bloom;
+pub mod compaction;
 pub mod constant;
+pub mod flush;
 pub mod kv;
 mod levelstore;
 pub mod log;

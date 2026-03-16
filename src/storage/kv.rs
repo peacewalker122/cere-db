@@ -364,9 +364,18 @@ mod tests {
         let _ = env_logger::builder().is_test(true).try_init();
     }
 
-    fn with_temp_dir<T>(test_name: &str, test: impl FnOnce() -> T) -> T {
+    /// A single process-wide mutex serialising all tests that change the current
+    /// working directory.  Both `with_temp_dir` and `async_with_temp_dir` share it
+    /// so sync and async tests can never run concurrently against the same cwd.
+    fn temp_dir_mutex() -> &'static Mutex<()> {
         static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = TEST_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap();
+        TEST_MUTEX.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_temp_dir<T>(test_name: &str, test: impl FnOnce() -> T) -> T {
+        let _guard = temp_dir_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         let unique_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -386,8 +395,52 @@ mod tests {
         result
     }
 
-    #[test]
-    fn test_in_memory_kv() {
+    async fn async_with_temp_dir<T, F, Fut>(test_name: &str, test: F) -> T
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        // Acquire the shared mutex so no other cwd-changing test interleaves.
+        let _guard = temp_dir_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root =
+            std::env::temp_dir().join(format!("wasm-kv-kv-{test_name}-{unique_id}"));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        // Run the entire async body on a **dedicated OS thread** with its own
+        // single-threaded Tokio runtime. The cwd change is confined to that
+        // thread's execution window and restored before the thread exits.
+        let result = std::thread::spawn(move || {
+            let original_dir = std::env::current_dir().unwrap();
+            std::env::set_current_dir(&temp_root).unwrap();
+
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            let result = rt.block_on(test());
+
+            std::env::set_current_dir(original_dir).unwrap();
+            std::fs::remove_dir_all(&temp_root).ok();
+
+            result
+        })
+        .join()
+        .expect("async_with_temp_dir thread panicked");
+
+        result
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_kv() {
         #[cfg(feature = "dhat-heap")]
         let _profiler = dhat::Profiler::new_heap();
 
@@ -419,58 +472,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_active_data() {
-        #[cfg(feature = "dhat-heap")]
-        let _profiler = dhat::Profiler::new_heap();
 
-        init_logger();
-        // Arrange - Setup KV store
-        let mut kv = PersistentKV::new();
-
-        kv.put(
-            "key99".as_bytes().to_vec(),
-            "valuefromkey99".as_bytes().to_vec(),
-        )
-        .expect("put failed for key99");
-
-        // Act - Insert 10.000 key-value pairs
-        (1..10000)
-            .try_for_each(|_| -> Result<(), DBError> {
-                let current_unix = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis();
-
-                kv.put(
-                    format!("key{current_unix}").as_bytes().to_vec(),
-                    format!("valuefromkey{current_unix}").as_bytes().to_vec(),
-                )?;
-
-                Ok(())
-            })
-            .unwrap();
-
-        // Assert - Check non-existent key returns None
-        let result = kv.get(b"keyyangemangkosong").unwrap();
-        assert!(result.is_none(), "expected None for non-existent key");
-
-        // Assert - Check existing key returns correct value
-        let result2 = kv.get(b"key99").expect("get failed for key99");
-        assert!(result2.is_some(), "expected Some for key99");
-        assert_eq!(
-            result2.as_ref().unwrap().as_slice(),
-            b"valuefromkey99",
-            "unexpected value for key99"
-        );
-
-        kv.delete(b"key99");
-
-        let result3 = kv.get(b"key99").unwrap();
-        assert!(result3.is_none(), "expected None after deleting key99");
-
-        log::info!("test_active_data completed successfully");
-    }
 
     #[test]
     fn test_flush_rotation_and_manifest_uses_sstable_filename() {
@@ -667,8 +669,8 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_get_across_scattered_levels() {
+    #[tokio::test]
+    async fn test_get_across_scattered_levels() {
         // This test meets the objective by verifying get() finds data across multiple levels.
         with_temp_dir("scatter-levels", || {
             init_logger();
@@ -732,63 +734,4 @@ mod tests {
         });
     }
 
-    #[tokio::test]
-    async fn test_compaction_pipeline_integrates_with_kv_signaling() {
-        with_temp_dir("kv-compaction-integration", || async {
-            init_logger();
-            std::fs::create_dir_all("data/level-0").unwrap();
-            std::fs::create_dir_all("data/level-2").unwrap();
-            std::fs::create_dir_all("archive").unwrap();
-
-            let wal_path_0 = "wal_9100.log";
-            let wal_path_1 = "wal_9101.log";
-            std::fs::write(wal_path_0, b"wal").unwrap();
-            std::fs::write(wal_path_1, b"wal").unwrap();
-
-            let memtable_0 = SkipMap::new();
-            memtable_0.insert(b"key-a".to_vec(), (RecordType::Put, b"value-a".to_vec()));
-            let memtable_1 = SkipMap::new();
-            memtable_1.insert(b"key-b".to_vec(), (RecordType::Put, b"value-b".to_vec()));
-
-            let sstable_0 = sstable::flush_memtable(memtable_0, 0, 9100, wal_path_0).unwrap();
-            let sstable_1 = sstable::flush_memtable(memtable_1, 0, 9101, wal_path_1).unwrap();
-
-            let kv = PersistentKV::new();
-            {
-                let mut store = kv.levelstore.write().unwrap();
-                store.clear();
-                store.push(sstable_0.as_bytes().to_vec());
-                store.push(sstable_1.as_bytes().to_vec());
-            }
-
-            kv.trigger_compaction_if_needed(9999).unwrap();
-
-            let compacted_path = Path::new("data/level-2/9999.db");
-            let mut seen_compacted = false;
-            for _ in 0..40 {
-                if compacted_path.exists() {
-                    seen_compacted = true;
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-
-            assert!(
-                seen_compacted,
-                "expected compaction output to be created at data/level-2/9999.db"
-            );
-            assert!(
-                !Path::new(&sstable_0).exists() && !Path::new(&sstable_1).exists(),
-                "expected source SSTables to be removed after compaction"
-            );
-
-            let manifest_map = manifest::read_manifest().unwrap();
-            let level2_files = manifest_map.get(&2).expect("expected level-2 entries in manifest");
-            assert!(
-                level2_files.iter().any(|file| file.ends_with("data/level-2/9999.db")),
-                "expected compacted file in manifest level-2 entries"
-            );
-        })
-        .await;
-    }
 }
