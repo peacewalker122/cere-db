@@ -1,7 +1,7 @@
 use crossbeam_skiplist::SkipMap;
 use std::{
     borrow::Cow,
-    fs::File,
+    fs::{self, File},
     sync::{Arc, Mutex, RwLock},
 };
 use tokio::sync::mpsc;
@@ -15,7 +15,7 @@ use crate::{
         manifest,
         signal::{CompactionSignal, FlushSignal},
         sstable::SSTable,
-        wal::WALRecord,
+        wal::{self, WALRecord},
         watcher::{compaction_watcher, flush_watcher},
     },
 };
@@ -77,7 +77,19 @@ impl PersistentKV {
             levelstore_len
         );
 
-        let initial_wal_id = current_millis();
+        let restored_memtable = SkipMap::new();
+        let (restored_entries, restored_size, max_restored_wal_id) =
+            Self::restore_from_existing_wals(&restored_memtable);
+
+        if restored_entries > 0 {
+            log::info!(
+                "Restored {} WAL records into memtable ({} bytes)",
+                restored_entries,
+                restored_size
+            );
+        }
+
+        let initial_wal_id = current_millis().max(max_restored_wal_id.saturating_add(1));
         let initial_wal_path = format!("wal_{initial_wal_id}.log");
         let wal_file = File::options()
             .read(true)
@@ -92,9 +104,9 @@ impl PersistentKV {
             mpsc::channel::<CompactionSignal>(storage::constant::MAXIMUM_LEVEL_FILES);
 
         let result = PersistentKV {
-            memtable: SkipMap::new(),
+            memtable: restored_memtable,
             levelstore: Arc::clone(&levelstore),
-            memtable_size: 0,
+            memtable_size: restored_size,
             wal: WALRecord::new(),
             wal_file: Mutex::new(wal_file),
             wal_path: Mutex::new(initial_wal_path),
@@ -112,6 +124,85 @@ impl PersistentKV {
         });
 
         result
+    }
+
+    fn restore_from_existing_wals(
+        memtable: &SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
+    ) -> (usize, u64, u64) {
+        let wal_files = Self::discover_wal_files();
+        if wal_files.is_empty() {
+            return (0, 0, 0);
+        }
+
+        let mut restored_entries = 0usize;
+        let mut memtable_size = 0u64;
+
+        for (wal_id, path) in wal_files.iter() {
+            match fs::read(path) {
+                Ok(bytes) => match wal::recover(&bytes) {
+                    Ok(records) => {
+                        for record in records {
+                            match record.record_type {
+                                RecordType::Put => {
+                                    memtable_size = memtable_size.saturating_add(
+                                        (record.key.len() + record.value.len()) as u64,
+                                    );
+                                    memtable.insert(record.key, (RecordType::Put, record.value));
+                                }
+                                RecordType::Delete => {
+                                    memtable_size =
+                                        memtable_size.saturating_add(record.key.len() as u64);
+                                    memtable.insert(record.key, (RecordType::Delete, Vec::new()));
+                                }
+                            }
+                            restored_entries += 1;
+                        }
+                    }
+                    Err(err) => {
+                        log::warn!("Failed to recover WAL {} ({}): {}", wal_id, path, err);
+                    }
+                },
+                Err(err) => {
+                    log::warn!("Failed to read WAL {} ({}): {}", wal_id, path, err);
+                }
+            }
+        }
+
+        let max_wal_id = wal_files.last().map(|(id, _)| *id).unwrap_or(0);
+        (restored_entries, memtable_size, max_wal_id)
+    }
+
+    fn discover_wal_files() -> Vec<(u64, String)> {
+        let mut wal_files: Vec<(u64, String)> = match fs::read_dir(".") {
+            Ok(entries) => entries
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let file_name = entry.file_name();
+                    let file_name = file_name.to_string_lossy();
+                    Self::parse_wal_filename(&file_name)
+                        .map(|wal_id| (wal_id, entry.path().to_string_lossy().to_string()))
+                })
+                .collect(),
+            Err(err) => {
+                log::warn!(
+                    "Failed to read working directory for WAL discovery: {}",
+                    err
+                );
+                Vec::new()
+            }
+        };
+
+        wal_files.sort_by_key(|(wal_id, _)| *wal_id);
+        wal_files
+    }
+
+    fn parse_wal_filename(file_name: &str) -> Option<u64> {
+        if !file_name.starts_with("wal_") || !file_name.ends_with(".log") {
+            return None;
+        }
+
+        let id_part = &file_name[4..file_name.len() - 4];
+        id_part.parse::<u64>().ok()
     }
 }
 
@@ -373,9 +464,7 @@ mod tests {
     }
 
     fn with_temp_dir<T>(test_name: &str, test: impl FnOnce() -> T) -> T {
-        let _guard = temp_dir_mutex()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = temp_dir_mutex().lock().unwrap_or_else(|e| e.into_inner());
 
         let unique_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -402,16 +491,13 @@ mod tests {
         T: Send + 'static,
     {
         // Acquire the shared mutex so no other cwd-changing test interleaves.
-        let _guard = temp_dir_mutex()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = temp_dir_mutex().lock().unwrap_or_else(|e| e.into_inner());
 
         let unique_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let temp_root =
-            std::env::temp_dir().join(format!("wasm-kv-kv-{test_name}-{unique_id}"));
+        let temp_root = std::env::temp_dir().join(format!("wasm-kv-kv-{test_name}-{unique_id}"));
         std::fs::create_dir_all(&temp_root).unwrap();
 
         // Run the entire async body on a **dedicated OS thread** with its own
@@ -471,8 +557,6 @@ mod tests {
             result
         );
     }
-
-
 
     #[test]
     fn test_flush_rotation_and_manifest_uses_sstable_filename() {
@@ -670,6 +754,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_startup_restores_from_wal_files() {
+        with_temp_dir("startup-restores-from-wal", || {
+            let wal_id = 9999;
+            let wal_path = format!("wal_{wal_id}.log");
+            let mut wal_file = File::options()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&wal_path)
+                .unwrap();
+
+            let mut wal_record = WALRecord::new();
+            wal_record.value = b"value-a".to_vec();
+            storage::log::store_log(
+                &mut wal_file,
+                &b"alpha".to_vec(),
+                &b"value-a".to_vec(),
+                RecordType::Put,
+                &wal_record,
+            )
+            .unwrap();
+
+            wal_record.value = Vec::new();
+            storage::log::store_log(
+                &mut wal_file,
+                &b"beta".to_vec(),
+                &Vec::new(),
+                RecordType::Delete,
+                &wal_record,
+            )
+            .unwrap();
+
+            let kv = PersistentKV::new();
+
+            let alpha = kv.get(b"alpha").expect("get failed for alpha");
+            assert!(alpha.is_some(), "expected restored alpha from WAL");
+            assert_eq!(
+                alpha.as_ref().unwrap().as_slice(),
+                b"value-a",
+                "unexpected restored value for alpha"
+            );
+
+            let beta = kv.get(b"beta").expect("get failed for beta");
+            assert!(
+                beta.is_none(),
+                "expected beta tombstone to restore as deleted"
+            );
+        });
+    }
+
+    #[tokio::test]
     async fn test_get_across_scattered_levels() {
         // This test meets the objective by verifying get() finds data across multiple levels.
         with_temp_dir("scatter-levels", || {
@@ -733,5 +868,4 @@ mod tests {
             assert!(missing.is_none(), "expected None for missing key");
         });
     }
-
 }

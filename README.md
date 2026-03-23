@@ -91,6 +91,8 @@ An LSM-tree based key-value store built from scratch in Rust. Built as a learnin
 - **Concurrent Flush** — Channel-based background flush watcher thread decoupled from the write path
 - **Tombstone Deletes** — Logical deletes via `RecordType::Delete` markers, cleaned up during compaction
 - **Crash Recovery** — WAL replay on startup to rebuild MemTable state
+- **CLI REPL** — Interactive command loop with `SET`, `GET`, `DELETE`, `EXIT/QUIT`
+- **Command Core Abstraction** — Transport-agnostic command parse/execute layer reusable for future TCP transport
 - **CLI** — Configurable via `clap` with log level and data directory options
 
 ## Project Structure
@@ -99,6 +101,7 @@ An LSM-tree based key-value store built from scratch in Rust. Built as a learnin
 src/
 ├── main.rs                 # CLI entry point
 ├── lib.rs                  # Public crate API
+├── command.rs              # Transport-agnostic command parser/executor
 ├── config.rs               # CLI config (clap)
 ├── error.rs                # Error types (thiserror)
 ├── api/
@@ -145,6 +148,22 @@ cargo run -- --verbose
 # Custom log level and data directory
 cargo run -- --log-level trace --data-dir ./mydata
 ```
+
+When running, the binary starts an interactive REPL:
+
+```text
+wasm-kv CLI REPL (SET/GET/DELETE). Type EXIT to quit.
+> SET greeting "hello world"
+OK
+> GET greeting
+hello world
+> DELETE greeting
+OK
+> GET greeting
+(nil)
+```
+
+`SET` supports unquoted and quoted values, including escaped quotes inside quoted values.
 
 ### Test
 

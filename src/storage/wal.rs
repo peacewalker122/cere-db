@@ -140,8 +140,6 @@ impl WALRecord {
         key: &[u8],
         value: &[u8],
     ) -> Result<(), std::io::Error> {
-        let checksum = crc32fast::hash(&self.value);
-
         let lsn = match &self.lsn {
             Some(atomic_lsn) => atomic_lsn.fetch_add(1, atomic::Ordering::SeqCst),
             None => Err(std::io::Error::new(
@@ -156,7 +154,19 @@ impl WALRecord {
         writer.write_all(key)?;
         writer.write_all(&(value.len() as u64).to_be_bytes())?;
         writer.write_all(value)?;
+
+        let checksum = crc32fast::hash(value);
         writer.write_all(&checksum.to_be_bytes())?;
+
+        log::info!(
+            "Encoded record with LSN {}: key_len={},key={}, value_len={}, value={}, checksum={}",
+            lsn,
+            key.len(),
+            String::from_utf8_lossy(key),
+            value.len(),
+            String::from_utf8_lossy(value),
+            checksum
+        );
 
         Ok(())
     }
@@ -198,7 +208,23 @@ impl WALRecord {
         buf.read_exact(&mut crc_buf)?;
         let checksum = u32::from_be_bytes(crc_buf);
 
-        if crc32fast::hash(&value_bytes) != checksum {
+        log::info!(
+            "Decoded record with LSN {}: key_len={}, value_len={}, checksum={}",
+            lsn,
+            key_len,
+            value_len,
+            checksum
+        );
+
+        let crc = crc32fast::hash(&value_bytes);
+
+        if crc != checksum {
+            log::error!(
+                "Checksum mismatch for record with LSN {}: expected {}, got {}",
+                lsn,
+                checksum,
+                crc32fast::hash(&value_bytes)
+            );
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Checksum mismatch",
