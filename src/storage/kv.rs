@@ -569,7 +569,7 @@ mod tests {
         );
 
         // Act - Delete the key
-        kv.delete(b"key1");
+        kv.delete(b"key1".to_vec()).expect("delete failed");
 
         // Assert - Verify key is deleted (returns None)
         let result = kv.get(b"key1").expect("get failed");
