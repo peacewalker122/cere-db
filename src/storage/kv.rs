@@ -1,6 +1,7 @@
 use crossbeam_skiplist::SkipMap;
 use std::{
     borrow::Cow,
+    cmp::Reverse,
     fs::{self, File},
     sync::{Arc, Mutex, RwLock},
 };
@@ -142,6 +143,13 @@ impl PersistentKV {
                 Ok(bytes) => match wal::recover(&bytes) {
                     Ok(records) => {
                         for record in records {
+                            log::info!(
+                                "Restoring WAL record from {}: key={:?}, type={:?}",
+                                path,
+                                String::from_utf8_lossy(&record.key),
+                                record.record_type
+                            );
+
                             match record.record_type {
                                 RecordType::Put => {
                                     memtable_size = memtable_size.saturating_add(
@@ -192,7 +200,7 @@ impl PersistentKV {
             }
         };
 
-        wal_files.sort_by_key(|(wal_id, _)| *wal_id);
+        wal_files.sort_by_key(|(id, _)| *id); // Sort by descending WAL ID (newest first)
         wal_files
     }
 
@@ -391,10 +399,24 @@ impl KVEngine for PersistentKV {
         Ok(())
     }
 
-    fn delete(&mut self, key: &[u8]) {
-        log::debug!("Deleting key: {:?}", String::from_utf8_lossy(key));
+    fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
+        log::debug!("Deleting key: {:?}", String::from_utf8_lossy(&key));
+
+        let (_offset, lsn) = storage::log::store_log(
+            self.wal_file
+                .get_mut()
+                .map_err(|_| DBError::MutexPoisoned("mutex was poisioned".to_owned()))?,
+            &key,
+            &Vec::new(), // Empty value for delete
+            RecordType::Delete,
+            &self.wal,
+        )?;
+        log::trace!("WAL write complete with LSN: {}", lsn);
+
         self.memtable
             .insert(key.to_vec(), (RecordType::Delete, vec![]));
+
+        Ok(())
     }
 }
 

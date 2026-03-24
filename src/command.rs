@@ -85,7 +85,7 @@ pub fn execute_command<E: KVEngine>(engine: &mut E, command: Command) -> Result<
             None => Ok(Response::Nil),
         },
         Command::Delete { key } => {
-            engine.delete(key.as_bytes());
+            engine.delete(key.into_bytes())?;
             Ok(Response::Ok)
         }
         Command::Exit => Ok(Response::Bye),
@@ -171,8 +171,9 @@ mod tests {
             Ok(())
         }
 
-        fn delete(&mut self, key: &[u8]) {
-            self.data.remove(key);
+        fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
+            self.data.remove(&key);
+            Ok(())
         }
     }
 
