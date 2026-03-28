@@ -1,6 +1,6 @@
 use crossbeam_skiplist::SkipMap;
 
-use crate::storage::log::RecordType;
+use crate::storage::record::RecordType;
 
 pub struct FlushSignal {
     pub value: SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,

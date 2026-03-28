@@ -1,7 +1,6 @@
 use crossbeam_skiplist::SkipMap;
 use std::{
     borrow::Cow,
-    cmp::Reverse,
     fs::{self, File},
     sync::{Arc, Mutex, RwLock},
 };
@@ -11,17 +10,15 @@ use crate::{
     api::api::KVEngine,
     error::DBError,
     storage::{
-        self,
-        log::{RecordType, search_sstable_sparse},
-        manifest,
+        self, manifest,
+        record::RecordType,
         signal::{CompactionSignal, FlushSignal},
-        sstable::SSTable,
-        wal::{self, WALRecord},
+        sstable::{SSTable, search_sstable_sparse},
+        wal::{self, WALManager, WALRecord},
         watcher::{compaction_watcher, flush_watcher},
     },
 };
 
-#[derive(Debug)]
 pub struct PersistentKV {
     pub memtable: SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
     pub levelstore: Arc<RwLock<Vec<Vec<u8>>>>,
@@ -78,9 +75,11 @@ impl PersistentKV {
             levelstore_len
         );
 
+        let mut wal_manager = wal::WAL::new();
+
         let restored_memtable = SkipMap::new();
         let (restored_entries, restored_size, max_restored_wal_id) =
-            Self::restore_from_existing_wals(&restored_memtable);
+            Self::restore_from_existing_wals(&restored_memtable, Box::new(wal_manager));
 
         if restored_entries > 0 {
             log::info!(
@@ -129,6 +128,7 @@ impl PersistentKV {
 
     fn restore_from_existing_wals(
         memtable: &SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
+        wal_manager: Box<dyn WALManager>,
     ) -> (usize, u64, u64) {
         let wal_files = Self::discover_wal_files();
         if wal_files.is_empty() {
@@ -140,7 +140,7 @@ impl PersistentKV {
 
         for (wal_id, path) in wal_files.iter() {
             match fs::read(path) {
-                Ok(bytes) => match wal::recover(&bytes) {
+                Ok(bytes) => match wal_manager.recover(&bytes) {
                     Ok(records) => {
                         for record in records {
                             log::info!(
@@ -163,6 +163,7 @@ impl PersistentKV {
                                     memtable.insert(record.key, (RecordType::Delete, Vec::new()));
                                 }
                             }
+
                             restored_entries += 1;
                         }
                     }
@@ -317,7 +318,7 @@ impl KVEngine for PersistentKV {
 
         let size = key.len() + value.len();
         // Write to WAL and get the LSN
-        let (_offset, lsn) = storage::log::store_log(
+        let (_offset, lsn) = storage::wal::store_log(
             self.wal_file
                 .get_mut()
                 .map_err(|_| DBError::MutexPoisoned("mutex was poisioned".to_owned()))?,
@@ -402,7 +403,7 @@ impl KVEngine for PersistentKV {
     fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
         log::debug!("Deleting key: {:?}", String::from_utf8_lossy(&key));
 
-        let (_offset, lsn) = storage::log::store_log(
+        let (_offset, lsn) = storage::wal::store_log(
             self.wal_file
                 .get_mut()
                 .map_err(|_| DBError::MutexPoisoned("mutex was poisioned".to_owned()))?,
@@ -679,7 +680,7 @@ mod tests {
 
             let mut wal_record = WALRecord::new();
             wal_record.value = b"value-alpha".to_vec();
-            storage::log::store_log(
+            storage::wal::store_log(
                 &mut wal_file,
                 &b"alpha".to_vec(),
                 &b"value-alpha".to_vec(),
@@ -688,7 +689,7 @@ mod tests {
             )
             .unwrap();
             wal_record.value = Vec::new();
-            storage::log::store_log(
+            storage::wal::store_log(
                 &mut wal_file,
                 &b"beta".to_vec(),
                 &Vec::new(),
@@ -697,7 +698,7 @@ mod tests {
             )
             .unwrap();
             wal_record.value = b"value-gamma".to_vec();
-            storage::log::store_log(
+            storage::wal::store_log(
                 &mut wal_file,
                 &b"gamma".to_vec(),
                 &b"value-gamma".to_vec(),
@@ -751,7 +752,7 @@ mod tests {
 
             let mut wal_record = WALRecord::new();
             wal_record.value = b"value-alpha".to_vec();
-            storage::log::store_log(
+            storage::wal::store_log(
                 &mut wal_file,
                 &b"alpha".to_vec(),
                 &b"value-alpha".to_vec(),
@@ -789,7 +790,7 @@ mod tests {
 
             let mut wal_record = WALRecord::new();
             wal_record.value = b"value-a".to_vec();
-            storage::log::store_log(
+            storage::wal::store_log(
                 &mut wal_file,
                 &b"alpha".to_vec(),
                 &b"value-a".to_vec(),
@@ -799,7 +800,7 @@ mod tests {
             .unwrap();
 
             wal_record.value = Vec::new();
-            storage::log::store_log(
+            storage::wal::store_log(
                 &mut wal_file,
                 &b"beta".to_vec(),
                 &Vec::new(),

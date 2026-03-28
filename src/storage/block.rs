@@ -1,9 +1,6 @@
 use std::io::{Read, Seek, SeekFrom};
 
-use crate::{
-    error::DBError,
-    storage::{log::Record, record},
-};
+use crate::{error::DBError, storage::record::Record};
 
 use super::constant::SSTABLE_BLOCK_SIZE;
 
@@ -165,7 +162,7 @@ impl Block {
             // we want to traverse and decode each record that available in
             // this block
 
-            let record = record::Record::decode(data)?;
+            let record = Record::decode(data)?;
             records.push(record);
         }
 

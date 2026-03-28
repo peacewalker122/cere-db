@@ -1,14 +1,9 @@
 use crossbeam_skiplist::SkipMap;
 use std::{fs::OpenOptions, io::Write};
 
-use crate::storage::{
-    block::BlockBuilder,
-    bloom::BloomFilter,
-    log::Record,
-    record::RecordType,
-};
+use crate::storage::{block::BlockBuilder, bloom::BloomFilter, record::Record, record::RecordType};
 
-use super::sstable::{SparseIndexEntry, SSTableFooter};
+use super::sstable::{SSTableFooter, SparseIndexEntry};
 
 const DATA_DIR: &str = "data";
 const ARCHIVE_DIR: &str = "archive";
@@ -243,8 +238,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let temp_root =
-            std::env::temp_dir().join(format!("wasm-kv-flush-{test_name}-{unique_id}"));
+        let temp_root = std::env::temp_dir().join(format!("wasm-kv-flush-{test_name}-{unique_id}"));
 
         std::fs::create_dir_all(&temp_root).unwrap();
         let original_dir = std::env::current_dir().unwrap();

@@ -1,16 +1,16 @@
 pub use super::block::{Block, BlockBuilder};
 pub use super::constant::{WAL_HEADER_SIZE, WAL_MAGIC, WAL_VERSION};
 pub use super::record::{
-    decode_record,
     // Backward compatibility exports (deprecated)
     DecodeRecordResult,
     Record,
     RecordType,
+    decode_record,
 };
 pub use super::sstable::{
-    flush_memtable, read_sstable_bloom, read_sstable_footer, read_sstable_index,
-    read_sstable_sparse_index, search_sstable, search_sstable_sparse, search_sstable_with_bloom,
-    IndexEntry, SSTableFooter, SparseIndexEntry,
+    IndexEntry, SSTableFooter, SparseIndexEntry, flush_memtable, read_sstable_bloom,
+    read_sstable_footer, read_sstable_index, read_sstable_sparse_index, search_sstable,
+    search_sstable_sparse, search_sstable_with_bloom,
 };
 use crate::storage::wal::{WALHeader, WALRecord};
 use std::fs::File;
@@ -136,7 +136,7 @@ mod tests {
         // Read it back
         let file = std::fs::File::open(test_file).unwrap();
         let result = WAL::decode(file).unwrap(); // this is doesn't
-                                                 // directly read the wal, it read the header first, hence we need an approach that // can skip the header
+        // directly read the wal, it read the header first, hence we need an approach that // can skip the header
 
         for record in result.records {
             if record.key == b"deleted_key" {

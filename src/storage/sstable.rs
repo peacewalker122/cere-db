@@ -7,14 +7,15 @@ use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt};
 use crate::{
     error::DBError,
     storage::{
-        block::BlockBuilder,
+        block::{Block, BlockBuilder},
         bloom::BloomFilter,
-        log::{Block, Record},
-        record::RecordType,
+        record::{Record, RecordType},
     },
 };
 
-pub use super::compaction::{SSTableSource, SortedRecordSource, merge_record_sources, merge_sstables};
+pub use super::compaction::{
+    SSTableSource, SortedRecordSource, merge_record_sources, merge_sstables,
+};
 pub use super::flush::flush_memtable;
 
 // The structure itself is
@@ -2195,5 +2196,4 @@ mod tests {
             );
         });
     }
-
 }

@@ -2,13 +2,9 @@ use crossbeam_skiplist::SkipMap;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 
-use crate::{
-    error::DBError,
-    storage::{
-        log::{Block, Record},
-        record::RecordType,
-    },
-};
+use crate::storage::block::Block;
+use crate::storage::record::Record;
+use crate::{error::DBError, storage::record::RecordType};
 
 pub trait SortedRecordSource {
     fn next_record(&mut self) -> Result<Option<Record>, DBError>;

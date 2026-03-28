@@ -8,9 +8,11 @@ use tokio::sync::mpsc;
 
 use crate::storage::{
     self,
+    block::Block,
     bloom::BloomFilter,
-    log::{Block, Record},
+    flush::flush_memtable,
     manifest,
+    record::Record,
     signal::{CompactionSignal, FlushSignal},
     sstable::{SSTable, SSTableSource, SortedRecordSource, merge_record_sources},
 };
@@ -22,7 +24,7 @@ pub fn flush_watcher(
     // Non-blocking check for flush signal
     if let Ok(signal) = flush_receiver.recv() {
         log::info!("Received flush signal, flushing memtable to SSTable");
-        match storage::log::flush_memtable(signal.value, 0, signal.file_id, &signal.wal_path) {
+        match flush_memtable(signal.value, 0, signal.file_id, &signal.wal_path) {
             Ok(sstable_filename) => {
                 manifest::add_file(0, &sstable_filename)
                     .expect("Failed to update manifest after flushing SSTable");
@@ -46,102 +48,100 @@ pub fn flush_watcher(
 // those files into a single SSTable and move it to the next level. This helps to optimize read performance and manage storage space effectively.
 pub async fn compaction_watcher(receiver: &mut mpsc::Receiver<CompactionSignal>) {
     while let Some(recv) = receiver.recv().await {
-        let compaction_result = tokio::task::spawn_blocking(move || process_compaction_signal(recv))
-            .await
-            .expect("Compaction worker task panicked");
+        let compaction_result =
+            tokio::task::spawn_blocking(move || process_compaction_signal(recv))
+                .await
+                .expect("Compaction worker task panicked");
 
         compaction_result.expect("Compaction process failed");
     }
 }
 
 fn process_compaction_signal(recv: CompactionSignal) -> Result<(), String> {
-        // TODO: implement page / buffer management for this process
-        // for example if the user trying to read from particular level that were being
-        // compacted. We still can allowed the read request to it but there's need to handle
-        // edge case like deleting the sstable file that on the other process were trying to
-        // read from it. So we need to make sure that the file is not deleted until the compaction process is done and the new sstable file is created and added to the manifest. We can use reference counting or some kind of locking mechanism to ensure that the file is not deleted while it's still being read or compacted.
+    // TODO: implement page / buffer management for this process
+    // for example if the user trying to read from particular level that were being
+    // compacted. We still can allowed the read request to it but there's need to handle
+    // edge case like deleting the sstable file that on the other process were trying to
+    // read from it. So we need to make sure that the file is not deleted until the compaction process is done and the new sstable file is created and added to the manifest. We can use reference counting or some kind of locking mechanism to ensure that the file is not deleted while it's still being read or compacted.
 
-        log::info!(
-            "Received compaction signal for level {}, files: {:?}",
-            recv.compaction_level,
-            recv.files_to_compact
-        );
+    log::info!(
+        "Received compaction signal for level {}, files: {:?}",
+        recv.compaction_level,
+        recv.files_to_compact
+    );
 
-        // for now just compact the files and add the new sstable file to the manifest
-        let mut indexed_sources: Vec<(usize, Vec<Block>)> = recv
-            .files_to_compact
-            .iter()
-            .enumerate()
-            .collect::<Vec<_>>()
-            .par_iter()
-            .map(|(source_idx, filename)| {
-                let file_source = std::fs::File::open(filename).map_err(|error| {
-                    format!(
-                        "Failed to open SSTable for compaction '{}': {error}",
-                        filename.display()
-                    )
-                })?;
+    // for now just compact the files and add the new sstable file to the manifest
+    let mut indexed_sources: Vec<(usize, Vec<Block>)> = recv
+        .files_to_compact
+        .iter()
+        .enumerate()
+        .collect::<Vec<_>>()
+        .par_iter()
+        .map(|(source_idx, filename)| {
+            let file_source = std::fs::File::open(filename).map_err(|error| {
+                format!(
+                    "Failed to open SSTable for compaction '{}': {error}",
+                    filename.display()
+                )
+            })?;
 
-                let sstable = SSTable::decode(file_source).map_err(|error| {
-                    format!(
-                        "Failed to decode SSTable for compaction '{}': {error}",
-                        filename.display()
-                    )
-                })?;
+            let sstable = SSTable::decode(file_source).map_err(|error| {
+                format!(
+                    "Failed to decode SSTable for compaction '{}': {error}",
+                    filename.display()
+                )
+            })?;
 
-                Ok::<(usize, Vec<Block>), String>((*source_idx, sstable.block))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            Ok::<(usize, Vec<Block>), String>((*source_idx, sstable.block))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
-        indexed_sources.sort_unstable_by_key(|(source_idx, _)| *source_idx);
-        let sources: Vec<Vec<Block>> = indexed_sources
-            .into_iter()
-            .map(|(_, blocks)| blocks)
-            .collect();
+    indexed_sources.sort_unstable_by_key(|(source_idx, _)| *source_idx);
+    let sources: Vec<Vec<Block>> = indexed_sources
+        .into_iter()
+        .map(|(_, blocks)| blocks)
+        .collect();
 
-        log::info!(
-            "Parsed {} files for compaction, preparing to merge records",
-            recv.files_to_compact.len()
-        );
+    log::info!(
+        "Parsed {} files for compaction, preparing to merge records",
+        recv.files_to_compact.len()
+    );
 
-        let merge_source: Vec<Box<dyn SortedRecordSource>> = sources
-            .into_iter()
-            .map(|blocks| Box::new(SSTableSource::new(blocks)) as Box<dyn SortedRecordSource>)
-            .collect();
+    let merge_source: Vec<Box<dyn SortedRecordSource>> = sources
+        .into_iter()
+        .map(|blocks| Box::new(SSTableSource::new(blocks)) as Box<dyn SortedRecordSource>)
+        .collect();
 
-        let merged_records = merge_record_sources(merge_source)
-            .map_err(|error| format!("Failed to merge records during compaction: {error}"))?;
+    let merged_records = merge_record_sources(merge_source)
+        .map_err(|error| format!("Failed to merge records during compaction: {error}"))?;
 
-        log::info!(
-            "Merged {} records from {} files for compaction",
-            merged_records.len(),
-            recv.files_to_compact.len()
-        );
+    log::info!(
+        "Merged {} records from {} files for compaction",
+        merged_records.len(),
+        recv.files_to_compact.len()
+    );
 
-        let next_level = recv.compaction_level + 1;
-        let sstable_filename = write_compacted_sstable_from_records(
-            &merged_records,
-            next_level,
-            recv.file_id,
-        )
-        .map_err(|error| format!("Failed to write compacted SSTable: {error}"))?;
+    let next_level = recv.compaction_level + 1;
+    let sstable_filename =
+        write_compacted_sstable_from_records(&merged_records, next_level, recv.file_id)
+            .map_err(|error| format!("Failed to write compacted SSTable: {error}"))?;
 
-        manifest::add_file(next_level, &sstable_filename)
-            .map_err(|error| format!("Failed to update manifest after compaction: {error}"))?;
+    manifest::add_file(next_level, &sstable_filename)
+        .map_err(|error| format!("Failed to update manifest after compaction: {error}"))?;
 
-        for filename in &recv.files_to_compact {
-            if let Err(e) = std::fs::remove_file(filename) {
-                log::warn!(
-                    "Failed to delete old SSTable file after compaction: {:?}",
-                    e
-                );
-            }
+    for filename in &recv.files_to_compact {
+        if let Err(e) = std::fs::remove_file(filename) {
+            log::warn!(
+                "Failed to delete old SSTable file after compaction: {:?}",
+                e
+            );
         }
+    }
 
-        log::info!(
-            "Compaction completed successfully, new SSTable created: {}",
-            sstable_filename
-        );
+    log::info!(
+        "Compaction completed successfully, new SSTable created: {}",
+        sstable_filename
+    );
 
     Ok(())
 }
@@ -252,9 +252,8 @@ fn write_compacted_sstable_from_records(
 mod tests {
     use super::*;
     use crate::storage::{
-        log::RecordType,
         manifest,
-        record::Record,
+        record::{Record, RecordType},
         sstable::{self, SSTable},
     };
     use crossbeam_skiplist::SkipMap;
@@ -286,11 +285,7 @@ mod tests {
         result
     }
 
-    fn build_source_sstable(
-        level: u32,
-        file_id: u64,
-        entries: &[(&[u8], &[u8], u64)],
-    ) -> PathBuf {
+    fn build_source_sstable(level: u32, file_id: u64, entries: &[(&[u8], &[u8], u64)]) -> PathBuf {
         let memtable = SkipMap::new();
         for (key, value, _timestamp) in entries {
             memtable.insert(key.to_vec(), (RecordType::Put, value.to_vec()));
@@ -398,9 +393,8 @@ mod tests {
             let file = std::fs::File::open(&out).unwrap();
             let sstable = SSTable::decode(file).unwrap();
 
-            let merge_source: Vec<Box<dyn SortedRecordSource>> = vec![Box::new(SSTableSource::new(
-                sstable.block,
-            ))];
+            let merge_source: Vec<Box<dyn SortedRecordSource>> =
+                vec![Box::new(SSTableSource::new(sstable.block))];
             let deduped = merge_record_sources(merge_source).unwrap();
 
             assert_eq!(deduped.len(), 1, "expected dedupe to keep one record");
