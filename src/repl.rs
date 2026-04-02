@@ -1,6 +1,6 @@
 use crate::{
     api::api::KVEngine,
-    command::{execute_command, parse_command, ParseError, Response},
+    command::{ParseError, Response, execute_command, parse_command},
 };
 use std::io::{self, BufRead, Write};
 

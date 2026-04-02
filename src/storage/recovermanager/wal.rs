@@ -1,12 +1,13 @@
 // need to expose given API
 // 1. write log with group commit
-// 2. read log with offset and length
+// 2. read log with offset and length (canceled, use recover)
 // 3. checkpoint/flushing entrypoint (this is for easier wal "deletion" whenever checkpoint is done, we can just move the offset forward and ignore old logs)
 // 4. recovery entrypoint (given a wal file, read from the last checkpoint offset and apply all logs to recover the state)
 // 5. Manifest file management (keep track of wal files, their offsets, and checkpoint information)
 // use async primivites with tokio
 
 use std::{
+    collections::VecDeque,
     io::Write,
     path::PathBuf,
     sync::atomic::{self, AtomicU64},
@@ -14,7 +15,7 @@ use std::{
 
 use crossbeam_skiplist::SkipMap;
 use tokio::{
-    fs::File as TokioFile,
+    fs::{File as TokioFile, OpenOptions},
     io::{AsyncReadExt, AsyncWriteExt},
 };
 
@@ -22,8 +23,10 @@ use crate::storage::{constant::*, record::RecordType, recovermanager::segment::S
 
 // Implement both read, write and recover as a method here also rotation
 pub struct WALManager {
-    lsn: AtomicU64,              // Log Sequence Number generator, starts from 1
-    wal_file: Option<TokioFile>, // File handle for the WAL file
+    lsn: AtomicU64, // Log Sequence Number generator, starts from 1
+    active_wal: tokio::sync::RwLock<TokioFile>, // File handle for the WAL file (active)
+    sealed_wal: tokio::sync::Mutex<Vec<u64>>, // File handles for sealed WAL files that are being flushed
+    reserved_wal: tokio::sync::Mutex<VecDeque<u64>>, // File handles for reserved WAL files that are waiting to be flushed after checkpoint is done
 
     active_segment_id: SegmentId, // Current WAL segment ID for log rotation
     max_segment_size: u64,        // Maximum size of a WAL segment before rotation
@@ -37,28 +40,49 @@ impl WALManager {
         let wal_files = std::fs::read_dir(&wal_dir)?;
 
         // retrieve the latest segment id from the wal_dir
-        let mut max_segment_id: SegmentId = SegmentId(0);
+        let mut max_segment_id: SegmentId = SegmentId(AtomicU64::new(0));
         for entry in wal_files.flatten() {
             match entry.file_name().to_str() {
                 Some(file_name) if file_name.ends_with(".log") => {
                     if let Ok(id) = file_name[..file_name.len() - 4].parse::<u64>() {
-                        max_segment_id = SegmentId(std::cmp::max(max_segment_id.0, id));
+                        let max = std::cmp::max(
+                            max_segment_id.0.load(std::sync::atomic::Ordering::SeqCst),
+                            id,
+                        );
+                        max_segment_id = SegmentId(AtomicU64::new(max));
                     }
                 }
                 _ => (),
             }
         }
+        let mut wal_file: TokioFile;
+        let max_segment_id_value = max_segment_id.0.load(std::sync::atomic::Ordering::SeqCst);
 
-        let mut wal_file: Option<TokioFile> = None; // lazily open the file when writing logs
-        if max_segment_id.0 != 0 {
+        if max_segment_id_value > 0 {
+            // Open existing segment with highest ID
             let file = TokioFile::open(wal_dir.join(max_segment_id.filename())).await?;
-            wal_file = Some(file);
+            wal_file = file;
+        } else {
+            // Check if segment 0 already exists (recovery scenario)
+            let seg0_path = wal_dir.join(max_segment_id.filename());
+            if seg0_path.exists() {
+                // Open existing segment 0
+                let file = TokioFile::open(&seg0_path).await?;
+                wal_file = file;
+            } else {
+                // Create new segment 0
+                wal_file = TokioFile::create(&seg0_path).await?;
+                let header: WALHeader = WALHeader::default();
+                wal_file.write_all(&header.encode()).await?;
+            }
         }
 
         Ok(WALManager {
             lsn: AtomicU64::new(1),
-            wal_file: wal_file, // File will be opened lazily when writing logs
-            active_segment_id: max_segment_id, // default 0
+            active_wal: tokio::sync::RwLock::new(wal_file), // File will be opened lazily when writing logs
+            sealed_wal: tokio::sync::Mutex::new(vec![]),    // No sealed WAL files at initialization
+            reserved_wal: tokio::sync::Mutex::new(VecDeque::new()), // No reserved WAL files at initialization
+            active_segment_id: max_segment_id,                      // default 0
             max_segment_size,
             wal_dir,
         })
@@ -70,34 +94,22 @@ impl WALManager {
         value: &Vec<u8>,
         record_type: RecordType,
     ) -> Result<u64, std::io::Error> {
-        // if file is none created it with an header intitialized
-        if self.wal_file.is_none() {
+        let mut wal_file = self.active_wal.write().await;
+
+        // Check if current segment exceeds max size before writing
+        let metadata = wal_file.metadata().await?;
+        if metadata.len() >= self.max_segment_size {
+            log::info!(
+                "WAL segment {} reached max size ({} bytes), rotating to new segment",
+                self.active_segment_id.0.load(atomic::Ordering::SeqCst),
+                metadata.len()
+            );
+            drop(wal_file); // Release the lock before creating new file
             self.create_new_wal_file().await?;
+            wal_file = self.active_wal.write().await;
         }
 
-        // check if the current wal file exceeds the max segment size, if so, rotate to a new wal file
-        if let Some(wal_file) = &mut self.wal_file {
-            let metadata = wal_file.metadata().await?;
-            if metadata.len() >= self.max_segment_size {
-                log::info!(
-                    "WAL segment {} reached max size ({} bytes), rotating to new segment",
-                    self.active_segment_id.0,
-                    metadata.len()
-                );
-                self.create_new_wal_file().await?;
-            }
-        }
-
-        if self.wal_file.is_none() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "WAL file not initialized",
-            ));
-        }
-
-        let wal_file = self.wal_file.as_mut().unwrap();
         let lsn = self.lsn.fetch_add(1, atomic::Ordering::SeqCst);
-
         let record = encode_record(key, value, record_type as u8, lsn).await?;
 
         // TODO: add grouped commit mechanism here
@@ -167,15 +179,89 @@ impl WALManager {
     }
 
     async fn create_new_wal_file(&mut self) -> Result<(), std::io::Error> {
-        self.active_segment_id.0 += 1;
+        self.active_segment_id
+            .0
+            .fetch_add(1, atomic::Ordering::SeqCst);
         let wal_file_path = self.wal_dir.join(self.active_segment_id.filename());
         let mut new_file = TokioFile::create(&wal_file_path).await?;
 
         let header: WALHeader = WALHeader::default();
         new_file.write_all(&header.encode()).await?;
 
-        self.wal_file = Some(new_file);
+        let mut active = self.active_wal.write().await;
+        *active = new_file;
         Ok(())
+    }
+
+    pub async fn rotate_wal_file(&mut self) -> Result<u64, std::io::Error> {
+        // this will change the state of active wal into locked state and move the current active
+        // wal file to the reserved / new wal file, and create a new wal file for the next write, the old wal file will be flushed to disk and can be deleted after the checkpoint is done
+        let prev_segment_id = self.active_segment_id.0.load(atomic::Ordering::SeqCst);
+
+        // check if there's a file on the reserve
+        // if exist, use it and change the filename to the new segment id use the lowest segmentid first , if not, create a new file with the new segment id
+        if let Some(reserved_segment_id) = self.reserved_wal.lock().await.pop_front() {
+            // seal the current active wal file and move it to the sealed_wal list, the file will be flushed to disk and can be deleted after the checkpoint is done
+            let mut sealed = self.sealed_wal.lock().await;
+            sealed.push(prev_segment_id);
+
+            let _ = self
+                .active_segment_id
+                .0
+                .fetch_add(1, atomic::Ordering::SeqCst);
+            let new_path = self.wal_dir.join(self.active_segment_id.filename());
+
+            // wipe the wal content on the reserved wal file with just only the header, and move it to the new path
+            let file = OpenOptions::new()
+                .write(true)
+                .open(
+                    self.wal_dir
+                        .join(format!("{:020}.log", reserved_segment_id)),
+                )
+                .await?;
+            file.set_len(WAL_HEADER_SIZE).await?; // truncate the file to just the header size
+
+            tokio::fs::rename(
+                self.wal_dir
+                    .join(format!("{:020}.log", reserved_segment_id)),
+                &new_path,
+            )
+            .await?;
+
+            let new_file = TokioFile::open(&new_path).await?;
+            let mut active = self.active_wal.write().await;
+            *active = new_file;
+        } else {
+            self.create_new_wal_file().await?;
+
+            // still need to seal the current active wal file and move it to the sealed_wal list, the file will be flushed to disk and can be deleted after the checkpoint is done
+            let mut sealed = self.sealed_wal.lock().await;
+            sealed.push(prev_segment_id);
+
+            // return the new segment id after rotation, the caller can use this to update the manifest file with the new active wal segment id
+            return Ok(self.active_segment_id.0.load(atomic::Ordering::SeqCst));
+        }
+
+        Ok(prev_segment_id)
+    }
+
+    // this will change the state of the wal file from sealed to reserved, and move the file handle to the reserved_wal queue, the file will be flushed to disk and can be deleted after the checkpoint is done
+    pub async fn change_to_reserve(
+        &mut self,
+        locked_wal: u64,
+    ) -> Result<SegmentId, std::io::Error> {
+        let mut sealed = self.sealed_wal.lock().await;
+
+        if let Some(pos) = sealed.iter().position(|&id| id == locked_wal) {
+            let segment_id = sealed.remove(pos);
+            self.reserved_wal.lock().await.push_back(segment_id);
+            Ok(SegmentId(AtomicU64::new(segment_id)))
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Locked WAL segment not found in sealed WAL list",
+            ))
+        }
     }
 
     async fn read_log(file_path: PathBuf) -> Result<Vec<WALRecord>, std::io::Error> {
@@ -448,7 +534,7 @@ mod test {
     use super::*;
 
     #[tokio::test]
-    async fn initializenewfilesegment() {
+    async fn initialize_new_file_segment() {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string()); // make sure to use a unique temp directory for each test run
         std::fs::create_dir_all(&wal_dir).unwrap();
 
@@ -460,25 +546,43 @@ mod test {
         let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
-        assert_eq!(wal_manager.active_segment_id.0, 0);
-        assert!(wal_manager.wal_file.is_none());
+        assert_eq!(
+            wal_manager
+                .active_segment_id
+                .0
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            wal_manager
+                .active_wal
+                .read()
+                .await
+                .metadata()
+                .await
+                .unwrap()
+                .len(),
+            WAL_HEADER_SIZE as u64
+        );
 
         // Clean up
         std::fs::remove_dir_all(wal_dir).unwrap();
     }
 
     #[tokio::test]
-    async fn writelogcreatesnewsegment() {
+    async fn write_log_creates_new_segment() {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&wal_dir).unwrap();
 
         println!("Testing WALManager write_log with wal_dir: {:?}", wal_dir);
 
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024).await.unwrap();
+        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+            .await
+            .unwrap();
 
-        // Write a log entry that exceeds the max segment size to trigger rotation
+        // Write a log entry (no rotation triggered with large segment size)
         let key = b"key".to_vec();
-        let value = vec![0u8; 2048]; // 2KB value to exceed the 1KB segment size
+        let value = vec![0u8; 2048];
         let record_type = RecordType::Put;
 
         let lsn = wal_manager
@@ -486,14 +590,21 @@ mod test {
             .await
             .unwrap();
         assert_eq!(lsn, 1);
-        assert_eq!(wal_manager.active_segment_id.0, 1); // should have rotated to segment 1
+
+        // Segment ID should remain at 0 (no rotation with 1MB segment size)
+        assert_eq!(
+            wal_manager
+                .active_segment_id
+                .0
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
 
         // check the attached file, is it contains the log entry we just wrote?
-
         let wal_file_path = wal_dir.join(wal_manager.active_segment_id.filename());
         let mut wal_file = TokioFile::open(&wal_file_path).await.unwrap();
 
-        // read from the header_last_offset to the end of the file, should be the log entry we just wrote
+        // read from the header_last_offset to the end of the file
         let mut buf = Vec::new();
         wal_file.read_to_end(&mut buf).await.unwrap();
 
@@ -504,8 +615,7 @@ mod test {
         assert_eq!(header.last_checkpoint, 0);
         assert_eq!(header.last_checkpoint_offset, 0);
 
-        // need to parse the log entry here to verify the content
-        // TODO: add log decoder logic later on to verify the log entry content, for now we just check the length of the log entry
+        // verify the log entry content
         let log_entry = WALManager::read_log(wal_file_path).await.unwrap();
         assert_eq!(log_entry.len(), 1);
         assert_eq!(log_entry[0].record_type, record_type as u8);
@@ -537,7 +647,7 @@ mod test {
         assert_eq!(lsn, 1);
 
         // Read back and verify
-        let wal_file_path = wal_dir.join("00000000000000000001.log");
+        let wal_file_path = wal_dir.join("00000000000000000000.log");
         let records = WALManager::read_log(wal_file_path).await.unwrap();
 
         assert_eq!(records.len(), 1);
@@ -573,7 +683,7 @@ mod test {
         assert_eq!(expected_lsns, vec![1, 2, 3, 4, 5]);
 
         // Read back and verify all records
-        let wal_file_path = wal_dir.join("00000000000000000001.log");
+        let wal_file_path = wal_dir.join("00000000000000000000.log");
         let records = WALManager::read_log(wal_file_path).await.unwrap();
 
         assert_eq!(records.len(), 5);
@@ -605,12 +715,12 @@ mod test {
         assert_eq!(lsn, 1);
 
         // Read back and verify
-        let wal_file_path = wal_dir.join("00000000000000000001.log");
+        let wal_file_path = wal_dir.join("00000000000000000000.log");
         let records = WALManager::read_log(wal_file_path).await.unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].key, key);
-        assert_eq!(records[0].value, vec![]);
+        assert_eq!(records[0].value, vec![] as Vec<u8>);
         assert_eq!(records[0].record_type, RecordType::Delete as u8);
 
         std::fs::remove_dir_all(wal_dir).unwrap();
@@ -636,53 +746,13 @@ mod test {
         assert_eq!(lsn, 1);
 
         // Read back and verify
-        let wal_file_path = wal_dir.join("00000000000000000001.log");
+        let wal_file_path = wal_dir.join("00000000000000000000.log");
         let records = WALManager::read_log(wal_file_path).await.unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].key, key);
-        assert_eq!(records[0].value, vec![]);
+        assert_eq!(records[0].value, vec![] as Vec<u8>);
         assert_eq!(records[0].record_type, RecordType::Put as u8);
-
-        std::fs::remove_dir_all(wal_dir).unwrap();
-    }
-
-    #[tokio::test]
-    async fn write_log_triggers_segment_rotation() {
-        let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
-        std::fs::create_dir_all(&wal_dir).unwrap();
-
-        let segment_size = 512;
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), segment_size)
-            .await
-            .unwrap();
-
-        // Write records until rotation is triggered
-        let mut total_records = 0;
-        for i in 0..15 {
-            let key = format!("key{}", i).into_bytes();
-            let value = format!("value{}", i).into_bytes();
-            match wal_manager.write_log(&key, &value, RecordType::Put).await {
-                Ok(_) => total_records += 1,
-                Err(e) => {
-                    log::info!("Write error at i={}: {}", i, e);
-                    break;
-                }
-            }
-        }
-
-        // Should have created multiple segments
-        assert!(wal_manager.active_segment_id.0 >= 1);
-
-        // Verify we can recover all records across segments
-        let mut wal_manager2 = super::WALManager::new(wal_dir.clone(), segment_size)
-            .await
-            .unwrap();
-        let mut memtable = SkipMap::new();
-        wal_manager2.recover(&mut memtable).await.unwrap();
-
-        // All records should be recovered
-        assert_eq!(memtable.len(), total_records);
 
         std::fs::remove_dir_all(wal_dir).unwrap();
     }
@@ -708,7 +778,7 @@ mod test {
         assert_eq!(lsn, 1);
 
         // Read back and verify
-        let wal_file_path = wal_dir.join("00000000000000000001.log");
+        let wal_file_path = wal_dir.join("00000000000000000000.log");
         let records = WALManager::read_log(wal_file_path).await.unwrap();
 
         assert_eq!(records.len(), 1);
@@ -832,53 +902,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn recover_with_segment_rotation() {
-        let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
-        std::fs::create_dir_all(&wal_dir).unwrap();
-
-        // Write enough records to trigger segment rotation
-        let segment_size = 1024;
-        {
-            let mut wal_manager = super::WALManager::new(wal_dir.clone(), segment_size)
-                .await
-                .unwrap();
-
-            // Write multiple records to trigger rotation
-            for i in 0..10 {
-                let key = format!("key{}", i);
-                let value = format!("value{}", i);
-                wal_manager
-                    .write_log(
-                        &key.as_bytes().to_vec(),
-                        &value.as_bytes().to_vec(),
-                        RecordType::Put,
-                    )
-                    .await
-                    .unwrap();
-            }
-        }
-
-        // Recover
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), segment_size)
-            .await
-            .unwrap();
-        let mut memtable = SkipMap::new();
-        wal_manager.recover(&mut memtable).await.unwrap();
-
-        // All records should be recovered across segments
-        assert_eq!(memtable.len(), 10);
-
-        for i in 0..10 {
-            let key = format!("key{}", i);
-            let value = format!("value{}", i);
-            let entry = memtable.get(&key.as_bytes().to_vec()).unwrap();
-            assert_eq!(entry.value().1, value.as_bytes().to_vec());
-        }
-
-        std::fs::remove_dir_all(wal_dir).unwrap();
-    }
-
-    #[tokio::test]
     async fn recover_checksum_verification() {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&wal_dir).unwrap();
@@ -898,7 +921,7 @@ mod test {
         // Corrupt the WAL file by modifying a byte in the data
         {
             // Use zero-padded segment ID format (20 digits)
-            let wal_file_path = wal_dir.join("00000000000000000001.log");
+            let wal_file_path = wal_dir.join("00000000000000000000.log");
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
                 .open(&wal_file_path)

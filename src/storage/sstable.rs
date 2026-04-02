@@ -8,7 +8,7 @@ use crate::{
     error::DBError,
     storage::{
         block::{Block, BlockBuilder},
-        bloom::BloomFilter,
+        bloom::BloomFilterWrapper,
         record::{Record, RecordType},
     },
 };
@@ -27,7 +27,7 @@ pub use super::flush::flush_memtable;
 pub struct SSTable {
     pub block: Vec<Block>,
     pub index: Vec<SparseIndexEntry>,
-    pub bloom: BloomFilter,
+    pub bloom: BloomFilterWrapper,
     pub footer: SSTableFooter,
 }
 
@@ -98,7 +98,7 @@ impl SSTable {
 
         // Decode bloom filter
         let bloom_cursor = std::io::Cursor::new(&bloom_data);
-        let bloom = BloomFilter::decode(bloom_cursor)?;
+        let bloom = BloomFilterWrapper::decode(bloom_cursor)?;
 
         Ok(SSTable {
             block: blocks,
@@ -169,7 +169,7 @@ impl SSTable {
         verify_bloom_checksum(&bloom_data, footer.bloom_checksum)?;
 
         let bloom_cursor = std::io::Cursor::new(&bloom_data);
-        let bloom = BloomFilter::decode(bloom_cursor)?;
+        let bloom = BloomFilterWrapper::decode(bloom_cursor)?;
 
         Ok(SSTable {
             block: blocks,
@@ -189,7 +189,7 @@ impl SSTable {
         let mut block_data_sizes: Vec<u64> = Vec::new();
 
         // Create Bloom filter with appropriate capacity
-        let mut bloom_filter = BloomFilter::with_rate(records.len(), 0.01);
+        let mut bloom_filter = BloomFilterWrapper::with_rate(records.len(), 0.01);
 
         log::debug!("Writing {} records to 4KB blocks...", records.len());
 
@@ -200,7 +200,7 @@ impl SSTable {
         // Write all merged records to blocks
         for record in records.iter() {
             // Insert key into Bloom filter
-            bloom_filter.insert(record.key.to_owned());
+            bloom_filter.insert(&record.key);
 
             // Try to add record to current block
             match block_builder.add_record(record) {
@@ -659,7 +659,7 @@ pub fn read_sstable_index<R: Read + Seek>(
 pub fn read_sstable_bloom<R: Read + Seek>(
     mut reader: R,
     footer: &SSTableFooter,
-) -> Result<BloomFilter, std::io::Error> {
+) -> Result<BloomFilterWrapper, std::io::Error> {
     // Calculate bloom filter block size
     let bloom_size = footer.bloom_block_end - footer.bloom_block_start;
 
@@ -673,7 +673,7 @@ pub fn read_sstable_bloom<R: Read + Seek>(
 
     // Decode bloom filter
     let cursor = std::io::Cursor::new(&bloom_data);
-    BloomFilter::decode(cursor)
+    BloomFilterWrapper::decode(cursor)
 }
 
 /// Helper function to decode a record from a File/generic reader at an offset
@@ -860,7 +860,7 @@ pub fn search_sstable<R: Read + Seek>(
 pub fn search_sstable_with_bloom<R: Read + Seek>(
     mut reader: R,
     key: &[u8],
-    bloom: &BloomFilter,
+    bloom: &BloomFilterWrapper,
     index: &BTreeMap<Vec<u8>, u64>,
 ) -> Result<Option<Vec<u8>>, std::io::Error> {
     // Check bloom filter first - if it returns false, key definitely doesn't exist

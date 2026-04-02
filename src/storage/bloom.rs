@@ -1,140 +1,105 @@
-use bloom::BloomFilter as BF;
+use fastbloom::BloomFilter;
 use std::io::Read;
 
-// Wrapper around the bloom crate's BloomFilter
-// for efficient membership testing in SSTable blocks
-//
-// Note: This implementation stores the bloom filter parameters for reconstruction
-// but doesn't serialize the actual filter state. For production use, you may want
-// to implement proper serialization or use a different bloom filter library.
-
-pub struct BloomFilter {
-    filter: BF,
-    bitmap_size: usize,
-    num_hashes: u32,
-
-    // Store inserted keys for serialization/deserialization
-    keys: Vec<Vec<u8>>,
+// Wrapper around fastbloom's BloomFilter for efficient membership testing in SSTable blocks
+pub struct BloomFilterWrapper {
+    filter: BloomFilter,
 }
 
-impl std::fmt::Debug for BloomFilter {
+impl std::fmt::Debug for BloomFilterWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BloomFilter")
-            .field("bitmap_size", &self.bitmap_size)
-            .field("num_hashes", &self.num_hashes)
-            .field("keys_count", &self.keys.len())
+        f.debug_struct("BloomFilterWrapper")
+            .field("num_bits", &self.filter.num_bits())
+            .field("num_hashes", &self.filter.num_hashes())
             .finish()
     }
 }
 
-impl BloomFilter {
-    /// Create a new Bloom filter
-    ///
-    /// # Parameters
-    /// - `bitmap_size`: Size of the bitmap in bits
-    /// - `num_hashes`: Number of hash functions to use
-    pub fn new(bitmap_size: usize, num_hashes: u32) -> Self {
-        BloomFilter {
-            filter: BF::with_size(bitmap_size, num_hashes),
-            bitmap_size,
-            num_hashes,
-            keys: Vec::new(),
+impl BloomFilterWrapper {
+    /// Create a new Bloom filter with specified number of bits and expected items
+    pub fn new(num_bits: usize, expected_items: usize) -> Self {
+        BloomFilterWrapper {
+            filter: BloomFilter::with_num_bits(num_bits).expected_items(expected_items),
         }
     }
 
     /// Create a Bloom filter optimized for expected number of items
-    ///
-    /// # Parameters
-    /// - `expected_items`: Expected number of items to insert
-    /// - `false_positive_rate`: Desired false positive rate (e.g., 0.01 for 1%)
     pub fn with_rate(expected_items: usize, false_positive_rate: f64) -> Self {
-        // bloom crate expects f32 and u32
-        let filter = BF::with_rate(false_positive_rate as f32, expected_items as u32);
-        let bitmap_size = filter.num_bits();
-        let num_hashes = filter.num_hashes();
-
-        BloomFilter {
-            filter,
-            bitmap_size,
-            num_hashes,
-            keys: Vec::new(),
+        BloomFilterWrapper {
+            filter: BloomFilter::with_false_pos(false_positive_rate).expected_items(expected_items),
         }
     }
 
     /// Insert a key into the Bloom filter
-    pub fn insert(&mut self, key: Vec<u8>) {
-        self.filter.insert(&key);
-        self.keys.push(key);
+    pub fn insert(&mut self, key: &[u8]) {
+        self.filter.insert(key);
     }
 
     /// Check if a key might be in the set
-    /// Returns true if the key might be present (can have false positives)
-    /// Returns false if the key is definitely not present (no false negatives)
     pub fn contains(&self, key: &[u8]) -> bool {
-        self.filter.contains(&key.to_vec())
+        self.filter.contains(key)
     }
 
     /// Encode the Bloom filter to bytes
-    /// This stores the parameters and all inserted keys for reconstruction
+    /// Stores: [num_bits: u64][num_hashes: u32][bitmap_u64_words: u64][bitmap_bytes: ...]
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
 
-        // Write bitmap_size
-        buf.extend_from_slice(&(self.bitmap_size as u64).to_be_bytes());
+        // Write num_bits
+        let num_bits = self.filter.num_bits() as u64;
+        buf.extend_from_slice(&num_bits.to_be_bytes());
 
         // Write num_hashes
-        buf.extend_from_slice(&(self.num_hashes as u64).to_be_bytes());
+        let num_hashes = self.filter.num_hashes();
+        buf.extend_from_slice(&num_hashes.to_be_bytes());
 
-        // Write number of keys
-        buf.extend_from_slice(&(self.keys.len() as u64).to_be_bytes());
+        // Write bitmap as u64 words (fastbloom uses u64 internally)
+        let bitmap_slice = self.filter.as_slice();
+        let num_words = bitmap_slice.len() as u64;
+        buf.extend_from_slice(&num_words.to_be_bytes());
 
-        // Write all keys
-        for key in &self.keys {
-            buf.extend_from_slice(&(key.len() as u64).to_be_bytes());
-            buf.extend_from_slice(key);
+        // Write each u64 word as bytes
+        for &word in bitmap_slice {
+            buf.extend_from_slice(&word.to_be_bytes());
         }
 
         buf
     }
 
     /// Decode a Bloom filter from bytes
-    /// This reconstructs the filter by re-inserting all stored keys
     pub fn decode<R: Read>(mut reader: R) -> Result<Self, std::io::Error> {
         let mut buf = [0u8; 8];
 
-        // Read bitmap_size
+        // Read num_bits
         reader.read_exact(&mut buf)?;
-        let bitmap_size = u64::from_be_bytes(buf) as usize;
+        let num_bits = u64::from_be_bytes(buf) as usize;
 
         // Read num_hashes
+        let mut num_hashes_buf = [0u8; 4];
+        reader.read_exact(&mut num_hashes_buf)?;
+        let num_hashes = u32::from_be_bytes(num_hashes_buf);
+
+        // Read number of u64 words
         reader.read_exact(&mut buf)?;
-        let num_hashes = u64::from_be_bytes(buf) as u32;
+        let num_words = u64::from_be_bytes(buf) as usize;
 
-        // Read number of keys
-        reader.read_exact(&mut buf)?;
-        let num_keys = u64::from_be_bytes(buf) as usize;
-
-        // Create new filter
-        let mut bloom_filter = BloomFilter::new(bitmap_size, num_hashes);
-
-        // Read and insert all keys
-        for _ in 0..num_keys {
+        // Read bitmap words
+        let mut bitmap_words = Vec::with_capacity(num_words);
+        for _ in 0..num_words {
             reader.read_exact(&mut buf)?;
-            let key_len = u64::from_be_bytes(buf) as usize;
-
-            let mut key = vec![0u8; key_len];
-            reader.read_exact(&mut key)?;
-
-            bloom_filter.insert(key);
+            bitmap_words.push(u64::from_be_bytes(buf));
         }
 
-        Ok(bloom_filter)
+        // Reconstruct filter from bitmap words
+        // from_vec creates a builder with bits sized to the vector, then we set hashes
+        let filter = BloomFilter::from_vec(bitmap_words).hashes(num_hashes);
+
+        Ok(BloomFilterWrapper { filter })
     }
 
     /// Clear all bits in the filter
     pub fn clear(&mut self) {
         self.filter.clear();
-        self.keys.clear();
     }
 }
 
@@ -145,12 +110,12 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_basic() {
-        let mut filter = BloomFilter::with_rate(100, 0.01);
+        let mut filter = BloomFilterWrapper::with_rate(100, 0.01);
 
         // Insert some keys
-        filter.insert(b"key1".to_vec());
-        filter.insert(b"key2".to_vec());
-        filter.insert(b"key3".to_vec());
+        filter.insert(b"key1");
+        filter.insert(b"key2");
+        filter.insert(b"key3");
 
         // Should contain inserted keys
         assert!(filter.contains(b"key1"));
@@ -164,17 +129,18 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_encode_decode() {
-        let mut filter = BloomFilter::with_rate(100, 0.01);
+        let mut filter = BloomFilterWrapper::with_rate(100, 0.01);
 
-        filter.insert(b"apple".to_vec());
-        filter.insert(b"banana".to_vec());
-        filter.insert(b"cherry".to_vec());
+        filter.insert(b"apple");
+        filter.insert(b"banana");
+        filter.insert(b"cherry");
 
         // Encode
         let encoded = filter.encode();
+        log::info!("Encoded size: {} bytes", encoded.len());
 
         // Decode
-        let decoded = BloomFilter::decode(Cursor::new(&encoded)).unwrap();
+        let decoded = BloomFilterWrapper::decode(Cursor::new(&encoded)).unwrap();
 
         // Verify decoded filter works correctly
         assert!(decoded.contains(b"apple"));
@@ -185,12 +151,12 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_false_positive_rate() {
-        let mut filter = BloomFilter::with_rate(1000, 0.01);
+        let mut filter = BloomFilterWrapper::with_rate(1000, 0.01);
 
         // Insert 1000 keys
         for i in 0..1000 {
             let key = format!("key{}", i);
-            filter.insert(key.as_bytes().to_vec());
+            filter.insert(key.as_bytes());
         }
 
         // Check false positive rate
@@ -213,13 +179,13 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_no_false_negatives() {
-        let mut filter = BloomFilter::with_rate(100, 0.01);
+        let mut filter = BloomFilterWrapper::with_rate(100, 0.01);
 
         let keys = vec![b"test1", b"test2", b"test3", b"test4", b"test5"];
 
         // Insert all keys
         for key in &keys {
-            filter.insert(key.to_vec());
+            filter.insert(*key);
         }
 
         // All inserted keys must be found (no false negatives)
@@ -234,10 +200,10 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_clear() {
-        let mut filter = BloomFilter::with_rate(100, 0.01);
+        let mut filter = BloomFilterWrapper::with_rate(100, 0.01);
 
-        filter.insert(b"key1".to_vec());
-        filter.insert(b"key2".to_vec());
+        filter.insert(b"key1");
+        filter.insert(b"key2");
 
         assert!(filter.contains(b"key1"));
 

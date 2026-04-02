@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::storage::{
     self,
     block::Block,
-    bloom::BloomFilter,
+    bloom::BloomFilterWrapper,
     flush::flush_memtable,
     manifest,
     record::Record,
@@ -165,13 +165,13 @@ fn write_compacted_sstable_from_records(
     let data_block_start = 0u64;
     let mut sparse_index: Vec<crate::storage::sstable::SparseIndexEntry> = Vec::new();
     let mut blocks: Vec<Vec<u8>> = Vec::new();
-    let mut bloom_filter = BloomFilter::with_rate(records.len(), 0.01);
+    let mut bloom_filter = BloomFilterWrapper::with_rate(records.len(), 0.01);
 
     let mut current_offset = data_block_start;
     let mut block_builder = crate::storage::block::BlockBuilder::new(current_offset);
 
     for record in records.iter() {
-        bloom_filter.insert(record.key.clone());
+        bloom_filter.insert(&record.key);
 
         match block_builder.add_record(record) {
             Ok(()) => {}

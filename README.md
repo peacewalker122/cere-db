@@ -213,16 +213,34 @@ assert!(kv.get(b"hello").unwrap().is_none());
 
 ### WAL Record
 
-Each WAL entry is appended with the following binary layout:
+The WAL file begins with a 32-byte header containing a magic number (`WALMGIC\0`), version, and checkpoint metadata:
 
 ```
-┌──────────┬───────────┬──────┬──────┬─────────────┬──────────┐
-│ key_len  │ value_len │ key  │value │ record_type │ checksum │
-│ (4 bytes)│ (4 bytes) │ (var)│(var) │  (1 byte)   │(4 bytes) │
-└──────────┴───────────┴──────┴──────┴─────────────┴──────────┘
+┌─────────────────────────────────────────────────────────┐
+│  WAL Header (32 bytes)                                  │
+│  ┌──────────┬─────────┬──────────────────┬───────────┐ │
+│  │ magic    │ version │ last_checkpoint  │ reserved  │ │
+│  │ (8 bytes)│(8 bytes)│   (8 bytes)      │ (8 bytes) │ │
+│  └──────────┴─────────┴──────────────────┴───────────┘ │
+└─────────────────────────────────────────────────────────┘
 ```
 
-The WAL file begins with a 32-byte header containing a magic number (`WALMGIC\0`), version, and checkpoint metadata.
+Each WAL record is appended with the following binary layout:
+
+```
+┌────────────┬──────┬──────────┬──────┬────────────┬───────┬──────────┐
+│record_type │ lsn  │ key_len  │ key  │ value_len  │ value │ checksum │
+│ (1 byte)   │(8 B) │ (8 bytes)│(var) │  (8 bytes) │ (var) │(4 bytes) │
+└────────────┴──────┴──────────┴──────┴────────────┴───────┴──────────┘
+```
+
+- **record_type**: 1 byte — `1` for Put, `2` for Delete
+- **lsn**: 8 bytes — Log Sequence Number for ordering and recovery
+- **key_len**: 8 bytes — key length as u64
+- **key**: variable length — the key bytes
+- **value_len**: 8 bytes — value length as u64
+- **value**: variable length — the value bytes
+- **checksum**: 4 bytes — CRC32 checksum of the value for integrity verification
 
 ### SSTable Layout
 

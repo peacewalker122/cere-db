@@ -12,3 +12,4 @@ mod signal;
 pub mod sstable;
 pub mod wal;
 mod watcher;
+mod writemanager;

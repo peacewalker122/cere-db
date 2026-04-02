@@ -1,7 +1,9 @@
 use crossbeam_skiplist::SkipMap;
 use std::{fs::OpenOptions, io::Write};
 
-use crate::storage::{block::BlockBuilder, bloom::BloomFilter, record::Record, record::RecordType};
+use crate::storage::{
+    block::BlockBuilder, bloom::BloomFilterWrapper, record::Record, record::RecordType,
+};
 
 use super::sstable::{SSTableFooter, SparseIndexEntry};
 
@@ -65,7 +67,7 @@ pub fn flush_memtable(
     let mut blocks: Vec<Vec<u8>> = Vec::new();
 
     // Create Bloom filter with appropriate capacity
-    let mut bloom_filter = BloomFilter::with_rate(records_to_write.len(), 0.01);
+    let mut bloom_filter = BloomFilterWrapper::with_rate(records_to_write.len(), 0.01);
 
     // Create first block builder
     let mut current_offset = data_block_start;
@@ -79,7 +81,7 @@ pub fn flush_memtable(
     // Write all merged records to blocks
     for record in records_to_write.iter() {
         // Insert key into Bloom filter
-        bloom_filter.insert(record.key.to_owned());
+        bloom_filter.insert(&record.key);
 
         // Try to add record to current block
         match block_builder.add_record(record) {
