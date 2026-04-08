@@ -1,9 +1,16 @@
 use fastbloom::BloomFilter;
 use std::io::Read;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
 
 // Wrapper around fastbloom's BloomFilter for efficient membership testing in SSTable blocks
+
+const DEFAULT_BLOOM_SEED: u128 = 0;
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct BloomFilterWrapper {
     filter: BloomFilter,
+    seed: u128,
 }
 
 impl std::fmt::Debug for BloomFilterWrapper {
@@ -11,6 +18,7 @@ impl std::fmt::Debug for BloomFilterWrapper {
         f.debug_struct("BloomFilterWrapper")
             .field("num_bits", &self.filter.num_bits())
             .field("num_hashes", &self.filter.num_hashes())
+            .field("seed", &self.seed)
             .finish()
     }
 }
@@ -18,15 +26,23 @@ impl std::fmt::Debug for BloomFilterWrapper {
 impl BloomFilterWrapper {
     /// Create a new Bloom filter with specified number of bits and expected items
     pub fn new(num_bits: usize, expected_items: usize) -> Self {
+        let seed = DEFAULT_BLOOM_SEED;
         BloomFilterWrapper {
-            filter: BloomFilter::with_num_bits(num_bits).expected_items(expected_items),
+            filter: BloomFilter::with_num_bits(num_bits)
+                .seed(&seed)
+                .expected_items(expected_items),
+            seed,
         }
     }
 
     /// Create a Bloom filter optimized for expected number of items
     pub fn with_rate(expected_items: usize, false_positive_rate: f64) -> Self {
+        let seed = DEFAULT_BLOOM_SEED;
         BloomFilterWrapper {
-            filter: BloomFilter::with_false_pos(false_positive_rate).expected_items(expected_items),
+            filter: BloomFilter::with_false_pos(false_positive_rate)
+                .seed(&seed)
+                .expected_items(expected_items),
+            seed,
         }
     }
 
@@ -41,9 +57,13 @@ impl BloomFilterWrapper {
     }
 
     /// Encode the Bloom filter to bytes
-    /// Stores: [num_bits: u64][num_hashes: u32][bitmap_u64_words: u64][bitmap_bytes: ...]
+    /// Stores:
+    /// [seed: u128][num_bits: u64][num_hashes: u32][bitmap_u64_words: u64][bitmap_words: ...]
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
+
+        // Write seed
+        buf.extend_from_slice(&self.seed.to_be_bytes());
 
         // Write num_bits
         let num_bits = self.filter.num_bits() as u64;
@@ -57,6 +77,13 @@ impl BloomFilterWrapper {
         let bitmap_slice = self.filter.as_slice();
         let num_words = bitmap_slice.len() as u64;
         buf.extend_from_slice(&num_words.to_be_bytes());
+        log::debug!(
+            "Encoding BloomFilter: seed={}, num_bits={}, num_hashes={}, num_words={}",
+            self.seed,
+            num_bits,
+            num_hashes,
+            num_words
+        );
 
         // Write each u64 word as bytes
         for &word in bitmap_slice {
@@ -68,7 +95,12 @@ impl BloomFilterWrapper {
 
     /// Decode a Bloom filter from bytes
     pub fn decode<R: Read>(mut reader: R) -> Result<Self, std::io::Error> {
+        let mut seed_buf = [0u8; 16];
         let mut buf = [0u8; 8];
+
+        // Read seed
+        reader.read_exact(&mut seed_buf)?;
+        let seed = u128::from_be_bytes(seed_buf);
 
         // Read num_bits
         reader.read_exact(&mut buf)?;
@@ -90,11 +122,57 @@ impl BloomFilterWrapper {
             bitmap_words.push(u64::from_be_bytes(buf));
         }
 
-        // Reconstruct filter from bitmap words
-        // from_vec creates a builder with bits sized to the vector, then we set hashes
-        let filter = BloomFilter::from_vec(bitmap_words).hashes(num_hashes);
+        // Reconstruct filter from bitmap words with original hasher config.
+        let filter = BloomFilter::from_vec(bitmap_words)
+            .seed(&seed)
+            .hashes(num_hashes);
 
-        Ok(BloomFilterWrapper { filter })
+        Ok(BloomFilterWrapper { filter, seed })
+    }
+
+    pub async fn async_decode<R: AsyncRead + Unpin>(
+        async_reader: &mut R,
+    ) -> Result<Self, std::io::Error> {
+        let mut seed_buf = [0u8; 16];
+        let mut buf = [0u8; 8];
+
+        // Read seed
+        async_reader.read_exact(&mut seed_buf).await?;
+        let seed = u128::from_be_bytes(seed_buf);
+
+        // Read num_bits
+        async_reader.read_exact(&mut buf).await?;
+        let num_bits = u64::from_be_bytes(buf) as usize;
+
+        // Read num_hashes
+        let mut num_hashes_buf = [0u8; 4];
+        async_reader.read_exact(&mut num_hashes_buf).await?;
+        let num_hashes = u32::from_be_bytes(num_hashes_buf);
+
+        // Read number of u64 words
+        async_reader.read_exact(&mut buf).await?;
+        let num_words = u64::from_be_bytes(buf) as usize;
+        log::debug!(
+            "Decoding BloomFilter: seed={}, num_bits={}, num_hashes={}, num_words={}",
+            seed,
+            num_bits,
+            num_hashes,
+            num_words
+        );
+
+        // Read bitmap words
+        let mut bitmap_words = Vec::with_capacity(num_words);
+        for _ in 0..num_words {
+            async_reader.read_exact(&mut buf).await?;
+            bitmap_words.push(u64::from_be_bytes(buf));
+        }
+
+        // Reconstruct filter from bitmap words with original hasher config.
+        let filter = BloomFilter::from_vec(bitmap_words)
+            .seed(&seed)
+            .hashes(num_hashes);
+
+        Ok(BloomFilterWrapper { filter, seed })
     }
 
     /// Clear all bits in the filter
@@ -129,6 +207,7 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_encode_decode() {
+        env_logger::builder().is_test(true).init();
         let mut filter = BloomFilterWrapper::with_rate(100, 0.01);
 
         filter.insert(b"apple");
@@ -141,6 +220,30 @@ mod tests {
 
         // Decode
         let decoded = BloomFilterWrapper::decode(Cursor::new(&encoded)).unwrap();
+
+        // Verify decoded filter works correctly
+        assert!(decoded.contains(b"apple"));
+        assert!(decoded.contains(b"banana"));
+        assert!(decoded.contains(b"cherry"));
+        assert!(!decoded.contains(b"dragonfruit"));
+    }
+
+    #[tokio::test]
+    async fn test_bloom_filter_encode_async_decode() {
+        let mut filter = BloomFilterWrapper::with_rate(10000, 0.0001);
+
+        filter.insert(b"apple");
+        filter.insert(b"banana");
+        filter.insert(b"cherry");
+
+        // Encode
+        let encoded = filter.encode();
+        log::info!("Encoded size: {} bytes", encoded.len());
+
+        // Decode
+        let decoded = BloomFilterWrapper::async_decode(&mut Cursor::new(&encoded))
+            .await
+            .unwrap();
 
         // Verify decoded filter works correctly
         assert!(decoded.contains(b"apple"));

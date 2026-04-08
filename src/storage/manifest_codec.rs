@@ -10,6 +10,8 @@ use tokio::{
     sync::Mutex,
 };
 
+use crate::storage::bloom::BloomFilterWrapper;
+
 const ENTRY_KIND_ADD: u8 = 1;
 const ENTRY_KIND_REMOVE: u8 = 2;
 const ENTRY_KIND_CHECKPOINT: u8 = 3;
@@ -21,9 +23,8 @@ pub struct SSTableMeta {
     pub file_id: u64,
     pub level: u32,
     pub path: String,
-    pub smallest_key: Vec<u8>,
-    pub largest_key: Vec<u8>,
     pub record_count: usize,
+    pub bloom_bitmap: BloomFilterWrapper,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,8 +300,7 @@ fn encode_add_payload(meta: &SSTableMeta) -> Result<Vec<u8>, std::io::Error> {
     payload.extend_from_slice(&(meta.record_count as u64).to_be_bytes());
 
     push_bytes(&mut payload, meta.path.as_bytes())?;
-    push_bytes(&mut payload, &meta.smallest_key)?;
-    push_bytes(&mut payload, &meta.largest_key)?;
+    push_bytes(&mut payload, meta.bloom_bitmap.encode().as_slice())?;
 
     Ok(payload)
 }
@@ -313,15 +313,14 @@ fn decode_add_payload(payload: &[u8]) -> Result<SSTableMeta, std::io::Error> {
     let record_count = read_u64(&mut cursor)?;
 
     let path = read_string(&mut cursor)?;
-    let smallest_key = read_vec(&mut cursor)?;
-    let largest_key = read_vec(&mut cursor)?;
+    let bloom_bytes = read_vec(&mut cursor)?;
+    let bitmap = BloomFilterWrapper::decode(Cursor::new(&bloom_bytes))?;
 
     Ok(SSTableMeta {
         file_id,
         level,
         path,
-        smallest_key,
-        largest_key,
+        bloom_bitmap: bitmap,
         record_count: usize::try_from(record_count).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -415,13 +414,16 @@ mod tests {
 
     #[test]
     fn encode_and_decode_entry_roundtrip() {
+        let mut bloom = BloomFilterWrapper::with_rate(16, 0.01);
+        bloom.insert(b"a");
+        bloom.insert(b"z");
+
         let meta = SSTableMeta {
             file_id: 42,
             level: 0,
             path: "data/level-0/42.sst".to_string(),
-            smallest_key: b"a".to_vec(),
-            largest_key: b"z".to_vec(),
             record_count: 101,
+            bloom_bitmap: bloom,
         };
 
         let payload = encode_add_payload(&meta).unwrap();
@@ -432,7 +434,13 @@ mod tests {
         assert_eq!(next_offset, entry.len());
 
         let decoded = decode_add_payload(decoded_payload).unwrap();
-        assert_eq!(decoded, meta);
+        assert_eq!(decoded.file_id, meta.file_id);
+        assert_eq!(decoded.level, meta.level);
+        assert_eq!(decoded.path, meta.path);
+        assert_eq!(decoded.record_count, meta.record_count);
+        assert_eq!(decoded.bloom_bitmap.encode(), meta.bloom_bitmap.encode());
+        assert!(decoded.bloom_bitmap.contains(b"a"));
+        assert!(decoded.bloom_bitmap.contains(b"z"));
     }
 
     #[tokio::test]
@@ -451,9 +459,8 @@ mod tests {
                 file_id: file_id_1,
                 level: 0,
                 path: format!("data/level-0/{file_id_1}.sst"),
-                smallest_key: b"k1".to_vec(),
-                largest_key: b"k9".to_vec(),
                 record_count: 9,
+                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
             })
             .await
             .unwrap();
@@ -464,9 +471,8 @@ mod tests {
                 file_id: file_id_2,
                 level: 1,
                 path: format!("data/level-1/{file_id_2}.sst"),
-                smallest_key: b"a".to_vec(),
-                largest_key: b"b".to_vec(),
                 record_count: 2,
+                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
             })
             .await
             .unwrap();

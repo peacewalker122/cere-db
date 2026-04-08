@@ -334,7 +334,7 @@ impl SSTable {
 /// - magic_number: u32 (4 bytes) - validation marker (0xDB055555)
 /// - footer_checksum: u32 (4 bytes) - CRC32 of footer data (excluding this field)
 /// Total: 64 bytes
-const FOOTER_SIZE: u64 = 64;
+pub const FOOTER_SIZE: u64 = 64;
 const MAGIC_NUMBER: u32 = 0xDB055555;
 
 #[derive(Debug, Clone)]
@@ -448,6 +448,17 @@ impl SSTableFooter {
             bloom_checksum,
         })
     }
+
+    pub async fn async_decode<R: AsyncRead + AsyncSeek + Unpin>(
+        mut reader: &mut R,
+    ) -> Result<Self, std::io::Error> {
+        reader.seek(SeekFrom::End(-(FOOTER_SIZE as i64))).await?;
+        let mut buf = vec![0u8; FOOTER_SIZE as usize];
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut buf).await?;
+
+        let mut cursor = std::io::Cursor::new(buf);
+        Self::decode(&mut cursor)
+    }
 }
 
 /// Index Entry: maps a key to its offset in the data block
@@ -539,6 +550,38 @@ impl SparseIndexEntry {
         // Decode record_count
         let mut count_buf = [0u8; 4];
         reader.read_exact(&mut count_buf)?;
+        let record_count = u32::from_be_bytes(count_buf);
+
+        Ok(SparseIndexEntry {
+            first_key,
+            block_offset,
+            last_key,
+            record_count,
+        })
+    }
+
+    pub async fn async_decode<R: AsyncRead + Unpin>(mut reader: R) -> Result<Self, std::io::Error> {
+        let mut len_buf = [0u8; 8];
+
+        // Decode first_key
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut len_buf).await?;
+        let first_key_len = u64::from_be_bytes(len_buf) as usize;
+        let mut first_key = vec![0u8; first_key_len];
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut first_key).await?;
+
+        // Decode block_offset
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut len_buf).await?;
+        let block_offset = u64::from_be_bytes(len_buf);
+
+        // Decode last_key
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut len_buf).await?;
+        let last_key_len = u64::from_be_bytes(len_buf) as usize;
+        let mut last_key = vec![0u8; last_key_len];
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut last_key).await?;
+
+        // Decode record_count
+        let mut count_buf = [0u8; 4];
+        tokio::io::AsyncReadExt::read_exact(&mut reader, &mut count_buf).await?;
         let record_count = u32::from_be_bytes(count_buf);
 
         Ok(SparseIndexEntry {

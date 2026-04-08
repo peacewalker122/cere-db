@@ -5,21 +5,19 @@
 //! 2. Writing SSTable to disk
 //! 3. Managing checkpoint metadata
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
 use tokio::io::AsyncWriteExt;
 
 use crate::storage::{
-    self, bloom,
-    record::{Record, RecordType},
+    bloom::BloomFilterWrapper,
+    manifest_codec::{ManifestManager, SSTableMeta},
+    record::{MemtableRecord, RecordType},
     recovermanager::wal::WALManager,
-    sstable::{self, SSTable, SparseIndexEntry},
-    writemanager::{
-        block::BlockBuilder,
-        manifest::{ManifestManager, SSTableMeta},
-        record::MemtableRecord,
-    },
+    sstable::{SSTableFooter, SparseIndexEntry},
+    sstable_codec::SSTableCodec,
+    writemanager::block::{Block, BlockBuilder, BlockBuilderState},
 };
 
 /// Result of a checkpoint operation
@@ -33,6 +31,8 @@ pub struct CheckpointResult {
     pub level: u32,
     /// File ID used for the SSTable
     pub file_id: u64,
+
+    pub data: Vec<u8>,
 }
 
 /// WriteComponent handles checkpoint operations
@@ -43,10 +43,14 @@ pub struct CheckpointResult {
 /// - Return checkpoint metadata
 pub struct WriteComponent {
     /// Base directory for SSTable storage
-    memtable: SkipMap<Vec<u8>, MemtableRecord>,
+    /// MemTable key is (key, lsn) composite for MVCC support (ADR-0002)
+    memtable: SkipMap<(Vec<u8>, u64), MemtableRecord>,
+    memtable_size: std::sync::atomic::AtomicUsize,
+
+    sequence_number: std::sync::atomic::AtomicU64,
 
     sstable_dir: PathBuf,
-    wal_manager: Box<WALManager>,
+    wal_manager: Arc<WALManager>,
     manifest_manager: ManifestManager,
 }
 
@@ -54,11 +58,13 @@ impl WriteComponent {
     /// Create a new WriteComponent
     pub fn new(
         sstable_dir: PathBuf,
-        wal_manager: Box<WALManager>,
+        wal_manager: Arc<WALManager>,
         manifest_manager: ManifestManager,
     ) -> Self {
         Self {
             memtable: SkipMap::new(),
+            memtable_size: std::sync::atomic::AtomicUsize::new(0),
+            sequence_number: std::sync::atomic::AtomicU64::new(0),
             sstable_dir,
             wal_manager,
             manifest_manager,
@@ -67,15 +73,65 @@ impl WriteComponent {
 
     /// Create a new WriteComponent with default directory
     pub fn with_default_dir(
-        wal_manager: Box<WALManager>,
+        wal_manager: Arc<WALManager>,
         manifest_manager: ManifestManager,
     ) -> Self {
         Self {
             memtable: SkipMap::new(),
+            memtable_size: std::sync::atomic::AtomicUsize::new(0),
+            sequence_number: std::sync::atomic::AtomicU64::new(0),
             sstable_dir: PathBuf::from("data"),
             wal_manager,
             manifest_manager,
         }
+    }
+
+    pub async fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), std::io::Error> {
+        let lsn = self
+            .sequence_number
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        self.wal_manager
+            .write_log(&key, &value, lsn, RecordType::Put)
+            .await?;
+
+        let value_len = value.len();
+        self.memtable.insert(
+            (key.clone(), lsn),
+            MemtableRecord::new(value, RecordType::Put, lsn),
+        );
+        self.memtable_size
+            .fetch_add(key.len() + value_len, std::sync::atomic::Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    pub async fn delete(&self, key: Vec<u8>) -> Result<(), std::io::Error> {
+        let lsn = self
+            .sequence_number
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        self.wal_manager
+            .write_log(&key, &Vec::new(), lsn, RecordType::Delete)
+            .await?;
+
+        self.memtable.insert(
+            (key.clone(), lsn),
+            MemtableRecord::new(Vec::new(), RecordType::Delete, lsn),
+        );
+        self.memtable_size
+            .fetch_add(key.len(), std::sync::atomic::Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    // the transtition were managed by the calller. WriteComponent only provide the lock_memtable function to return the current memtable for flushing, and create a new memtable for new writes. This design allows the caller to have more control over the transition process, such as when to trigger the flush and how to handle concurrent writes during the transition.
+    pub async fn lock_memtable(&mut self) -> SkipMap<(Vec<u8>, u64), MemtableRecord> {
+        // current memtable were full, we need to flush it to disk, so we need to create a new memtable and return the old memtable for flushing.
+        let new_memtable = SkipMap::new();
+
+        let old_memtable = std::mem::replace(&mut self.memtable, new_memtable);
+        old_memtable
     }
 
     /// Perform checkpoint - convert memtable to SSTable and write to disk
@@ -95,101 +151,95 @@ impl WriteComponent {
     /// * `Err(std::io::Error)` - If flush fails
     pub async fn flush(
         &mut self,
-        memtable: SkipMap<Vec<u8>, MemtableRecord>,
+        memtable: SkipMap<(Vec<u8>, u64), MemtableRecord>,
     ) -> Result<CheckpointResult, std::io::Error> {
-        let record_count = memtable.len();
-
-        // iterate all memtable data and create the blocks with the sparse index.
-        let mut sparse_index: Vec<SparseIndexEntry> = Vec::new();
-        let mut block_records: Vec<u8> = Vec::new();
-
-        let mut block_builder = BlockBuilder::new(0);
-        let mut bloom_filter =
-            storage::bloom::BloomFilterWrapper::with_rate(memtable.len(), 0.0001); // Example size and false positive rate
-
-        let mut smallest_key: Vec<u8> = vec![];
-        let mut largest_key: Vec<u8> = vec![];
-
+        let mut valid_records: std::collections::BTreeMap<Vec<u8>, MemtableRecord> =
+            std::collections::BTreeMap::new();
         for entry in memtable.iter() {
-            let key = entry.key();
+            let key = &entry.key().0;
             let record = entry.value();
 
-            if smallest_key.is_empty() {
-                smallest_key = entry.key().clone();
-            }
-            largest_key = entry.key().clone();
+            valid_records
+                .entry(key.clone())
+                .and_modify(|existing| {
+                    if existing.lsn < record.lsn {
+                        *existing = record.clone();
+                    }
+                })
+                .or_insert_with(|| record.clone());
+        }
 
+        let mut block_builder = BlockBuilder::new(0);
+        let mut block_entries: Vec<Block> = Vec::new();
+        let mut sparse_index = Vec::<SparseIndexEntry>::new();
+        let mut bloom_filter = BloomFilterWrapper::with_rate(valid_records.len() + 10, 0.0001);
+
+        let mut encoded_offset: u64 = 0;
+
+        for (key, record) in valid_records.iter() {
             bloom_filter.insert(key);
+
             match block_builder.add_record(key, record) {
-                super::block::BlockBuilderState::EnoughSpace => {
-                    // NOTHING
+                BlockBuilderState::EnoughSpace => {
+                    // DO NOTHING
                 }
-                super::block::BlockBuilderState::Full(block, _) => {
-                    // build the spars_index and add the block to the block_records
-                    let block_offset = block_records.len() as u64;
+                BlockBuilderState::Full(block, _) => {
+                    log::debug!(
+                        "Block full with first_key={}, last_key={}, record_count={}, data_size={}",
+                        String::from_utf8_lossy(&block.first_key),
+                        String::from_utf8_lossy(&block.last_key),
+                        block.record_count,
+                        block.data_size
+                    );
+
                     sparse_index.push(SparseIndexEntry {
                         first_key: block.first_key.clone(),
-                        block_offset,
+                        block_offset: encoded_offset,
                         last_key: block.last_key.clone(),
                         record_count: block.record_count,
                     });
-
-                    let encode = block.encode();
-                    bloom_filter.insert(key);
-                    block_records.extend_from_slice(&encode);
+                    encoded_offset += block.data_size as u64;
+                    block_entries.push(block);
                 }
             }
         }
+
+        // flush the last block if it has any records
+        if let Some((block, _)) = block_builder.build() {
+            sparse_index.push(SparseIndexEntry {
+                first_key: block.first_key.clone(),
+                block_offset: encoded_offset,
+                last_key: block.last_key.clone(),
+                record_count: block.record_count,
+            });
+            block_entries.push(block);
+        }
+
+        let mut index_block = Vec::new();
+        index_block.extend_from_slice(&(sparse_index.len() as u64).to_be_bytes());
+        for entry in sparse_index.iter() {
+            index_block.extend_from_slice(&entry.encode());
+        }
+
+        let codec = SSTableCodec::new(block_entries, sparse_index, bloom_filter.clone());
+        let (encoded, _) = codec.serialize();
+
+        let record_count = valid_records.len();
 
         let file_id = self.manifest_manager.allocate_file_id().await?;
 
         let file_path = self
             .sstable_dir
             .join(format!("level-0/sstable-{}.dat", file_id));
-        let mut file = tokio::fs::File::create(&file_path).await?;
-
-        let block_offset = block_records.len() as u64;
-        file.write_all(&block_records).await?;
-
-        let mut index_blocks: Vec<u8> = Vec::new();
-
-        index_blocks.extend_from_slice(&(sparse_index.len() as u64).to_be_bytes());
-        for entry in sparse_index.iter() {
-            index_blocks.append(&mut entry.encode());
-        }
-        let index_checksum = crc32fast::hash(&index_blocks);
-
-        // Write index blocks
-        file.write_all(&index_blocks).await?;
-
-        let mut bloom_blocks = bloom_filter.encode();
-        let bloom_checksum = crc32fast::hash(&bloom_blocks);
-        // Write bloom filter blocks
-        file.write_all(&bloom_blocks).await?;
-
-        let footer = sstable::SSTableFooter {
-            data_block_start: 0,
-            data_block_end: block_offset,
-            index_block_start: block_offset,
-            index_block_end: (block_offset + index_blocks.len() as u64),
-            index_checksum,
-            bloom_block_start: (block_offset + index_blocks.len() as u64),
-            bloom_block_end: (block_offset + index_blocks.len() as u64 + bloom_blocks.len() as u64),
-            bloom_checksum,
-        };
-        let footer_bytes = footer.encode();
-
-        file.write_all(&footer_bytes).await?;
-        file.sync_all().await?;
+        // let mut file = tokio::fs::File::create(&file_path).await?;
 
         self.manifest_manager
             .register_sstable(SSTableMeta {
                 file_id,
                 level: 0,
                 path: file_path.to_string_lossy().to_string(),
-                smallest_key,
-                largest_key,
                 record_count,
+                bloom_bitmap: bloom_filter,
             })
             .await?;
 
@@ -198,11 +248,23 @@ impl WriteComponent {
         self.manifest_manager.mark_checkpoint(lsn, lsn).await?;
 
         Ok(CheckpointResult {
-            sstable_path: String::new(), // Will be set after flush_memtable
+            sstable_path: file_path.to_string_lossy().to_string(), // Will be set after flush_memtable
             record_count,
             level: 0,
-            file_id: 0, // Will be set after flush_memtable
+            file_id, // Will be set after flush_memtable
+            data: encoded,
         })
+    }
+
+    pub async fn save_buffer(
+        &self,
+        buffer: &[u8],
+        file_path: &PathBuf,
+    ) -> Result<(), std::io::Error> {
+        let mut file = tokio::fs::File::create(file_path).await?;
+        file.write_all(buffer).await?;
+        file.sync_all().await?;
+        Ok(())
     }
 }
 
@@ -210,9 +272,9 @@ impl WriteComponent {
 mod tests {
     use super::*;
     use crate::storage::{
-        record::RecordType,
+        manifest_codec::ManifestManager,
+        record::{MemtableRecord, RecordType},
         recovermanager::wal::WALManager,
-        writemanager::{manifest::ManifestManager, record::MemtableRecord},
     };
     use crossbeam_skiplist::SkipMap;
 
@@ -229,7 +291,7 @@ mod tests {
 
         WriteComponent::new(
             temp_dir.join("sstable"),
-            Box::new(wal_manager),
+            Arc::new(wal_manager),
             manifest_manager,
         )
     }
@@ -240,13 +302,13 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
         let mut write_component = build_write_component(&temp_dir).await;
 
-        let memtable: SkipMap<Vec<u8>, MemtableRecord> = SkipMap::new();
+        let memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
         memtable.insert(
-            b"key1".to_vec(),
+            (b"key1".to_vec(), 1),
             MemtableRecord::new(b"value1".to_vec(), RecordType::Put, 1),
         );
         memtable.insert(
-            b"key2".to_vec(),
+            (b"key2".to_vec(), 2),
             MemtableRecord::new(Vec::new(), RecordType::Delete, 2),
         );
 
@@ -259,8 +321,7 @@ mod tests {
         let level0_files = snapshot.levels.get(&0).unwrap();
         assert_eq!(level0_files.len(), 1);
         assert_eq!(level0_files[0].record_count, 2);
-        assert!(!level0_files[0].smallest_key.is_empty());
-        assert!(!level0_files[0].largest_key.is_empty());
+        assert!(level0_files[0].bloom_bitmap.contains(b"key1"));
         assert!(std::path::Path::new(&level0_files[0].path).exists());
 
         assert!(snapshot.active_wal_segment > 0);
@@ -269,22 +330,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flush_sets_smallest_and_largest_keys_from_sorted_memtable() {
+    async fn flush_persists_bloom_filter_metadata_for_memtable_keys() {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&temp_dir).unwrap();
         let mut write_component = build_write_component(&temp_dir).await;
 
-        let memtable: SkipMap<Vec<u8>, MemtableRecord> = SkipMap::new();
+        let memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
         memtable.insert(
-            b"key-z".to_vec(),
+            (b"key-z".to_vec(), 1),
             MemtableRecord::new(b"value-z".to_vec(), RecordType::Put, 1),
         );
         memtable.insert(
-            b"key-a".to_vec(),
+            (b"key-a".to_vec(), 2),
             MemtableRecord::new(b"value-a".to_vec(), RecordType::Put, 2),
         );
         memtable.insert(
-            b"key-m".to_vec(),
+            (b"key-m".to_vec(), 3),
             MemtableRecord::new(b"value-m".to_vec(), RecordType::Put, 3),
         );
 
@@ -293,8 +354,10 @@ mod tests {
         let snapshot = write_component.manifest_manager.snapshot().await;
         let level0_files = snapshot.levels.get(&0).unwrap();
         assert_eq!(level0_files.len(), 1);
-        assert_eq!(level0_files[0].smallest_key, b"key-a".to_vec());
-        assert_eq!(level0_files[0].largest_key, b"key-z".to_vec());
+        let bloom = &level0_files[0].bloom_bitmap;
+        assert!(bloom.contains(b"key-a"));
+        assert!(bloom.contains(b"key-m"));
+        assert!(bloom.contains(b"key-z"));
 
         std::fs::remove_dir_all(temp_dir).unwrap();
     }
@@ -305,15 +368,15 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
         let mut write_component = build_write_component(&temp_dir).await;
 
-        let first_memtable: SkipMap<Vec<u8>, MemtableRecord> = SkipMap::new();
+        let first_memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
         first_memtable.insert(
-            b"first-key".to_vec(),
+            (b"first-key".to_vec(), 1),
             MemtableRecord::new(b"first-value".to_vec(), RecordType::Put, 1),
         );
 
-        let second_memtable: SkipMap<Vec<u8>, MemtableRecord> = SkipMap::new();
+        let second_memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
         second_memtable.insert(
-            b"second-key".to_vec(),
+            (b"second-key".to_vec(), 2),
             MemtableRecord::new(b"second-value".to_vec(), RecordType::Put, 2),
         );
 
@@ -336,9 +399,9 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
         let mut write_component = build_write_component(&temp_dir).await;
 
-        let memtable: SkipMap<Vec<u8>, MemtableRecord> = SkipMap::new();
+        let memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
         memtable.insert(
-            b"wal-key".to_vec(),
+            (b"wal-key".to_vec(), 1),
             MemtableRecord::new(b"wal-value".to_vec(), RecordType::Put, 1),
         );
 
@@ -348,15 +411,81 @@ mod tests {
         let first_segment = snapshot_after_first.active_wal_segment;
         assert!(first_segment > 0);
 
-        let second_memtable: SkipMap<Vec<u8>, MemtableRecord> = SkipMap::new();
+        let second_memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
         second_memtable.insert(
-            b"wal-key-2".to_vec(),
+            (b"wal-key-2".to_vec(), 2),
             MemtableRecord::new(b"wal-value-2".to_vec(), RecordType::Put, 2),
         );
 
         let _ = write_component.flush(second_memtable).await.unwrap();
         let snapshot_after_second = write_component.manifest_manager.snapshot().await;
         assert!(snapshot_after_second.active_wal_segment > first_segment);
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn put_appends_put_record_to_memtable_and_updates_size() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let write_component = build_write_component(&temp_dir).await;
+
+        let key = b"put-key".to_vec();
+        let value = b"put-value".to_vec();
+
+        write_component
+            .put(key.clone(), value.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(write_component.memtable.len(), 1);
+
+        let entry = write_component.memtable.iter().next().unwrap();
+        assert_eq!(&entry.key().0, &key);
+        assert_eq!(entry.key().1, 1);
+
+        let record = entry.value();
+        assert_eq!(record.record_type, RecordType::Put);
+        assert_eq!(record.value, value);
+        assert_eq!(record.lsn, 1);
+
+        assert_eq!(
+            write_component
+                .memtable_size
+                .load(std::sync::atomic::Ordering::SeqCst),
+            key.len() + b"put-value".len()
+        );
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_appends_tombstone_record_to_memtable_and_updates_size() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let write_component = build_write_component(&temp_dir).await;
+
+        let key = b"delete-key".to_vec();
+
+        write_component.delete(key.clone()).await.unwrap();
+
+        assert_eq!(write_component.memtable.len(), 1);
+
+        let entry = write_component.memtable.iter().next().unwrap();
+        assert_eq!(&entry.key().0, &key);
+        assert_eq!(entry.key().1, 1);
+
+        let record = entry.value();
+        assert_eq!(record.record_type, RecordType::Delete);
+        assert!(record.value.is_empty());
+        assert_eq!(record.lsn, 1);
+
+        assert_eq!(
+            write_component
+                .memtable_size
+                .load(std::sync::atomic::Ordering::SeqCst),
+            key.len()
+        );
 
         std::fs::remove_dir_all(temp_dir).unwrap();
     }

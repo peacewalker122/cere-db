@@ -152,6 +152,9 @@ pub fn flush_memtable(
         memtable.len()
     );
 
+    // write blocks count at the beginning of the file (8 bytes)
+    file.write_all(&(blocks.len() as u64).to_be_bytes())?;
+
     // Write all blocks to file
     for block_data in &blocks {
         file.write_all(block_data)?;

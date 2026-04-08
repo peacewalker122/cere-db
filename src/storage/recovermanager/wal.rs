@@ -23,7 +23,6 @@ use crate::storage::{constant::*, record::RecordType, recovermanager::segment::S
 
 // Implement both read, write and recover as a method here also rotation
 pub struct WALManager {
-    lsn: AtomicU64, // Log Sequence Number generator, starts from 1
     active_wal: tokio::sync::RwLock<TokioFile>, // File handle for the WAL file (active)
     sealed_wal: tokio::sync::Mutex<Vec<u64>>, // File handles for sealed WAL files that are being flushed
     reserved_wal: tokio::sync::Mutex<VecDeque<u64>>, // File handles for reserved WAL files that are waiting to be flushed after checkpoint is done
@@ -78,7 +77,6 @@ impl WALManager {
         }
 
         Ok(WALManager {
-            lsn: AtomicU64::new(1),
             active_wal: tokio::sync::RwLock::new(wal_file), // File will be opened lazily when writing logs
             sealed_wal: tokio::sync::Mutex::new(vec![]),    // No sealed WAL files at initialization
             reserved_wal: tokio::sync::Mutex::new(VecDeque::new()), // No reserved WAL files at initialization
@@ -89,9 +87,10 @@ impl WALManager {
     }
 
     pub async fn write_log(
-        &mut self,
+        &self,
         key: &Vec<u8>,
         value: &Vec<u8>,
+        lsn: u64,
         record_type: RecordType,
     ) -> Result<u64, std::io::Error> {
         let mut wal_file = self.active_wal.write().await;
@@ -109,7 +108,6 @@ impl WALManager {
             wal_file = self.active_wal.write().await;
         }
 
-        let lsn = self.lsn.fetch_add(1, atomic::Ordering::SeqCst);
         let record = encode_record(key, value, record_type as u8, lsn).await?;
 
         // TODO: add grouped commit mechanism here
@@ -120,7 +118,7 @@ impl WALManager {
     }
 
     pub async fn recover(
-        &mut self,
+        &self,
         memtable: &mut SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
     ) -> Result<(), std::io::Error> {
         let mut wal_files = tokio::fs::read_dir(&self.wal_dir).await?;
@@ -178,7 +176,7 @@ impl WALManager {
         Ok(())
     }
 
-    async fn create_new_wal_file(&mut self) -> Result<(), std::io::Error> {
+    async fn create_new_wal_file(&self) -> Result<(), std::io::Error> {
         self.active_segment_id
             .0
             .fetch_add(1, atomic::Ordering::SeqCst);
@@ -193,7 +191,7 @@ impl WALManager {
         Ok(())
     }
 
-    pub async fn rotate_wal_file(&mut self) -> Result<u64, std::io::Error> {
+    pub async fn rotate_wal_file(&self) -> Result<u64, std::io::Error> {
         // this will change the state of active wal into locked state and move the current active
         // wal file to the reserved / new wal file, and create a new wal file for the next write, the old wal file will be flushed to disk and can be deleted after the checkpoint is done
         let prev_segment_id = self.active_segment_id.0.load(atomic::Ordering::SeqCst);
@@ -247,7 +245,7 @@ impl WALManager {
 
     // this will change the state of the wal file from sealed to reserved, and move the file handle to the reserved_wal queue, the file will be flushed to disk and can be deleted after the checkpoint is done
     pub async fn change_to_reserve(
-        &mut self,
+        &self,
         locked_wal: u64,
     ) -> Result<SegmentId, std::io::Error> {
         let mut sealed = self.sealed_wal.lock().await;
@@ -586,7 +584,7 @@ mod test {
         let record_type = RecordType::Put;
 
         let lsn = wal_manager
-            .write_log(&key, &value, record_type)
+            .write_log(&key, &value, 1, record_type)
             .await
             .unwrap();
         assert_eq!(lsn, 1);
@@ -639,7 +637,7 @@ mod test {
         let value = b"test_value".to_vec();
 
         let lsn = wal_manager
-            .write_log(&key, &value, RecordType::Put)
+            .write_log(&key, &value, 1, RecordType::Put)
             .await
             .unwrap();
 
@@ -673,7 +671,7 @@ mod test {
             let key = format!("key_{}", i).into_bytes();
             let value = format!("value_{}", i).into_bytes();
             let lsn = wal_manager
-                .write_log(&key, &value, RecordType::Put)
+                .write_log(&key, &value, 1, RecordType::Put)
                 .await
                 .unwrap();
             expected_lsns.push(lsn);
@@ -708,7 +706,7 @@ mod test {
         let key = b"delete_me".to_vec();
 
         let lsn = wal_manager
-            .write_log(&key, &vec![], RecordType::Delete)
+            .write_log(&key, &vec![], 1, RecordType::Delete)
             .await
             .unwrap();
 
@@ -739,7 +737,7 @@ mod test {
         let value = vec![];
 
         let lsn = wal_manager
-            .write_log(&key, &value, RecordType::Put)
+            .write_log(&key, &value, 1, RecordType::Put)
             .await
             .unwrap();
 
@@ -771,7 +769,7 @@ mod test {
         let value = vec![1u8; 50000]; // 50KB value
 
         let lsn = wal_manager
-            .write_log(&key, &value, RecordType::Put)
+            .write_log(&key, &value, 1, RecordType::Put)
             .await
             .unwrap();
 
@@ -820,15 +818,15 @@ mod test {
                 .unwrap();
 
             wal_manager
-                .write_log(&b"key1".to_vec(), &b"value1".to_vec(), RecordType::Put)
+                .write_log(&b"key1".to_vec(), &b"value1".to_vec(), 1, RecordType::Put)
                 .await
                 .unwrap();
             wal_manager
-                .write_log(&b"key2".to_vec(), &b"value2".to_vec(), RecordType::Put)
+                .write_log(&b"key2".to_vec(), &b"value2".to_vec(), 1, RecordType::Put)
                 .await
                 .unwrap();
             wal_manager
-                .write_log(&b"key3".to_vec(), &b"value3".to_vec(), RecordType::Put)
+                .write_log(&b"key3".to_vec(), &b"value3".to_vec(), 1, RecordType::Put)
                 .await
                 .unwrap();
         }
@@ -874,12 +872,12 @@ mod test {
 
             // Put a key
             wal_manager
-                .write_log(&b"key1".to_vec(), &b"value1".to_vec(), RecordType::Put)
+                .write_log(&b"key1".to_vec(), &b"value1".to_vec(), 1, RecordType::Put)
                 .await
                 .unwrap();
             // Delete it
             wal_manager
-                .write_log(&b"key1".to_vec(), &b"".to_vec(), RecordType::Delete)
+                .write_log(&b"key1".to_vec(), &b"".to_vec(), 1, RecordType::Delete)
                 .await
                 .unwrap();
         }
@@ -913,7 +911,7 @@ mod test {
                 .unwrap();
 
             wal_manager
-                .write_log(&b"key".to_vec(), &b"value".to_vec(), RecordType::Put)
+                .write_log(&b"key".to_vec(), &b"value".to_vec(), 1, RecordType::Put)
                 .await
                 .unwrap();
         }

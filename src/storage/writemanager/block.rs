@@ -1,13 +1,22 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::{
+    borrow::Cow,
+    io::{Cursor, Read, Seek, SeekFrom},
+};
+
+use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncSeek};
 
 use crate::{
     error::DBError,
-    storage::{constant::SSTABLE_BLOCK_SIZE, record::Record, writemanager::record::MemtableRecord},
+    storage::{
+        constant::SSTABLE_BLOCK_SIZE,
+        record::{MemtableRecord, Record},
+    },
 };
 
 pub enum BlockBuilderState {
     EnoughSpace,
-    Full(Block, u64),
+    Full(Block, Vec<u8>),
 }
 
 /// A fixed-size block (4KB) containing sorted key-value records
@@ -26,14 +35,15 @@ pub struct Block {
     pub data_size: u32,
 
     /// Add this when decode the data / load the data
-    pub data: Option<Vec<Record>>,
+    pub data: Option<Vec<MemtableRecord>>,
 }
 
 /// Builder for creating fixed-size blocks
 /// Tracks size and manages the 4KB limit
 pub struct BlockBuilder {
     /// Current block data
-    data: Vec<u8>,
+    data: Vec<MemtableRecord>,
+    data_size: usize,
     /// First key in current block (empty if no records yet)
     first_key: Option<Vec<u8>>,
     /// Last key added to current block
@@ -48,6 +58,7 @@ impl BlockBuilder {
     pub fn new(block_offset: u64) -> Self {
         BlockBuilder {
             data: Vec::new(),
+            data_size: 0,
             first_key: None,
             last_key: None,
             record_count: 0,
@@ -59,36 +70,57 @@ impl BlockBuilder {
     /// The consumer need the offset of the block to know where to write the block in the SSTable file, so we need to pass the offset when create the BlockBuilder
     pub fn add_record(&mut self, key: &Vec<u8>, record: &MemtableRecord) -> BlockBuilderState {
         // Check if adding this record would exceed block size
-        if self.data.len() + record.record_length(&key) > SSTABLE_BLOCK_SIZE {
+        if self.data_size + record.record_length(key) > SSTABLE_BLOCK_SIZE {
+            let records = std::mem::take(&mut self.data);
+
             let block = Block {
                 offset: self.block_offset,
                 first_key: self.first_key.clone().unwrap_or_default(),
                 last_key: self.last_key.clone().unwrap_or_default(),
                 record_count: self.record_count,
-                data_size: self.data.len() as u32,
-                data: None,
+                data_size: self.data_size as u32,
+                data: Some(records),
             };
-            let next_block_offset = self.block_offset + self.data.len() as u64;
 
             // finalize
-            self.data.clear();
             self.first_key = None;
+            self.last_key = None;
             self.record_count = 0;
+            self.data_size = 0;
 
-            return BlockBuilderState::Full(block, next_block_offset);
+            let mut block_data = Vec::new();
+            block_data.extend_from_slice(&block.encode());
+
+            self.block_offset = self
+                .block_offset
+                .checked_add(block_data.len() as u64)
+                .expect("block offset overflow");
+
+            return BlockBuilderState::Full(block, block_data);
         }
 
-        // Track first key
+        // first_key need to be the smallest key in the block.
         if self.first_key.is_none() {
             self.first_key = Some(key.clone());
         }
+        if key < self.first_key.as_ref().unwrap_or(&vec![]) {
+            self.first_key = Some(key.clone());
+        }
 
-        // Update last key
-        self.last_key = Some(key.clone());
+        // last_key need to be the largest key in the block.
+        if key > self.last_key.as_ref().unwrap_or(&vec![]) {
+            self.last_key = Some(key.clone());
+        }
 
         // Add record to block
-        self.data.extend_from_slice(&record.encode(&key));
+        self.data.push(MemtableRecord {
+            value: record.value.clone(),
+            record_type: record.record_type,
+            key: key.clone(),
+            lsn: record.lsn,
+        });
         self.record_count += 1;
+        self.data_size += record.record_length(key);
 
         BlockBuilderState::EnoughSpace
     }
@@ -104,16 +136,11 @@ impl BlockBuilder {
             first_key: self.first_key.unwrap(),
             last_key: self.last_key.unwrap(),
             record_count: self.record_count,
-            data_size: self.data.len() as u32,
-            data: None,
+            data_size: self.data_size as u32,
+            data: Some(self.data),
         };
 
-        // prepend the block header to the data
-        let mut block_data = Vec::new();
-        block_data.extend_from_slice(&block.encode());
-        block_data.extend_from_slice(&self.data);
-
-        Some((block, block_data))
+        Some((block, vec![]))
     }
 
     /// Check if block is empty
@@ -147,10 +174,16 @@ impl Block {
         // Encode data size
         buf.extend_from_slice(&self.data_size.to_be_bytes());
 
+        if let Some(records) = &self.data {
+            for record in records {
+                buf.extend_from_slice(&record.encode(&record.key));
+            }
+        }
+
         buf
     }
 
-    pub fn decode<T: Read + Seek>(data: &mut T, offset: u64) -> Result<Self, DBError> {
+    pub fn decode<T: Read + Seek>(mut data: &mut T, offset: u64) -> Result<Self, std::io::Error> {
         // 1. Move the cursor (purely for state consistency, though we use slice offsets)
         data.seek(SeekFrom::Start(offset))?;
 
@@ -179,17 +212,64 @@ impl Block {
 
         let mut records = Vec::with_capacity(record_count as usize);
         for _ in 0..record_count {
-            // we want to traverse and decode each record that available in
-            // this block
-
-            let record = Record::decode(data)?;
+            let record = MemtableRecord::decode(&mut data)?;
             records.push(record);
         }
 
-        records.sort_by(|left, right| left.key.cmp(&right.key));
-
         Ok(Block {
             offset,
+            first_key: first_key.to_vec(),
+            last_key: last_key.to_vec(),
+            record_count,
+            data_size,
+            data: Some(records),
+        })
+    }
+
+    pub async fn async_decode<T: AsyncRead + AsyncSeek + Unpin>(
+        mut data: &mut T,
+    ) -> Result<Self, std::io::Error> {
+        // 1. Decode First Key
+        let mut len_buf = [0u8; 4];
+        data.read_exact(&mut len_buf).await?;
+        let first_key_len = u32::from_be_bytes(len_buf) as usize;
+        log::debug!("Decoding block: first_key_len = {}", first_key_len);
+
+        let mut first_key = vec![0u8; first_key_len];
+        data.read_exact(&mut first_key).await?;
+        log::debug!(
+            "Decoding block: first_key = {:?}",
+            String::from_utf8_lossy(&first_key)
+        );
+
+        // 2. Decode Last Key
+        data.read_exact(&mut len_buf).await?;
+        let last_key_len = u32::from_be_bytes(len_buf) as usize;
+
+        let mut last_key = vec![0u8; last_key_len];
+        data.read_exact(&mut last_key).await?;
+
+        // 3. Decode record_count and data_size
+        // Both are u32 as per the struct definition
+        data.read_exact(&mut len_buf).await?;
+        let record_count = u32::from_be_bytes(len_buf);
+
+        data.read_exact(&mut len_buf).await?;
+        let data_size = u32::from_be_bytes(len_buf);
+
+        let mut records = Vec::with_capacity(record_count as usize);
+        log::debug!(
+            "Decoding block with record_count: {}, data_size: {}",
+            record_count,
+            data_size
+        );
+        for _ in 0..record_count {
+            let record = MemtableRecord::async_decode(&mut data).await?;
+            records.push(record);
+        }
+
+        Ok(Block {
+            offset: 0, // async decode doesn't have offset context, set to 0 or handle differently if needed
             first_key: first_key.to_vec(),
             last_key: last_key.to_vec(),
             record_count,
@@ -275,13 +355,17 @@ mod tests {
         let result = builder.add_record(&key2.to_vec(), &large_record);
         assert!(matches!(result, BlockBuilderState::Full(_, _)));
 
-        if let BlockBuilderState::Full(block, next_offset) = result {
+        if let BlockBuilderState::Full(block, block_data) = result {
             assert_eq!(block.offset, 0);
             assert_eq!(block.first_key, key1.to_vec());
             assert_eq!(block.last_key, key1.to_vec());
             assert_eq!(block.record_count, 1);
-            // next_offset should be current offset + data size
-            assert_eq!(next_offset, block.offset + block.data_size as u64);
+            assert!(!block_data.is_empty());
+            // block_data = header + payload
+            assert_eq!(
+                block_data.len(),
+                block.encode().len() + block.data_size as usize
+            );
         }
     }
 

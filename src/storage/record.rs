@@ -1,6 +1,8 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tokio::io::{AsyncRead, AsyncSeek};
+
 /// Get current Unix timestamp in milliseconds
 pub fn current_timestamp_millis() -> u64 {
     SystemTime::now()
@@ -241,6 +243,133 @@ pub fn decode_record<R: Read + Seek>(
         lsn,
         offset: next_offset,
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct MemtableRecord {
+    pub record_type: RecordType,
+    pub lsn: u64,
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+}
+
+impl MemtableRecord {
+    pub fn new(value: Vec<u8>, record_type: RecordType, lsn: u64) -> Self {
+        Self {
+            key: vec![],
+            value,
+            record_type,
+            lsn,
+        }
+    }
+
+    // only use this when storing the record in sstable.
+    pub fn with_key(mut self, key: Vec<u8>) -> Self {
+        self.key = key;
+        self
+    }
+
+    pub fn encode(&self, key: &Vec<u8>) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&(key.len() as u32).to_le_bytes());
+        encoded.extend_from_slice(&key);
+        encoded.extend_from_slice(&(self.value.len() as u32).to_le_bytes());
+        encoded.extend_from_slice(&self.value);
+        encoded.push(self.record_type as u8);
+        encoded.extend_from_slice(&self.lsn.to_le_bytes());
+
+        encoded
+    }
+
+    pub fn record_length(&self, key: &Vec<u8>) -> usize {
+        4 + key.len() + 4 + self.value.len() + 1 + 8
+    }
+
+    pub fn decode<T: Read + Seek>(encoded: T) -> Result<Self, std::io::Error> {
+        let mut reader = encoded;
+
+        let mut key_len_buf = [0u8; 4];
+        reader.read_exact(&mut key_len_buf)?;
+        let key_len = u32::from_le_bytes(key_len_buf) as usize;
+
+        let mut key_buf = vec![0u8; key_len];
+        reader.read_exact(&mut key_buf)?;
+
+        let mut value_len_buf = [0u8; 4];
+        reader.read_exact(&mut value_len_buf)?;
+        let value_len = u32::from_le_bytes(value_len_buf) as usize;
+
+        let mut value_buf = vec![0u8; value_len];
+        reader.read_exact(&mut value_buf)?;
+
+        let mut record_type_buf = [0u8; 1];
+        reader.read_exact(&mut record_type_buf)?;
+        let record_type = match record_type_buf[0] {
+            1 => RecordType::Put,
+            2 => RecordType::Delete,
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid record type",
+                ));
+            }
+        };
+
+        let mut lsn_buf = [0u8; 8];
+        reader.read_exact(&mut lsn_buf)?;
+        let lsn = u64::from_le_bytes(lsn_buf);
+
+        Ok(Self {
+            key: key_buf,
+            value: value_buf,
+            record_type,
+            lsn,
+        })
+    }
+
+    pub async fn async_decode<T: AsyncRead + AsyncSeek + Unpin>(
+        mut reader: T,
+    ) -> Result<Self, std::io::Error> {
+        use tokio::io::AsyncReadExt;
+
+        let mut key_len_buf = [0u8; 4];
+        reader.read_exact(&mut key_len_buf).await?;
+        let key_len = u32::from_le_bytes(key_len_buf) as usize;
+
+        let mut key_buf = vec![0u8; key_len];
+        reader.read_exact(&mut key_buf).await?;
+
+        let mut value_len_buf = [0u8; 4];
+        reader.read_exact(&mut value_len_buf).await?;
+        let value_len = u32::from_le_bytes(value_len_buf) as usize;
+
+        let mut value_buf = vec![0u8; value_len];
+        reader.read_exact(&mut value_buf).await?;
+
+        let mut record_type_buf = [0u8; 1];
+        reader.read_exact(&mut record_type_buf).await?;
+        let record_type = match record_type_buf[0] {
+            1 => RecordType::Put,
+            2 => RecordType::Delete,
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid record type",
+                ));
+            }
+        };
+
+        let mut lsn_buf = [0u8; 8];
+        reader.read_exact(&mut lsn_buf).await?;
+        let lsn = u64::from_le_bytes(lsn_buf);
+
+        Ok(Self {
+            key: key_buf,
+            value: value_buf,
+            record_type,
+            lsn,
+        })
+    }
 }
 
 #[cfg(test)]
