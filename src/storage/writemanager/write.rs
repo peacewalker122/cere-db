@@ -44,7 +44,7 @@ pub struct CheckpointResult {
 pub struct WriteComponent {
     /// Base directory for SSTable storage
     /// MemTable key is (key, lsn) composite for MVCC support (ADR-0002)
-    memtable: SkipMap<(Vec<u8>, u64), MemtableRecord>,
+    memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
     memtable_size: std::sync::atomic::AtomicUsize,
 
     sequence_number: std::sync::atomic::AtomicU64,
@@ -60,11 +60,18 @@ impl WriteComponent {
         sstable_dir: PathBuf,
         wal_manager: Arc<WALManager>,
         manifest_manager: ManifestManager,
+        sequence_number: u64, // this is from the wal recovery process
     ) -> Self {
+        log::info!(
+            "Initializing WriteComponent with sequence_number={}, sstable_dir={}",
+            sequence_number,
+            sstable_dir.display()
+        );
+
         Self {
-            memtable: SkipMap::new(),
+            memtable: Arc::new(SkipMap::new()),
             memtable_size: std::sync::atomic::AtomicUsize::new(0),
-            sequence_number: std::sync::atomic::AtomicU64::new(0),
+            sequence_number: std::sync::atomic::AtomicU64::new(sequence_number),
             sstable_dir,
             wal_manager,
             manifest_manager,
@@ -77,7 +84,7 @@ impl WriteComponent {
         manifest_manager: ManifestManager,
     ) -> Self {
         Self {
-            memtable: SkipMap::new(),
+            memtable: Arc::new(SkipMap::new()),
             memtable_size: std::sync::atomic::AtomicUsize::new(0),
             sequence_number: std::sync::atomic::AtomicU64::new(0),
             sstable_dir: PathBuf::from("data"),
@@ -126,12 +133,37 @@ impl WriteComponent {
     }
 
     // the transtition were managed by the calller. WriteComponent only provide the lock_memtable function to return the current memtable for flushing, and create a new memtable for new writes. This design allows the caller to have more control over the transition process, such as when to trigger the flush and how to handle concurrent writes during the transition.
-    pub async fn lock_memtable(&mut self) -> SkipMap<(Vec<u8>, u64), MemtableRecord> {
+    pub async fn lock_memtable(&mut self) -> Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> {
         // current memtable were full, we need to flush it to disk, so we need to create a new memtable and return the old memtable for flushing.
-        let new_memtable = SkipMap::new();
+        let new_memtable = Arc::new(SkipMap::new());
 
         let old_memtable = std::mem::replace(&mut self.memtable, new_memtable);
+        self.memtable_size
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         old_memtable
+    }
+
+    pub fn active_memtable_handle(&self) -> Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> {
+        Arc::clone(&self.memtable)
+    }
+
+    pub fn current_sequence_number(&self) -> u64 {
+        self.sequence_number
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn memtable_size_bytes(&self) -> usize {
+        self.memtable_size.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn restore_memtable(
+        &mut self,
+        recovered_memtable: SkipMap<(Vec<u8>, u64), MemtableRecord>,
+        recovered_memtable_size: usize,
+    ) {
+        self.memtable = Arc::new(recovered_memtable);
+        self.memtable_size
+            .store(recovered_memtable_size, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Perform checkpoint - convert memtable to SSTable and write to disk
@@ -192,6 +224,9 @@ impl WriteComponent {
                         block.data_size
                     );
 
+                    block_builder.add_record(&key, &record);
+
+                    // TODO: remove the index insertion later.
                     sparse_index.push(SparseIndexEntry {
                         first_key: block.first_key.clone(),
                         block_offset: encoded_offset,
@@ -293,6 +328,7 @@ mod tests {
             temp_dir.join("sstable"),
             Arc::new(wal_manager),
             manifest_manager,
+            0,
         )
     }
 

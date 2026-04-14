@@ -7,3 +7,4 @@ pub mod storage;
 
 pub use config::Config;
 pub use storage::kv::PersistentKV;
+pub use storage::kv2::KV2;

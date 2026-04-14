@@ -165,6 +165,25 @@ impl SSTableCodec {
         })
     }
 
+    pub async fn deserialize_footer<R: AsyncRead + AsyncSeek + Unpin>(
+        reader: &mut R,
+    ) -> Result<SSTableFooter, std::io::Error> {
+        SSTableFooter::async_decode(reader).await
+    }
+
+    pub async fn get_all_blocks<R: AsyncRead + AsyncSeek + Unpin>(
+        reader: &mut R,
+        footer: &SSTableFooter,
+        index: &[SparseIndexEntry],
+    ) -> Result<Vec<Block>, std::io::Error> {
+        let mut blocks = Vec::new();
+        for entry in index.iter() {
+            let block = Self::get_block(reader, footer, index, &entry.first_key).await?;
+            blocks.push(block);
+        }
+        Ok(blocks)
+    }
+
     pub fn bloom(&self) -> &BloomFilterWrapper {
         &self.bloom
     }
@@ -244,6 +263,18 @@ fn decode_sparse_index(index_block: &[u8]) -> Result<Vec<SparseIndexEntry>, std:
     }
 
     Ok(entries)
+}
+
+impl Iterator for SSTableCodec {
+    type Item = Block;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.blocks.is_empty() {
+            None
+        } else {
+            Some(self.blocks.remove(0))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -446,6 +477,7 @@ mod tests {
             temp_dir.join("sstable"),
             Arc::new(wal_manager),
             manifest_manager,
+            0,
         );
 
         let memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();

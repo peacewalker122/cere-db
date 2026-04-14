@@ -23,7 +23,6 @@ An LSM-tree based key-value store built from scratch in Rust. Built as a learnin
     │    WAL    │◄─── CRC32 checksum for
     │ (durability)│    crash recovery
     └─────┬─────┘
-          │
           ▼
     ┌───────────┐     crossbeam SkipMap
     │ MemTable  │◄─── (sorted, concurrent)
@@ -34,7 +33,6 @@ An LSM-tree based key-value store built from scratch in Rust. Built as a learnin
     │  Flush    │◄─── channel to background
     │ (async)   │     watcher thread
     └─────┬─────┘
-          │
           ▼
     ┌───────────────────────────────────┐
     │           SSTable File            │

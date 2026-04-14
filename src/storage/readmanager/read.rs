@@ -1,8 +1,5 @@
 use crossbeam_skiplist::SkipMap;
-use std::{
-    fs::File,
-    io::{BufReader, Seek, SeekFrom},
-};
+use std::sync::Arc;
 
 use crate::storage::{
     manifest_codec::{ManifestManager, ManifestSnapshot, SSTableMeta},
@@ -11,19 +8,23 @@ use crate::storage::{
 };
 
 pub struct ReadManager {
-    memtable: SkipMap<(Vec<u8>, u64), MemtableRecord>,
+    memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
     manifest: ManifestManager,
 }
 
 impl ReadManager {
     pub fn new(
-        memtable: SkipMap<(Vec<u8>, u64), MemtableRecord>,
+        memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
         manifest_manager: ManifestManager,
     ) -> Self {
         Self {
             memtable,
             manifest: manifest_manager,
         }
+    }
+
+    pub fn set_memtable(&mut self, memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>) {
+        self.memtable = memtable;
     }
 
     pub async fn get(
@@ -88,24 +89,31 @@ impl ReadManager {
         }
 
         let mut best_visible: Option<MemtableRecord> = None;
-        for (idx, index_entry) in index.iter().enumerate() {
+        for index_entry in index.iter() {
             if key < index_entry.first_key.as_slice() || key > index_entry.last_key.as_slice() {
                 continue;
             }
 
-            // let payload = SSTableCodec::get_block(&mut reader, &footer, &index, idx).await?;
+            let block =
+                SSTableCodec::get_block(&mut reader, &footer, &index, &index_entry.first_key)
+                    .await?;
 
-            // if let Some(record) = payload.data {
-            //     for rec in record {
-            //         if rec.key == key && rec.lsn <= sequence_number {
-            //             let candidate = MemtableRecord::new(rec.value, rec.record_type, rec.lsn);
-            //             match &best_visible {
-            //                 Some(existing) if existing.lsn >= candidate.lsn => {}
-            //                 _ => best_visible = Some(candidate),
-            //             }
-            //         }
-            //     }
-            // }
+            if let Some(records) = block.data {
+                for record in records {
+                    if record.key != key {
+                        continue;
+                    }
+
+                    if record.lsn > sequence_number {
+                        continue;
+                    }
+
+                    match &best_visible {
+                        Some(existing) if existing.lsn >= record.lsn => {}
+                        _ => best_visible = Some(record),
+                    }
+                }
+            }
         }
 
         Ok(best_visible)
@@ -166,7 +174,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_returns_latest_visible_version_for_snapshot_sequence_number() {
-        let memtable = SkipMap::new();
+        let memtable = Arc::new(SkipMap::new());
         let key = b"mvcc-key".to_vec();
 
         memtable.insert(
@@ -217,6 +225,7 @@ mod tests {
             temp_dir.join("sstable"),
             Arc::new(wal_manager),
             manifest_for_write,
+            0,
         );
 
         let key = b"sstable-key".to_vec();
@@ -230,7 +239,8 @@ mod tests {
         let manifest_for_read = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
             .await
             .unwrap();
-        let active_memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
+        let active_memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> =
+            Arc::new(SkipMap::new());
         let manager = ReadManager::new(active_memtable, manifest_for_read);
 
         let record = manager.get(key, 7).await.unwrap();
@@ -260,6 +270,7 @@ mod tests {
             temp_dir.join("sstable"),
             Arc::new(wal_manager),
             manifest_for_write,
+            0,
         );
 
         let key = b"snapshot-key".to_vec();
@@ -273,7 +284,8 @@ mod tests {
         let manifest_for_read = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
             .await
             .unwrap();
-        let active_memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
+        let active_memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> =
+            Arc::new(SkipMap::new());
         let manager = ReadManager::new(active_memtable, manifest_for_read);
 
         let record = manager.get(key, 10).await.unwrap();

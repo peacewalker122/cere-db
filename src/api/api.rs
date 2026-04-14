@@ -6,3 +6,9 @@ pub trait KVEngine {
     fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
     fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
 }
+
+pub trait AsyncKVEngine {
+    async fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
+    async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
+    async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
+}

@@ -279,6 +279,19 @@ impl Block {
     }
 }
 
+impl Iterator for Block {
+    type Item = MemtableRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(records) = &mut self.data {
+            if !records.is_empty() {
+                return Some(records.remove(0));
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -245,7 +245,7 @@ pub fn decode_record<R: Read + Seek>(
     })
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MemtableRecord {
     pub record_type: RecordType,
     pub lsn: u64,
@@ -371,6 +371,27 @@ impl MemtableRecord {
         })
     }
 }
+
+impl Ord for MemtableRecord {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // compare the key first.
+        let res = self.key.cmp(&other.key);
+        if res != std::cmp::Ordering::Equal {
+            return res;
+        }
+
+        // If keys are equal, compare timestamps in descending order (newer first)
+        other.lsn.cmp(&self.lsn)
+    }
+}
+
+impl PartialOrd for MemtableRecord {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for MemtableRecord {}
 
 #[cfg(test)]
 mod tests {

@@ -59,22 +59,41 @@ impl WALManager {
 
         if max_segment_id_value > 0 {
             // Open existing segment with highest ID
-            let file = TokioFile::open(wal_dir.join(max_segment_id.filename())).await?;
+            let file = OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(wal_dir.join(max_segment_id.filename()))
+                .await?;
             wal_file = file;
         } else {
             // Check if segment 0 already exists (recovery scenario)
             let seg0_path = wal_dir.join(max_segment_id.filename());
             if seg0_path.exists() {
                 // Open existing segment 0
-                let file = TokioFile::open(&seg0_path).await?;
+                let file = OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&seg0_path)
+                    .await?;
                 wal_file = file;
             } else {
                 // Create new segment 0
-                wal_file = TokioFile::create(&seg0_path).await?;
+                wal_file = OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&seg0_path)
+                    .await?;
                 let header: WALHeader = WALHeader::default();
                 wal_file.write_all(&header.encode()).await?;
             }
         }
+
+        log::info!(
+            "Initialized WALManager with active segment ID {}, max segment size {}, wal directory {:?}",
+            max_segment_id_value,
+            max_segment_size,
+            wal_dir
+        );
 
         Ok(WALManager {
             active_wal: tokio::sync::RwLock::new(wal_file), // File will be opened lazily when writing logs
@@ -110,6 +129,17 @@ impl WALManager {
 
         let record = encode_record(key, value, record_type as u8, lsn).await?;
 
+        log::info!(
+            "Writing log with LSN {}: key_len={}, key={}, value_len={}, value={}, record_type={:?}, wal_file={:?}",
+            lsn,
+            key.len(),
+            String::from_utf8_lossy(key),
+            value.len(),
+            String::from_utf8_lossy(value),
+            record_type,
+            wal_file
+        );
+
         // TODO: add grouped commit mechanism here
         wal_file.write_all(&record).await?;
         wal_file.sync_data().await?;
@@ -121,6 +151,30 @@ impl WALManager {
         &self,
         memtable: &mut SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
     ) -> Result<(), std::io::Error> {
+        let records = self.recover_records().await?;
+
+        for record in records {
+            let key = record.key;
+            let value = record.value;
+            let record_type = match record.record_type {
+                1 => RecordType::Put,
+                2 => RecordType::Delete,
+                _ => continue,
+            };
+
+            if record_type == RecordType::Put {
+                memtable.insert(key, (record_type, value));
+            } else {
+                memtable.insert(key, (record_type, vec![]));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn recover_records(&self) -> Result<Vec<WALRecord>, std::io::Error> {
+        log::debug!("Starting WAL recovery from directory: {:?}", self.wal_dir);
+
         let mut wal_files = tokio::fs::read_dir(&self.wal_dir).await?;
 
         let mut filenames = vec![];
@@ -133,47 +187,25 @@ impl WALManager {
                 filenames.push(entry.path());
             }
         }
-        filenames.sort(); // ensure we process files in order with the lowest segment id first
+        filenames.sort();
 
-        let mut set = tokio::task::JoinSet::new();
+        let mut all_records = Vec::new();
         for file_path in filenames {
-            set.spawn(async move { Self::read_log(file_path).await });
+            let records = Self::read_log(file_path).await?;
+            all_records.extend(records);
         }
 
-        while let Some(res) = set.join_next().await {
-            match res {
-                Ok(Ok(records)) => {
-                    for record in records {
-                        let key = record.key;
-                        let value = record.value;
-                        let record_type = match record.record_type {
-                            1 => RecordType::Put,
-                            2 => RecordType::Delete,
-                            _ => continue, // skip invalid record types
-                        };
-
-                        if record_type == RecordType::Put {
-                            memtable.insert(key, (record_type, value));
-                        } else if record_type == RecordType::Delete {
-                            memtable.insert(key, (record_type, vec![])); // use empty value to indicate deletion
-                        }
-                    }
-                }
-                Ok(Err(e)) => {
-                    log::error!("Error reading WAL file: {}", e);
-                    return Err(e);
-                }
-                Err(e) => {
-                    log::error!("Task join error: {}", e);
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Task join error",
-                    ));
-                }
-            }
+        for record in &all_records {
+            log::info!(
+                "Recovering WAL record: key={:?}, value_len={}, type={:?}, lsn={}",
+                String::from_utf8_lossy(&record.key),
+                String::from_utf8_lossy(&record.value),
+                record.record_type,
+                record.lsn
+            );
         }
 
-        Ok(())
+        Ok(all_records)
     }
 
     async fn create_new_wal_file(&self) -> Result<(), std::io::Error> {
@@ -181,7 +213,11 @@ impl WALManager {
             .0
             .fetch_add(1, atomic::Ordering::SeqCst);
         let wal_file_path = self.wal_dir.join(self.active_segment_id.filename());
-        let mut new_file = TokioFile::create(&wal_file_path).await?;
+        let mut new_file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&wal_file_path)
+            .await?;
 
         let header: WALHeader = WALHeader::default();
         new_file.write_all(&header.encode()).await?;
@@ -226,7 +262,11 @@ impl WALManager {
             )
             .await?;
 
-            let new_file = TokioFile::open(&new_path).await?;
+            let new_file = OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&new_path)
+                .await?;
             let mut active = self.active_wal.write().await;
             *active = new_file;
         } else {
@@ -244,10 +284,7 @@ impl WALManager {
     }
 
     // this will change the state of the wal file from sealed to reserved, and move the file handle to the reserved_wal queue, the file will be flushed to disk and can be deleted after the checkpoint is done
-    pub async fn change_to_reserve(
-        &self,
-        locked_wal: u64,
-    ) -> Result<SegmentId, std::io::Error> {
+    pub async fn change_to_reserve(&self, locked_wal: u64) -> Result<SegmentId, std::io::Error> {
         let mut sealed = self.sealed_wal.lock().await;
 
         if let Some(pos) = sealed.iter().position(|&id| id == locked_wal) {

@@ -1,9 +1,11 @@
 pub mod block;
 pub mod bloom;
 pub mod compaction;
+mod compactionmanager;
 pub mod constant;
 pub mod flush;
 pub mod kv;
+pub mod kv2;
 mod levelstore;
 pub mod manifest;
 pub mod manifest_codec;
