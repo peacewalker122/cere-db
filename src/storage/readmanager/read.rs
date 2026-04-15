@@ -170,10 +170,12 @@ fn scan_block_payload_for_key(payload: &[u8], target_key: &[u8]) -> Option<Memta
 mod tests {
     use super::*;
     use crate::storage::{recovermanager::wal::WALManager, writemanager::write::WriteComponent};
-    use std::sync::Arc;
+    use crate::testing::with_temp_dir;
 
     #[tokio::test]
     async fn get_returns_latest_visible_version_for_snapshot_sequence_number() {
+        let temp_dir = with_temp_dir("readmanager-mvcc", |p| p);
+        
         let memtable = Arc::new(SkipMap::new());
         let key = b"mvcc-key".to_vec();
 
@@ -190,8 +192,6 @@ mod tests {
             MemtableRecord::new(b"value-v5".to_vec(), RecordType::Put, 5),
         );
 
-        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
-        std::fs::create_dir_all(&temp_dir).unwrap();
         let manifest_manager = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
             .await
             .unwrap();
@@ -204,13 +204,12 @@ mod tests {
         let record = record.unwrap();
         assert_eq!(record.value, b"value-v3".to_vec());
         assert_eq!(record.lsn, 3);
-
-        std::fs::remove_dir_all(temp_dir).unwrap();
     }
 
     #[tokio::test]
     async fn get_reads_from_sstable_when_memtable_misses() {
-        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let temp_dir = with_temp_dir("readmanager-sstable", |p| p);
+        
         std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
         std::fs::create_dir_all(temp_dir.join("wal")).unwrap();
 
@@ -249,13 +248,12 @@ mod tests {
         assert_eq!(record.value, b"sstable-value".to_vec());
         assert_eq!(record.record_type, RecordType::Put);
         assert_eq!(record.lsn, 7);
-
-        std::fs::remove_dir_all(temp_dir).unwrap();
     }
 
     #[tokio::test]
     async fn get_from_sstable_hides_newer_records_than_snapshot_sequence() {
-        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let temp_dir = with_temp_dir("readmanager-snapshot", |p| p);
+        
         std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
         std::fs::create_dir_all(temp_dir.join("wal")).unwrap();
 
@@ -290,7 +288,5 @@ mod tests {
 
         let record = manager.get(key, 10).await.unwrap();
         assert!(record.is_none());
-
-        std::fs::remove_dir_all(temp_dir).unwrap();
     }
 }

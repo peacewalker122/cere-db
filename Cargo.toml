@@ -26,6 +26,9 @@ tokio = { version = "1.43", features = [
 ] }
 rayon = "1.11.0"
 
+[dev-dependencies]
+tempfile = "3.15"
+
 [profile.release]
 debug = 1
 

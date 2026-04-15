@@ -3,8 +3,7 @@ use std::io::{Cursor, SeekFrom};
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 
 use crate::storage::{
-    bloom::BloomFilterWrapper,
-    sstable::{SSTableFooter, SparseIndexEntry},
+    bloom::BloomFilterWrapper, footer::SSTableFooter, index::SparseIndexEntry,
     writemanager::block::Block,
 };
 
@@ -460,8 +459,6 @@ mod tests {
 
     #[tokio::test]
     async fn deserialize_reads_sstable_written_by_flush_serialize_path() {
-        env_logger::builder().is_test(true).init();
-
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
         std::fs::create_dir_all(temp_dir.join("wal")).unwrap();

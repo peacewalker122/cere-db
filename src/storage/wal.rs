@@ -524,7 +524,7 @@ mod tests {
         // Read it back
         let file = std::fs::File::open(test_file).unwrap();
         let result = WAL::decode(file).unwrap(); // this is doesn't
-                                                 // directly read the wal, it read the header first, hence we need an approach that // can skip the header
+        // directly read the wal, it read the header first, hence we need an approach that // can skip the header
 
         for record in result.records {
             if record.key == b"deleted_key" {
