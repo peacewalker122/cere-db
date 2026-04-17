@@ -1,12 +1,11 @@
 # CereDB
 
 [![Rust](https://github.com/peacewalker122/slow-database/actions/workflows/rust.yml/badge.svg)](https://github.com/peacewalker122/slow-database/actions/workflows/rust.yml)
-
 An LSM-tree based key-value store built from scratch in Rust. This project is focused on learning storage-engine internals end-to-end: WAL durability, memtable flushing, SSTable codecs, manifests, and leveled compaction.
 
 ## Overview
 
-`wasm-kv` is a single-node embedded KV store with an async engine (`KV2`) and CLI REPL.
+`ceredb` is a single-node embedded KV store with an async engine (`KV2`) and CLI REPL.
 
 - **Write path**: WAL append → in-memory SkipMap memtable → flush to L0 SSTable when threshold is reached.
 - **Read path**: memtable first, then leveled SSTables using bloom filters + sparse index.
@@ -130,7 +129,7 @@ cargo run -- --log-level trace --data-dir ./mydata
 When running, the binary starts an interactive REPL:
 
 ```text
-wasm-kv CLI REPL (SET/GET/DELETE). Type EXIT to quit.
+cere CLI REPL (SET/GET/DELETE). Type EXIT to quit.
 > SET greeting "hello world"
 OK
 > GET greeting
@@ -168,8 +167,8 @@ pub trait AsyncKVEngine {
 ### Usage
 
 ```rust
-use wasm_kv::api::api::AsyncKVEngine;
-use wasm_kv::KV2;
+use ceredb::api::api::AsyncKVEngine;
+use ceredb::KV2;
 
 #[tokio::main]
 async fn main() {
