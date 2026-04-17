@@ -564,11 +564,6 @@ mod test {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string()); // make sure to use a unique temp directory for each test run
         std::fs::create_dir_all(&wal_dir).unwrap();
 
-        println!(
-            "Testing WALManager initialization with wal_dir: {:?}",
-            wal_dir
-        );
-
         let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
