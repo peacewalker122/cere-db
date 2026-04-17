@@ -141,6 +141,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ceredb"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "crc32fast",
+ "crossbeam-channel",
+ "crossbeam-skiplist",
+ "dhat",
+ "env_logger",
+ "fastbloom",
+ "log",
+ "rayon",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1060,26 +1080,6 @@ checksum = "990065f2fe63003fe337b932cfb5e3b80e0b4d0f5ff650e6985b1048f62c8319"
 dependencies = [
  "leb128fmt",
  "wasmparser",
-]
-
-[[package]]
-name = "wasm-kv"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "crc32fast",
- "crossbeam-channel",
- "crossbeam-skiplist",
- "dhat",
- "env_logger",
- "fastbloom",
- "log",
- "rayon",
- "tempfile",
- "thiserror",
- "tokio",
- "uuid",
 ]
 
 [[package]]

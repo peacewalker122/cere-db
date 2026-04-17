@@ -1,5 +1,5 @@
 [package]
-name = "wasm-kv"
+name = "ceredb"
 version = "0.1.0"
 edition = "2024"
 

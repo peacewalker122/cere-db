@@ -3,7 +3,7 @@ use log::LevelFilter;
 
 /// Configuration for the KV store
 #[derive(Parser, Debug, Clone)]
-#[command(name = "wasm-kv")]
+#[command(name = "ceredb")]
 #[command(about = "A persistent key-value store with WAL and SSTable", long_about = None)]
 pub struct Config {
     /// Set the logging level (off, error, warn, info, debug, trace)
