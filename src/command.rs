@@ -1,4 +1,7 @@
-use crate::{api::api::{AsyncKVEngine, KVEngine}, error::DBError};
+use crate::{
+    api::api::{AsyncKVEngine, KVEngine},
+    error::DBError,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {

@@ -330,4 +330,3 @@ pub fn read_sstable_bloom<R: Read + Seek>(
     let cursor = std::io::Cursor::new(&bloom_data);
     BloomFilterWrapper::decode(cursor)
 }
-

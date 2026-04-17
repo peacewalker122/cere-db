@@ -1,10 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 
-use crate::{
-    error::DBError,
-    storage::bloom::BloomFilterWrapper,
-};
+use crate::{error::DBError, storage::bloom::BloomFilterWrapper};
 
 use super::footer::SSTableFooter;
 
@@ -107,7 +104,9 @@ impl SparseIndexEntry {
         })
     }
 
-    pub async fn async_decode<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> Result<Self, std::io::Error> {
+    pub async fn async_decode<R: tokio::io::AsyncRead + Unpin>(
+        mut reader: R,
+    ) -> Result<Self, std::io::Error> {
         let mut len_buf = [0u8; 8];
 
         // Decode first_key

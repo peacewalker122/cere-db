@@ -25,6 +25,8 @@ pub struct SSTableMeta {
     pub path: String,
     pub record_count: usize,
     pub bloom_bitmap: BloomFilterWrapper,
+    pub smallest_key: Vec<u8>,
+    pub largest_key: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -301,6 +303,8 @@ fn encode_add_payload(meta: &SSTableMeta) -> Result<Vec<u8>, std::io::Error> {
 
     push_bytes(&mut payload, meta.path.as_bytes())?;
     push_bytes(&mut payload, meta.bloom_bitmap.encode().as_slice())?;
+    push_bytes(&mut payload, &meta.smallest_key)?;
+    push_bytes(&mut payload, &meta.largest_key)?;
 
     Ok(payload)
 }
@@ -316,11 +320,20 @@ fn decode_add_payload(payload: &[u8]) -> Result<SSTableMeta, std::io::Error> {
     let bloom_bytes = read_vec(&mut cursor)?;
     let bitmap = BloomFilterWrapper::decode(Cursor::new(&bloom_bytes))?;
 
+    // Backward compatibility: older payloads have no min/max key range.
+    let (smallest_key, largest_key) = if (cursor.position() as usize) < payload.len() {
+        (read_vec(&mut cursor)?, read_vec(&mut cursor)?)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     Ok(SSTableMeta {
         file_id,
         level,
         path,
         bloom_bitmap: bitmap,
+        smallest_key,
+        largest_key,
         record_count: usize::try_from(record_count).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -424,6 +437,8 @@ mod tests {
             path: "data/level-0/42.sst".to_string(),
             record_count: 101,
             bloom_bitmap: bloom,
+            smallest_key: b"a".to_vec(),
+            largest_key: b"z".to_vec(),
         };
 
         let payload = encode_add_payload(&meta).unwrap();
@@ -439,8 +454,32 @@ mod tests {
         assert_eq!(decoded.path, meta.path);
         assert_eq!(decoded.record_count, meta.record_count);
         assert_eq!(decoded.bloom_bitmap.encode(), meta.bloom_bitmap.encode());
+        assert_eq!(decoded.smallest_key, meta.smallest_key);
+        assert_eq!(decoded.largest_key, meta.largest_key);
         assert!(decoded.bloom_bitmap.contains(b"a"));
         assert!(decoded.bloom_bitmap.contains(b"z"));
+    }
+
+    #[test]
+    fn decode_add_payload_supports_legacy_without_range_fields() {
+        let mut bloom = BloomFilterWrapper::with_rate(16, 0.01);
+        bloom.insert(b"legacy");
+
+        let mut legacy_payload = Vec::new();
+        legacy_payload.extend_from_slice(&0u32.to_be_bytes());
+        legacy_payload.extend_from_slice(&7u64.to_be_bytes());
+        legacy_payload.extend_from_slice(&1u64.to_be_bytes());
+        push_bytes(&mut legacy_payload, b"data/level-0/7.sst").unwrap();
+        push_bytes(&mut legacy_payload, bloom.encode().as_slice()).unwrap();
+
+        let decoded = decode_add_payload(&legacy_payload).unwrap();
+        assert_eq!(decoded.file_id, 7);
+        assert_eq!(decoded.level, 0);
+        assert_eq!(decoded.path, "data/level-0/7.sst");
+        assert_eq!(decoded.record_count, 1);
+        assert!(decoded.bloom_bitmap.contains(b"legacy"));
+        assert!(decoded.smallest_key.is_empty());
+        assert!(decoded.largest_key.is_empty());
     }
 
     #[tokio::test]
@@ -461,6 +500,8 @@ mod tests {
                 path: format!("data/level-0/{file_id_1}.sst"),
                 record_count: 9,
                 bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                smallest_key: b"k1".to_vec(),
+                largest_key: b"k9".to_vec(),
             })
             .await
             .unwrap();
@@ -473,6 +514,8 @@ mod tests {
                 path: format!("data/level-1/{file_id_2}.sst"),
                 record_count: 2,
                 bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                smallest_key: b"aa".to_vec(),
+                largest_key: b"az".to_vec(),
             })
             .await
             .unwrap();

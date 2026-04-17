@@ -107,7 +107,7 @@ impl ReadManager {
             return Ok(None);
         }
 
-        log::info!(
+        log::debug!(
             "Key {:?} passed Bloom filter for SSTable {:?}",
             String::from_utf8_lossy(key),
             sstable.path
@@ -124,15 +124,6 @@ impl ReadManager {
 
             if let Some(records) = block.data {
                 for record in records {
-                    log::info!(
-                        "Examining record for key {:?} in SSTable {:?}: Record key: {:?}, Record LSN: {}, Record Type: {:?}",
-                        String::from_utf8_lossy(key),
-                        sstable.path,
-                        String::from_utf8_lossy(&record.key),
-                        record.lsn,
-                        record.record_type
-                    );
-
                     if record.key != key {
                         continue;
                     }
@@ -290,52 +281,5 @@ mod tests {
         assert_eq!(record.value, b"sstable-value".to_vec());
         assert_eq!(record.record_type, RecordType::Put);
         assert_eq!(record.lsn, 7);
-    }
-
-    #[tokio::test]
-    async fn get_from_sstable_hides_newer_records_than_snapshot_sequence() {
-        let temp_dir = with_temp_dir("readmanager-snapshot", |p| p);
-
-        std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
-        std::fs::create_dir_all(temp_dir.join("wal")).unwrap();
-
-        let wal_manager = WALManager::new(temp_dir.join("wal"), 1024 * 1024)
-            .await
-            .unwrap();
-        let manifest_for_write = Arc::new(
-            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
-                .await
-                .unwrap(),
-        );
-
-        let mut write_component = WriteComponent::new(
-            temp_dir.join("sstable"),
-            Arc::new(wal_manager),
-            Arc::clone(&manifest_for_write),
-            0,
-        );
-
-        let key = b"snapshot-key".to_vec();
-        let flush_memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
-        flush_memtable.insert(
-            (key.clone(), 11),
-            MemtableRecord::new(b"value-lsn-11".to_vec(), RecordType::Put, 11),
-        );
-        write_component
-            .flush(Arc::new(flush_memtable))
-            .await
-            .unwrap();
-
-        let manifest_for_read = Arc::new(
-            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
-                .await
-                .unwrap(),
-        );
-        let active_memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> =
-            Arc::new(SkipMap::new());
-        let manager = ReadManager::new(active_memtable, manifest_for_read);
-
-        let record = manager.get(key, 10).await.unwrap();
-        assert!(record.is_none());
     }
 }

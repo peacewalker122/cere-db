@@ -187,6 +187,12 @@ impl SSTableCodec {
         &self.bloom
     }
 
+    pub fn range_from_index(index: &[SparseIndexEntry]) -> Option<(Vec<u8>, Vec<u8>)> {
+        let smallest = index.first()?.first_key.clone();
+        let largest = index.last()?.last_key.clone();
+        Some((smallest, largest))
+    }
+
     pub async fn get_block<R: AsyncRead + AsyncSeek + Unpin>(
         reader: &mut R,
         footer: &SSTableFooter,
@@ -229,7 +235,7 @@ impl SSTableCodec {
             ));
         }
 
-        log::info!(
+        log::debug!(
             "Fetching block for key {:?} at index position {}, block offset range: {} - {}",
             String::from_utf8_lossy(key),
             index_position,
@@ -381,6 +387,34 @@ mod tests {
         let codec = SSTableCodec::new(blocks, index, bloom);
         let raw = codec.serialize();
         (codec, raw.0)
+    }
+
+    #[test]
+    fn range_from_index_returns_first_and_last_boundaries() {
+        let index = vec![
+            SparseIndexEntry {
+                first_key: b"alpha".to_vec(),
+                last_key: b"delta".to_vec(),
+                block_offset: 0,
+                record_count: 10,
+            },
+            SparseIndexEntry {
+                first_key: b"epsilon".to_vec(),
+                last_key: b"omega".to_vec(),
+                block_offset: 128,
+                record_count: 4,
+            },
+        ];
+
+        let (smallest, largest) = SSTableCodec::range_from_index(&index).unwrap();
+        assert_eq!(smallest, b"alpha");
+        assert_eq!(largest, b"omega");
+    }
+
+    #[test]
+    fn range_from_index_returns_none_for_empty_index() {
+        let index = Vec::new();
+        assert!(SSTableCodec::range_from_index(&index).is_none());
     }
 
     #[tokio::test]

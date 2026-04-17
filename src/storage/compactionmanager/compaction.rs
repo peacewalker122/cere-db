@@ -6,12 +6,14 @@
 // Who would be the caller? The WriteManager... when it flushes and the level store threshold were
 // exceeded, it will trigger the compaction action, and the compaction manager will be responsible for managing the compaction action, and the compaction action will be responsible for merging the data within the level store to 1 file, and then it will return the result to the WriteManager, and the WriteManager will update the manifest file with the new level store information.
 
-use std::{io::Cursor, sync::Arc};
+use std::{io::Cursor, path::PathBuf, sync::Arc};
+
+use tokio::io::AsyncWriteExt;
 
 use crate::storage::{
     bloom::{self, BloomFilterWrapper},
     index::SparseIndexEntry,
-    manifest_codec::ManifestManager,
+    manifest_codec::{ManifestManager, SSTableMeta},
     record::{MemtableRecord, RecordType},
     sstable_codec::SSTableCodec,
     writemanager::block::{Block, BlockBuilder, BlockBuilderState},
@@ -21,12 +23,6 @@ pub async fn compaction(
     manifest: Arc<ManifestManager>,
     level: u32,
 ) -> Result<SSTableCodec, std::io::Error> {
-    // TODO:
-    // 1. read the manifest file and get the level store information
-    // 2. check if the level store is full, if not, return
-    // 3. if the level store is full, merge the data within the level store to 1 file
-    // 4. update the manifest file with the new level store information
-
     let snapshot = manifest.snapshot().await;
     let manifest_level = snapshot.levels.get(&level);
 
@@ -37,8 +33,8 @@ pub async fn compaction(
         ));
     }
 
-    let levels = manifest_level.unwrap();
-    if levels.len() <= 1 {
+    let current_level_files = manifest_level.unwrap().clone();
+    if current_level_files.len() <= 1 {
         log::warn!("Level {} is not full, no need to compact", level);
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -46,12 +42,39 @@ pub async fn compaction(
         ));
     }
 
-    // need to merge k files to 1 file, and update the manifest file with the new level store information
+    let next_level = level + 1;
+    let next_level_files = snapshot
+        .levels
+        .get(&next_level)
+        .cloned()
+        .unwrap_or_default();
+
+    let current_level_range = compute_level_range(&current_level_files)
+        .await?
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Level {} has no valid key range", level),
+            )
+        })?;
+
+    let mut overlapping_next_level_files = Vec::new();
+    for candidate in next_level_files {
+        if let Some(candidate_range) = compute_meta_range(&candidate).await? {
+            if ranges_overlap(&current_level_range, &candidate_range) {
+                overlapping_next_level_files.push(candidate);
+            }
+        }
+    }
+
+    // Merge entire current level with overlapping files from the next level.
+    let mut merge_candidates = current_level_files.clone();
+    merge_candidates.extend(overlapping_next_level_files.iter().cloned());
 
     let mut sstables = vec![];
     // provisioning the sstables, we need to read the sstables from the disk, and then we can merge them to 1 file, and then we can update the manifest file with the new level store information
 
-    for level_store in levels {
+    for level_store in &merge_candidates {
         let sstable_file = tokio::fs::File::open(&level_store.path).await?;
         let mut read_buffer = tokio::io::BufReader::new(sstable_file);
         let (footer, index, bloom) = SSTableCodec::deserialize_sections(&mut read_buffer).await?;
@@ -67,7 +90,118 @@ pub async fn compaction(
 
     let merged_sstable = merge_files(sstables).await?;
 
+    if merged_sstable.blocks.is_empty() {
+        for stale in &current_level_files {
+            manifest.remove_sstable(level, stale.file_id).await?;
+        }
+        for stale in &overlapping_next_level_files {
+            manifest.remove_sstable(next_level, stale.file_id).await?;
+        }
+
+        return Ok(merged_sstable);
+    }
+
+    let merged_range = range_from_blocks(&merged_sstable.blocks).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "compaction output has no key range",
+        )
+    })?;
+
+    let file_id = manifest.allocate_file_id().await?;
+    let output_path =
+        build_compaction_output_path(&current_level_files[0].path, next_level, file_id);
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let (encoded, _) = merged_sstable.serialize();
+    let mut output_file = tokio::fs::File::create(&output_path).await?;
+    output_file.write_all(&encoded).await?;
+    output_file.sync_all().await?;
+
+    let compacted_record_count = merged_sstable
+        .blocks
+        .iter()
+        .map(|block| block.record_count as usize)
+        .sum();
+
+    manifest
+        .register_sstable(SSTableMeta {
+            file_id,
+            level: next_level,
+            path: output_path.to_string_lossy().to_string(),
+            record_count: compacted_record_count,
+            bloom_bitmap: merged_sstable.bloom.clone(),
+            smallest_key: merged_range.0,
+            largest_key: merged_range.1,
+        })
+        .await?;
+
+    for stale in &current_level_files {
+        manifest.remove_sstable(level, stale.file_id).await?;
+    }
+    for stale in &overlapping_next_level_files {
+        manifest.remove_sstable(next_level, stale.file_id).await?;
+    }
+
     Ok(merged_sstable)
+}
+
+fn build_compaction_output_path(base_file_path: &str, level: u32, file_id: u64) -> PathBuf {
+    let source = PathBuf::from(base_file_path);
+    let level_dir = source
+        .parent()
+        .and_then(|parent| {
+            parent
+                .parent()
+                .map(|sstable_root| sstable_root.join(format!("level-{level}")))
+        })
+        .unwrap_or_else(|| PathBuf::from(format!("level-{level}")));
+
+    level_dir.join(format!("sstable-{file_id}.dat"))
+}
+
+fn ranges_overlap(left: &(Vec<u8>, Vec<u8>), right: &(Vec<u8>, Vec<u8>)) -> bool {
+    left.0 <= right.1 && right.0 <= left.1
+}
+
+fn range_from_blocks(
+    blocks: &[crate::storage::writemanager::block::Block],
+) -> Option<(Vec<u8>, Vec<u8>)> {
+    let first = blocks.first()?;
+    let last = blocks.last()?;
+    Some((first.first_key.clone(), last.last_key.clone()))
+}
+
+async fn compute_meta_range(
+    meta: &SSTableMeta,
+) -> Result<Option<(Vec<u8>, Vec<u8>)>, std::io::Error> {
+    if !meta.smallest_key.is_empty() && !meta.largest_key.is_empty() {
+        return Ok(Some((meta.smallest_key.clone(), meta.largest_key.clone())));
+    }
+
+    let sstable_file = tokio::fs::File::open(&meta.path).await?;
+    let mut read_buffer = tokio::io::BufReader::new(sstable_file);
+    let (_footer, index, _bloom) = SSTableCodec::deserialize_sections(&mut read_buffer).await?;
+    Ok(SSTableCodec::range_from_index(&index))
+}
+
+async fn compute_level_range(
+    metas: &[SSTableMeta],
+) -> Result<Option<(Vec<u8>, Vec<u8>)>, std::io::Error> {
+    let mut range: Option<(Vec<u8>, Vec<u8>)> = None;
+
+    for meta in metas {
+        if let Some((smallest, largest)) = compute_meta_range(meta).await? {
+            range = Some(match range {
+                Some((cur_min, cur_max)) => (cur_min.min(smallest), cur_max.max(largest)),
+                None => (smallest, largest),
+            });
+        }
+    }
+
+    Ok(range)
 }
 
 async fn merge_files(sstables: Vec<SSTableCodec>) -> Result<SSTableCodec, std::io::Error> {
@@ -176,7 +310,7 @@ fn flush_winner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::record::RecordType;
+    use crate::storage::{bloom::BloomFilterWrapper, record::RecordType};
 
     /// Helper: Create a MemtableRecord with key, value, record_type, and lsn
     fn make_record(key: &[u8], value: &[u8], record_type: RecordType, lsn: u64) -> MemtableRecord {
@@ -582,5 +716,47 @@ mod tests {
         assert_eq!(block_data[1].key, b"b_key");
         assert_eq!(block_data[2].key, b"y_key");
         assert_eq!(block_data[3].key, b"z_key");
+    }
+
+    #[test]
+    fn ranges_overlap_when_boundaries_touch() {
+        let left = (b"a".to_vec(), b"m".to_vec());
+        let right = (b"m".to_vec(), b"z".to_vec());
+        assert!(ranges_overlap(&left, &right));
+    }
+
+    #[test]
+    fn ranges_do_not_overlap_when_disjoint() {
+        let left = (b"a".to_vec(), b"f".to_vec());
+        let right = (b"g".to_vec(), b"z".to_vec());
+        assert!(!ranges_overlap(&left, &right));
+    }
+
+    #[tokio::test]
+    async fn compute_level_range_uses_manifest_range_when_present() {
+        let metas = vec![
+            SSTableMeta {
+                file_id: 1,
+                level: 0,
+                path: "unused-a".to_string(),
+                record_count: 10,
+                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                smallest_key: b"b".to_vec(),
+                largest_key: b"d".to_vec(),
+            },
+            SSTableMeta {
+                file_id: 2,
+                level: 0,
+                path: "unused-b".to_string(),
+                record_count: 10,
+                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                smallest_key: b"a".to_vec(),
+                largest_key: b"z".to_vec(),
+            },
+        ];
+
+        let range = compute_level_range(&metas).await.unwrap().unwrap();
+        assert_eq!(range.0, b"a");
+        assert_eq!(range.1, b"z");
     }
 }

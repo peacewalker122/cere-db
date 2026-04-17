@@ -259,6 +259,14 @@ impl WriteComponent {
         let codec = SSTableCodec::new(block_entries, sparse_index, bloom_filter.clone());
         let (encoded, _) = codec.serialize();
 
+        let (smallest_key, largest_key) =
+            SSTableCodec::range_from_index(&codec.index).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "cannot register SSTable without sparse index range",
+                )
+            })?;
+
         let record_count = valid_records.len();
 
         let file_id = self.manifest_manager.allocate_file_id().await?;
@@ -277,6 +285,8 @@ impl WriteComponent {
                 path: file_path.to_string_lossy().to_string(),
                 record_count,
                 bloom_bitmap: bloom_filter,
+                smallest_key,
+                largest_key,
             })
             .await?;
 

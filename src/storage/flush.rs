@@ -5,7 +5,7 @@ use crate::storage::{
     block::BlockBuilder, bloom::BloomFilterWrapper, record::Record, record::RecordType,
 };
 
-use super::footer::{SSTableFooter};
+use super::footer::SSTableFooter;
 use super::index::SparseIndexEntry;
 
 const DATA_DIR: &str = "data";
@@ -247,7 +247,7 @@ mod tests {
         let temp_root = std::env::temp_dir().join(format!("wasm-kv-flush-{test_name}-{unique_id}"));
 
         std::fs::create_dir_all(&temp_root).unwrap();
-        
+
         // Change to temp dir so relative paths work, restore after test
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(&temp_root).unwrap();
