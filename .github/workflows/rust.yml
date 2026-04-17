@@ -3,8 +3,14 @@ name: Rust
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "**.rs"
+      - "**.yml"
   pull_request:
     branches: [ "main" ]
+    paths:
+      - "**.rs"
+      - "**.yml"
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,6 +21,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Run tests
       run: cargo test --verbose -- --test-threads=1
