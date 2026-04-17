@@ -1,126 +1,106 @@
-# wasm-kv
+# CereDB
 
 [![Rust](https://github.com/peacewalker122/slow-database/actions/workflows/rust.yml/badge.svg)](https://github.com/peacewalker122/slow-database/actions/workflows/rust.yml)
 
-An LSM-tree based key-value store built from scratch in Rust. Built as a learning project to deeply understand how storage engines work — from WAL to compaction — with a future path toward WASM compatibility.
+An LSM-tree based key-value store built from scratch in Rust. This project is focused on learning storage-engine internals end-to-end: WAL durability, memtable flushing, SSTable codecs, manifests, and leveled compaction.
 
 ## Overview
 
-`wasm-kv` is a single-node, single-writer embedded key-value store that implements the core components of a Log-Structured Merge Tree (LSM-tree):
+`wasm-kv` is a single-node embedded KV store with an async engine (`KV2`) and CLI REPL.
 
-- **Write path**: Writes go through a Write-Ahead Log for durability, then into an in-memory SkipMap, which flushes to sorted on-disk SSTables when a size threshold is reached.
-- **Read path**: Reads check the in-memory MemTable first, then search through leveled SSTables using bloom filters and sparse indexes to minimize disk I/O.
+- **Write path**: WAL append → in-memory SkipMap memtable → flush to L0 SSTable when threshold is reached.
+- **Read path**: memtable first, then leveled SSTables using bloom filters + sparse index.
+- **Compaction path**: background compaction worker merges level-N files and overlapping level-(N+1) files.
 
-## Architecture
+## Current Architecture
 
 ```
-                          WRITE PATH
-                          ─────────
-    put(key, value)
-          │
-          ▼
-    ┌───────────┐     Append record with
-    │    WAL    │◄─── CRC32 checksum for
-    │ (durability)│    crash recovery
-    └─────┬─────┘
-          ▼
-    ┌───────────┐     crossbeam SkipMap
-    │ MemTable  │◄─── (sorted, concurrent)
-    └─────┬─────┘
-          │  threshold reached (400KB)
-          ▼
-    ┌───────────┐     Flush via crossbeam
-    │  Flush    │◄─── channel to background
-    │ (async)   │     watcher thread
-    └─────┬─────┘
-          ▼
-    ┌───────────────────────────────────┐
-    │           SSTable File            │
-    │  ┌───────┬───────┬───────┐       │
-    │  │Block 0│Block 1│Block N│ 4KB   │
-    │  └───────┴───────┴───────┘       │
-    │  ┌─────────────────────┐         │
-    │  │    Sparse Index     │         │
-    │  └─────────────────────┘         │
-    │  ┌─────────────────────┐         │
-    │  │    Bloom Filter     │         │
-    │  └─────────────────────┘         │
-    │  ┌─────────────────────┐         │
-    │  │      Footer         │         │
-    │  └─────────────────────┘         │
-    └───────────────────────────────────┘
-          │
-          ▼
-    ┌───────────┐     Tracks SSTable files
-    │ Manifest  │◄─── per level
-    └───────────┘
-
-
-                          READ PATH
-                          ─────────
-    get(key)
-      │
-      ▼
-    MemTable ──found──▶ return value
-      │ miss
-      ▼
-    Bloom Filter ──negative──▶ skip file
-      │ maybe
-      ▼
-    Sparse Index ──locate──▶ target block
-      │
-      ▼
-    Block scan ──found──▶ return value
-      │ miss
-      ▼
-    Next SSTable... ──▶ repeat per level
+PUT/DELETE
+   │
+   ▼
+WAL (durability, replay)
+   │
+   ▼
+MemTable (SkipMap, latest LSN wins)
+   │  threshold reached (MEMTABLE_SIZE_THRESHOLD)
+   ▼
+Flush -> SSTable (L0)
+   │
+   ├── Data Blocks (4KB)
+   ├── Sparse Index (first_key/last_key + offset)
+   ├── Bloom Filter
+   └── Footer (offsets + checksums)
+   │
+   ▼
+Manifest (append-only metadata)
+  - file_id, level, path, record_count, bloom
+  - smallest_key/largest_key cache (derived from sparse index)
+   │
+   ▼
+Compaction Worker
+  - Triggered when level file count threshold is exceeded
+  - Selects overlap via key ranges
+  - Merges level N + overlapping level N+1
+  - Writes output into level N+1 and updates manifest
 ```
 
 ## Features
 
-- **Write-Ahead Log (WAL)** — Append-only log with CRC32 checksums, WAL rotation on flush, and archival for recovery
-- **MemTable** — Lock-free concurrent SkipMap (`crossbeam-skiplist`) with sorted key ordering
-- **SSTable** — Immutable on-disk sorted tables with:
-  - Fixed-size 4KB blocks
-  - Sparse index for block-level binary search
-  - Bloom filters for fast negative lookups
-  - Footer with offset metadata and checksums
-- **Leveled Storage** — Multi-level SSTable organization (L0, L1, L2...) with manifest tracking
-- **Concurrent Flush** — Channel-based background flush watcher thread decoupled from the write path
-- **Tombstone Deletes** — Logical deletes via `RecordType::Delete` markers, cleaned up during compaction
-- **Crash Recovery** — WAL replay on startup to rebuild MemTable state
-- **CLI REPL** — Interactive command loop with `SET`, `GET`, `DELETE`, `EXIT/QUIT`
-- **Command Core Abstraction** — Transport-agnostic command parse/execute layer reusable for future TCP transport
-- **CLI** — Configurable via `clap` with log level and data directory options
+- **WAL durability + recovery**
+  - CRC32 integrity checks
+  - WAL replay on startup
+  - WAL rotation on successful flush
+- **MemTable on SkipMap** (`crossbeam-skiplist`)
+- **SSTable codec**
+  - 4KB blocks
+  - sparse index for block targeting
+  - bloom filter for negative lookups
+  - fixed-size footer with section offsets and checksums
+- **Manifest manager (`manifest_codec`)**
+  - append-only metadata log
+  - snapshot view for reads/compaction
+  - per-SSTable key-range cache (`smallest_key`, `largest_key`)
+- **Leveled compaction**
+  - compacts full source level with overlapping next-level SSTables
+  - overlap based on key ranges
+  - falls back to sparse-index-derived ranges for legacy entries
+- **CLI REPL**
+  - `SET`, `GET`, `DELETE`, `EXIT/QUIT`
 
-## Project Structure
+## Project Structure (current)
 
 ```
 src/
-├── main.rs                 # CLI entry point
-├── lib.rs                  # Public crate API
-├── command.rs              # Transport-agnostic command parser/executor
-├── config.rs               # CLI config (clap)
-├── error.rs                # Error types (thiserror)
+├── main.rs
+├── lib.rs
+├── repl.rs
+├── command.rs
+├── config.rs
+├── error.rs
 ├── api/
-│   ├── mod.rs
-│   └── api.rs              # KVEngine trait definition
+│   └── api.rs                      # KVEngine + AsyncKVEngine traits
 └── storage/
-    ├── mod.rs
-    ├── kv.rs               # PersistentKV — core engine implementation
-    ├── wal.rs               # WAL header, record encoding/decoding
-    ├── log.rs               # Record format, WAL I/O, SSTable search
-    ├── record.rs            # RecordType (Put/Delete)
-    ├── block.rs             # BlockBuilder — 4KB block encoding
-    ├── bloom.rs             # Bloom filter implementation
-    ├── sstable.rs           # SSTable encode/decode, flush, k-way merge
-    ├── manifest.rs          # Manifest file tracking (level → files)
-    ├── levelstore.rs        # Level store data structure
-    ├── constant.rs          # Thresholds and magic numbers
-    ├── signal.rs            # FlushSignal struct
-    ├── skiplist.rs          # SkipList utilities
-    └── watcher.rs           # Background flush watcher thread
+    ├── kv2.rs                      # Main engine orchestration
+    ├── constant.rs
+    ├── record.rs
+    ├── bloom.rs
+    ├── index.rs
+    ├── footer.rs
+    ├── sstable_codec.rs            # SSTable serialize/deserialize utilities
+    ├── manifest_codec.rs           # Active manifest implementation
+    ├── writemanager/
+    │   ├── write.rs                # Flush + register metadata
+    │   └── block.rs
+    ├── readmanager/
+    │   └── read.rs
+    ├── compactionmanager/
+    │   └── compaction.rs
+    └── recovermanager/
+        ├── wal.rs
+        └── segment.rs
 ```
+
+> Some older storage files are still present for learning/history, but the active path is driven by `kv2.rs` + manager modules above.
 
 ## Getting Started
 
@@ -161,8 +141,6 @@ OK
 (nil)
 ```
 
-`SET` supports unquoted and quoted values, including escaped quotes inside quoted values.
-
 ### Test
 
 ```bash
@@ -177,113 +155,65 @@ cargo run --features dhat-heap
 
 ## API
 
-The core interface is the `KVEngine` trait:
+The async engine implements `AsyncKVEngine`:
 
 ```rust
-pub trait KVEngine {
-    fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
-    fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
-    fn delete(&mut self, key: &[u8]);
+pub trait AsyncKVEngine {
+    async fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
+    async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
+    async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
 }
 ```
 
 ### Usage
 
 ```rust
-use wasm_kv::PersistentKV;
-use wasm_kv::api::api::KVEngine;
+use wasm_kv::api::api::AsyncKVEngine;
+use wasm_kv::KV2;
 
-let mut kv = PersistentKV::new();
+#[tokio::main]
+async fn main() {
+    let mut kv = KV2::open("./data").await.unwrap();
 
-// Put
-kv.put(b"hello".to_vec(), b"world".to_vec()).unwrap();
+    kv.put(b"hello".to_vec(), b"world".to_vec()).await.unwrap();
+    let value = kv.get(b"hello").await.unwrap();
+    assert_eq!(value.unwrap().as_ref(), b"world");
 
-// Get
-let value = kv.get(b"hello").unwrap();
-assert_eq!(value.unwrap().as_slice(), b"world");
-
-// Delete
-kv.delete(b"hello");
-assert!(kv.get(b"hello").unwrap().is_none());
+    kv.delete(b"hello".to_vec()).await.unwrap();
+    assert!(kv.get(b"hello").await.unwrap().is_none());
+}
 ```
 
 ## Storage Format
 
 ### WAL Record
 
-The WAL file begins with a 32-byte header containing a magic number (`WALMGIC\0`), version, and checkpoint metadata:
+WAL begins with a fixed header (`WALMGIC\0`) and appends records as:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  WAL Header (32 bytes)                                  │
-│  ┌──────────┬─────────┬──────────────────┬───────────┐ │
-│  │ magic    │ version │ last_checkpoint  │ reserved  │ │
-│  │ (8 bytes)│(8 bytes)│   (8 bytes)      │ (8 bytes) │ │
-│  └──────────┴─────────┴──────────────────┴───────────┘ │
-└─────────────────────────────────────────────────────────┘
+record_type (1 byte) | lsn (8) | key_len (8) | value_len (8) | key | value | checksum (4)
 ```
-
-Each WAL record is appended with the following binary layout:
-
-```
-┌────────────┬──────┬──────────┬──────┬────────────┬───────┬──────────┐
-│record_type │ lsn  │ key_len  │ key  │ value_len  │ value │ checksum │
-│ (1 byte)   │(8 B) │ (8 bytes)│(var) │  (8 bytes) │ (var) │(4 bytes) │
-└────────────┴──────┴──────────┴──────┴────────────┴───────┴──────────┘
-```
-
-- **record_type**: 1 byte — `1` for Put, `2` for Delete
-- **lsn**: 8 bytes — Log Sequence Number for ordering and recovery
-- **key_len**: 8 bytes — key length as u64
-- **key**: variable length — the key bytes
-- **value_len**: 8 bytes — value length as u64
-- **value**: variable length — the value bytes
-- **checksum**: 4 bytes — CRC32 checksum of the value for integrity verification
 
 ### SSTable Layout
 
-Each SSTable file is structured as:
-
 ```
-┌─────────────────────────────────────────┐
-│  Data Blocks (N x 4KB blocks)           │
-│  ┌─────────────────────────────────┐    │
-│  │ Record: key_len|val_len|key|val │    │
-│  │ Record: ...                     │    │
-│  └─────────────────────────────────┘    │
-├─────────────────────────────────────────┤
-│  Sparse Index                           │
-│  ┌─────────────────────────────────┐    │
-│  │ first_key | block_offset | ...  │    │
-│  └─────────────────────────────────┘    │
-├─────────────────────────────────────────┤
-│  Bloom Filter (serialized bit vector)   │
-├─────────────────────────────────────────┤
-│  Footer                                 │
-│  ┌─────────────────────────────────┐    │
-│  │ data_block_start/end            │    │
-│  │ index_block_start/end           │    │
-│  │ bloom_block_start/end           │    │
-│  │ index_checksum | bloom_checksum │    │
-│  └─────────────────────────────────┘    │
-└─────────────────────────────────────────┘
+Data Blocks -> Sparse Index -> Bloom Filter -> Footer
 ```
 
-**Read flow**: Footer is read first (fixed size at end of file) to locate the sparse index and bloom filter offsets. The bloom filter provides fast negative lookups, the sparse index locates the target block, and then the block is scanned linearly.
+Footer stores offsets/checksums for section lookup. Read path uses footer first, then bloom/index to narrow data block reads.
 
 ## Learning Resources
 
-This project follows a phased learning roadmap (see [`PLAN.md`](./PLAN.md)) covering:
+This project follows a phased learning roadmap (see [`PLAN.md`](./PLAN.md)) around:
 
-- Binary encoding and on-disk record formats
-- Write-Ahead Logging and crash recovery
-- LSM-tree architecture (MemTable, SSTable, compaction)
-- Bloom filters and sparse indexing
-- Concurrency patterns (channels, RwLock, atomic operations)
+- On-disk encoding and checksums
+- WAL + crash recovery
+- Memtable/SSTable/manifest interactions
+- Leveled compaction mechanics
+- Concurrency and background workers
 
 ### Further Reading
 
-- [LevelDB Implementation Notes](https://github.com/google/leveldb/blob/main/doc/impl.md) — Google's original LSM-tree implementation
-- [RocksDB Wiki](https://github.com/facebook/rocksdb/wiki) — Production-grade LSM with advanced compaction strategies
-- [WiscKey: Separating Keys from Values](https://www.usenix.org/system/files/conference/fast16/fast16-papers-lu.pdf) — Key-value separation to reduce write amplification
-- [Database Internals by Alex Petrov](https://www.databass.dev/) — Comprehensive guide to storage engine design
+- [LevelDB Implementation Notes](https://github.com/google/leveldb/blob/main/doc/impl.md)
+- [RocksDB Wiki](https://github.com/facebook/rocksdb/wiki)
+- [Database Internals by Alex Petrov](https://www.databass.dev/)
