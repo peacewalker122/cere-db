@@ -2,8 +2,10 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
+    thread,
 };
 
+use crossbeam_channel::{Receiver, Sender, bounded};
 use crossbeam_skiplist::SkipMap;
 
 use crate::{
@@ -20,6 +22,12 @@ use crate::{
     },
 };
 
+/// Compaction trigger message sent from write path to compaction worker.
+#[derive(Debug, Clone)]
+pub enum CompactionTrigger {
+    CompactLevel { level: u32 },
+}
+
 const DEFAULT_WAL_SEGMENT_SIZE: u64 = 1024 * 1024;
 
 /// KV2 is the frontline orchestrator for storage managers.
@@ -35,8 +43,13 @@ pub struct KV2 {
     pub manifest_path: PathBuf,
 
     wal_manager: Arc<WALManager>,
+    manifest: Arc<ManifestManager>, // Single source of truth (Arc) - shared with all components
     write_component: WriteComponent,
     read_manager: ReadManager,
+
+    // Async compaction trigger channel (Step 1.3)
+    pub compaction_sender: Sender<CompactionTrigger>,
+    _compaction_receiver: Receiver<CompactionTrigger>,
 }
 
 impl KV2 {
@@ -63,20 +76,34 @@ impl KV2 {
         let (recovered_memtable, recovered_sequence, recovered_memtable_size) =
             Self::build_recovered_memtable(recovered_wal_records);
 
-        // Separate manifest handles for each component for write/read paths.
-        let write_manifest = ManifestManager::load_or_create(manifest_path.clone()).await?;
-        let read_manifest = ManifestManager::load_or_create(manifest_path.clone()).await?;
+        // Single ManifestManager as source of truth - shared with all components
+        let manifest = Arc::new(ManifestManager::load_or_create(manifest_path.clone()).await?);
 
         let mut write_component = WriteComponent::new(
             sstable_dir.clone(),
             Arc::clone(&wal_manager),
-            write_manifest,
+            Arc::clone(&manifest),
             recovered_sequence,
         );
         write_component.restore_memtable(recovered_memtable, recovered_memtable_size);
 
         let active_memtable = write_component.active_memtable_handle();
-        let read_manager = ReadManager::new(active_memtable, read_manifest);
+        let read_manager = ReadManager::new(active_memtable, Arc::clone(&manifest));
+
+        // Step 1.4: Create mpsc channel for async compaction triggers
+        let (compaction_sender, compaction_receiver) = bounded(16);
+        let receiver_clone = compaction_receiver.clone();
+
+        // Spawn rayon worker thread (Step 1.5) - pass shared Arc<ManifestManager>
+        let manifest_for_worker = Arc::clone(&manifest);
+        let sstable_dir_for_compaction = sstable_dir.clone();
+        thread::spawn(move || {
+            Self::run_compaction_worker(
+                receiver_clone,
+                manifest_for_worker,
+                sstable_dir_for_compaction,
+            );
+        });
 
         Ok(Self {
             base_dir,
@@ -84,8 +111,11 @@ impl KV2 {
             sstable_dir,
             manifest_path,
             wal_manager,
+            manifest,
             write_component,
             read_manager,
+            compaction_sender,
+            _compaction_receiver: compaction_receiver,
         })
     }
 
@@ -141,10 +171,9 @@ impl KV2 {
 
         let locked_memtable = self.write_component.lock_memtable().await;
         let active_memtable = self.write_component.active_memtable_handle();
-        self.read_manager.set_memtable(active_memtable);
+        let flush_result = self.write_component.flush(locked_memtable).await?;
 
-        let flush_memtable = Self::clone_memtable(&locked_memtable);
-        let flush_result = self.write_component.flush(flush_memtable).await?;
+        self.read_manager.set_memtable(active_memtable);
 
         self.write_component
             .save_buffer(
@@ -153,30 +182,47 @@ impl KV2 {
             )
             .await?;
 
-        let manifest_for_snapshot =
-            ManifestManager::load_or_create(self.manifest_path.clone()).await?;
-        let snapshot = manifest_for_snapshot.snapshot().await;
+        // Use shared manifest for snapshot check
+        let snapshot = self.manifest.snapshot().await;
         let level0_count = snapshot.levels.get(&0).map_or(0, |files| files.len());
 
         if level0_count >= MAXIMUM_LEVEL_FILES {
-            let compaction_manifest =
-                ManifestManager::load_or_create(self.manifest_path.clone()).await?;
-            let _ = compaction(compaction_manifest, 0).await?;
+            // Send trigger to rayon worker (non-blocking)
+            let _ = self
+                .compaction_sender
+                .send(CompactionTrigger::CompactLevel { level: 0 });
         }
 
         Ok(())
     }
 
-    fn clone_memtable(
-        source: &Arc<SkipMap<(Vec<u8>, u64), crate::storage::record::MemtableRecord>>,
-    ) -> SkipMap<(Vec<u8>, u64), crate::storage::record::MemtableRecord> {
-        let cloned = SkipMap::new();
+    /// Rayon worker that processes compaction triggers received via mpsc channel.
+    /// Runs in a dedicated thread, using rayon for parallel compaction work.
+    fn run_compaction_worker(
+        receiver: Receiver<CompactionTrigger>,
+        manifest: Arc<ManifestManager>,
+        sstable_dir: PathBuf,
+    ) {
+        // Loop processing triggers from channel
+        while let Ok(trigger) = receiver.recv() {
+            let CompactionTrigger::CompactLevel { level } = trigger;
+            let manifest = Arc::clone(&manifest);
+            let sstable_dir = sstable_dir.clone();
 
-        for entry in source.iter() {
-            cloned.insert(entry.key().clone(), entry.value().clone());
+            // Spawn parallel work with rayon
+            rayon::scope(|s| {
+                s.spawn(|_| {
+                    // Create tokio runtime for async compaction
+                    let rt = tokio::runtime::Runtime::new().ok();
+                    if let Some(runtime) = rt {
+                        runtime.block_on(async {
+                            // Use shared manifest (Arc)
+                            let _ = compaction(Arc::clone(&manifest), level).await;
+                        });
+                    }
+                });
+            });
         }
-
-        cloned
     }
 }
 
@@ -194,12 +240,16 @@ impl AsyncKVEngine for KV2 {
 
     async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError> {
         self.write_component.put(key, value).await?;
-        self.maybe_flush_and_compact().await
+        self.maybe_flush_and_compact().await?;
+
+        Ok(())
     }
 
     async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
         self.write_component.delete(key).await?;
-        self.maybe_flush_and_compact().await
+        self.maybe_flush_and_compact().await?;
+
+        Ok(())
     }
 }
 

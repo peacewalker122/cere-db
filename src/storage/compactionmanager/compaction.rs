@@ -6,7 +6,7 @@
 // Who would be the caller? The WriteManager... when it flushes and the level store threshold were
 // exceeded, it will trigger the compaction action, and the compaction manager will be responsible for managing the compaction action, and the compaction action will be responsible for merging the data within the level store to 1 file, and then it will return the result to the WriteManager, and the WriteManager will update the manifest file with the new level store information.
 
-use std::io::Cursor;
+use std::{io::Cursor, sync::Arc};
 
 use crate::storage::{
     bloom::{self, BloomFilterWrapper},
@@ -18,7 +18,7 @@ use crate::storage::{
 };
 
 pub async fn compaction(
-    manifest: ManifestManager,
+    manifest: Arc<ManifestManager>,
     level: u32,
 ) -> Result<SSTableCodec, std::io::Error> {
     // TODO:

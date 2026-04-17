@@ -8,7 +8,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, sync::RwLock};
 
 use crate::storage::{
     bloom::BloomFilterWrapper,
@@ -51,7 +51,7 @@ pub struct WriteComponent {
 
     sstable_dir: PathBuf,
     wal_manager: Arc<WALManager>,
-    manifest_manager: ManifestManager,
+    manifest_manager: Arc<ManifestManager>,
 }
 
 impl WriteComponent {
@@ -59,7 +59,7 @@ impl WriteComponent {
     pub fn new(
         sstable_dir: PathBuf,
         wal_manager: Arc<WALManager>,
-        manifest_manager: ManifestManager,
+        manifest_manager: Arc<ManifestManager>,
         sequence_number: u64, // this is from the wal recovery process
     ) -> Self {
         log::info!(
@@ -81,7 +81,7 @@ impl WriteComponent {
     /// Create a new WriteComponent with default directory
     pub fn with_default_dir(
         wal_manager: Arc<WALManager>,
-        manifest_manager: ManifestManager,
+        manifest_manager: Arc<ManifestManager>,
     ) -> Self {
         Self {
             memtable: Arc::new(SkipMap::new()),
@@ -183,7 +183,7 @@ impl WriteComponent {
     /// * `Err(std::io::Error)` - If flush fails
     pub async fn flush(
         &mut self,
-        memtable: SkipMap<(Vec<u8>, u64), MemtableRecord>,
+        memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
     ) -> Result<CheckpointResult, std::io::Error> {
         let mut valid_records: std::collections::BTreeMap<Vec<u8>, MemtableRecord> =
             std::collections::BTreeMap::new();
@@ -266,7 +266,7 @@ impl WriteComponent {
         let file_path = self
             .sstable_dir
             .join(format!("level-0/sstable-{}.dat", file_id));
-        
+
         // Write encoded SSTable data to disk
         self.save_buffer(&encoded, &file_path).await?;
 
@@ -322,9 +322,11 @@ mod tests {
         let wal_manager = WALManager::new(temp_dir.join("wal"), 1024 * 1024)
             .await
             .unwrap();
-        let manifest_manager = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
-            .await
-            .unwrap();
+        let manifest_manager = Arc::new(
+            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
 
         WriteComponent::new(
             temp_dir.join("sstable"),
@@ -350,7 +352,7 @@ mod tests {
             MemtableRecord::new(Vec::new(), RecordType::Delete, 2),
         );
 
-        let result = write_component.flush(memtable).await.unwrap();
+        let result = write_component.flush(Arc::new(memtable)).await.unwrap();
 
         assert_eq!(result.record_count, 2);
         assert_eq!(result.level, 0);
@@ -389,7 +391,7 @@ mod tests {
             MemtableRecord::new(b"value-m".to_vec(), RecordType::Put, 3),
         );
 
-        let _ = write_component.flush(memtable).await.unwrap();
+        let _ = write_component.flush(Arc::new(memtable)).await.unwrap();
 
         let snapshot = write_component.manifest_manager.snapshot().await;
         let level0_files = snapshot.levels.get(&0).unwrap();
@@ -420,8 +422,14 @@ mod tests {
             MemtableRecord::new(b"second-value".to_vec(), RecordType::Put, 2),
         );
 
-        let _ = write_component.flush(first_memtable).await.unwrap();
-        let _ = write_component.flush(second_memtable).await.unwrap();
+        let _ = write_component
+            .flush(Arc::new(first_memtable))
+            .await
+            .unwrap();
+        let _ = write_component
+            .flush(Arc::new(second_memtable))
+            .await
+            .unwrap();
 
         let snapshot = write_component.manifest_manager.snapshot().await;
         let level0_files = snapshot.levels.get(&0).unwrap();
@@ -445,7 +453,7 @@ mod tests {
             MemtableRecord::new(b"wal-value".to_vec(), RecordType::Put, 1),
         );
 
-        let _ = write_component.flush(memtable).await.unwrap();
+        let _ = write_component.flush(Arc::new(memtable)).await.unwrap();
 
         let snapshot_after_first = write_component.manifest_manager.snapshot().await;
         let first_segment = snapshot_after_first.active_wal_segment;
@@ -457,7 +465,10 @@ mod tests {
             MemtableRecord::new(b"wal-value-2".to_vec(), RecordType::Put, 2),
         );
 
-        let _ = write_component.flush(second_memtable).await.unwrap();
+        let _ = write_component
+            .flush(Arc::new(second_memtable))
+            .await
+            .unwrap();
         let snapshot_after_second = write_component.manifest_manager.snapshot().await;
         assert!(snapshot_after_second.active_wal_segment > first_segment);
 

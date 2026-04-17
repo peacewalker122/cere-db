@@ -9,13 +9,13 @@ use crate::storage::{
 
 pub struct ReadManager {
     memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
-    manifest: ManifestManager,
+    manifest: Arc<ManifestManager>,
 }
 
 impl ReadManager {
     pub fn new(
         memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
-        manifest_manager: ManifestManager,
+        manifest_manager: Arc<ManifestManager>,
     ) -> Self {
         Self {
             memtable,
@@ -175,7 +175,7 @@ mod tests {
     #[tokio::test]
     async fn get_returns_latest_visible_version_for_snapshot_sequence_number() {
         let temp_dir = with_temp_dir("readmanager-mvcc", |p| p);
-        
+
         let memtable = Arc::new(SkipMap::new());
         let key = b"mvcc-key".to_vec();
 
@@ -192,9 +192,11 @@ mod tests {
             MemtableRecord::new(b"value-v5".to_vec(), RecordType::Put, 5),
         );
 
-        let manifest_manager = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
-            .await
-            .unwrap();
+        let manifest_manager = Arc::new(
+            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
 
         let manager = ReadManager::new(memtable, manifest_manager);
 
@@ -209,21 +211,23 @@ mod tests {
     #[tokio::test]
     async fn get_reads_from_sstable_when_memtable_misses() {
         let temp_dir = with_temp_dir("readmanager-sstable", |p| p);
-        
+
         std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
         std::fs::create_dir_all(temp_dir.join("wal")).unwrap();
 
         let wal_manager = WALManager::new(temp_dir.join("wal"), 1024 * 1024)
             .await
             .unwrap();
-        let manifest_for_write = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
-            .await
-            .unwrap();
+        let manifest_for_write = Arc::new(
+            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
 
         let mut write_component = WriteComponent::new(
             temp_dir.join("sstable"),
             Arc::new(wal_manager),
-            manifest_for_write,
+            Arc::clone(&manifest_for_write),
             0,
         );
 
@@ -233,11 +237,16 @@ mod tests {
             (key.clone(), 7),
             MemtableRecord::new(b"sstable-value".to_vec(), RecordType::Put, 7),
         );
-        write_component.flush(flush_memtable).await.unwrap();
-
-        let manifest_for_read = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+        write_component
+            .flush(Arc::new(flush_memtable))
             .await
             .unwrap();
+
+        let manifest_for_read = Arc::new(
+            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
         let active_memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> =
             Arc::new(SkipMap::new());
         let manager = ReadManager::new(active_memtable, manifest_for_read);
@@ -253,21 +262,23 @@ mod tests {
     #[tokio::test]
     async fn get_from_sstable_hides_newer_records_than_snapshot_sequence() {
         let temp_dir = with_temp_dir("readmanager-snapshot", |p| p);
-        
+
         std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
         std::fs::create_dir_all(temp_dir.join("wal")).unwrap();
 
         let wal_manager = WALManager::new(temp_dir.join("wal"), 1024 * 1024)
             .await
             .unwrap();
-        let manifest_for_write = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
-            .await
-            .unwrap();
+        let manifest_for_write = Arc::new(
+            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
 
         let mut write_component = WriteComponent::new(
             temp_dir.join("sstable"),
             Arc::new(wal_manager),
-            manifest_for_write,
+            Arc::clone(&manifest_for_write),
             0,
         );
 
@@ -277,11 +288,16 @@ mod tests {
             (key.clone(), 11),
             MemtableRecord::new(b"value-lsn-11".to_vec(), RecordType::Put, 11),
         );
-        write_component.flush(flush_memtable).await.unwrap();
-
-        let manifest_for_read = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+        write_component
+            .flush(Arc::new(flush_memtable))
             .await
             .unwrap();
+
+        let manifest_for_read = Arc::new(
+            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
         let active_memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> =
             Arc::new(SkipMap::new());
         let manager = ReadManager::new(active_memtable, manifest_for_read);

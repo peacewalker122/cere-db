@@ -466,9 +466,11 @@ mod tests {
         let wal_manager = WALManager::new(temp_dir.join("wal"), 1024 * 1024)
             .await
             .unwrap();
-        let manifest_manager = ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
-            .await
-            .unwrap();
+        let manifest_manager = Arc::new(
+            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
 
         let mut write_component = WriteComponent::new(
             temp_dir.join("sstable"),
@@ -486,7 +488,7 @@ mod tests {
             );
         }
 
-        let flush_result = write_component.flush(memtable).await.unwrap();
+        let flush_result = write_component.flush(Arc::new(memtable)).await.unwrap();
         // let raw = tokio::fs::read(&flush_result.sstable_path).await.unwrap();
         let raw = flush_result.data;
 
