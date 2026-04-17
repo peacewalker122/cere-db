@@ -4,10 +4,7 @@ use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt};
 
 use crate::{
     error::DBError,
-    storage::{
-        bloom::BloomFilterWrapper,
-        record::RecordType,
-    },
+    storage::{bloom::BloomFilterWrapper, record::RecordType},
 };
 
 /// SSTable Footer Structure:
@@ -246,7 +243,7 @@ pub fn read_sstable_sparse_index<R: Read + Seek>(
     mut reader: R,
     footer: &SSTableFooter,
 ) -> Result<Vec<crate::storage::index::SparseIndexEntry>, std::io::Error> {
-    use crate::storage::index::{verify_index_checksum, SparseIndexEntry};
+    use crate::storage::index::{SparseIndexEntry, verify_index_checksum};
 
     // Calculate index block size
     let index_size = footer.index_block_end - footer.index_block_start;
@@ -282,7 +279,7 @@ pub fn read_sstable_index<R: Read + Seek>(
     mut reader: R,
     footer: &SSTableFooter,
 ) -> Result<BTreeMap<Vec<u8>, u64>, std::io::Error> {
-    use crate::storage::index::{verify_index_checksum, IndexEntry};
+    use crate::storage::index::{IndexEntry, verify_index_checksum};
 
     // Calculate index block size
     let index_size = footer.index_block_end - footer.index_block_start;
@@ -333,3 +330,4 @@ pub fn read_sstable_bloom<R: Read + Seek>(
     let cursor = std::io::Cursor::new(&bloom_data);
     BloomFilterWrapper::decode(cursor)
 }
+

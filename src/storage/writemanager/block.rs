@@ -258,13 +258,22 @@ impl Block {
         let data_size = u32::from_be_bytes(len_buf);
 
         let mut records = Vec::with_capacity(record_count as usize);
-        log::debug!(
+        log::info!(
             "Decoding block with record_count: {}, data_size: {}",
             record_count,
             data_size
         );
+
         for _ in 0..record_count {
             let record = MemtableRecord::async_decode(&mut data).await?;
+
+            log::warn!(
+                "Decoded record: key = {:?}, value = {:?}, record_type = {:?}, lsn = {}",
+                String::from_utf8_lossy(&record.key),
+                String::from_utf8_lossy(&record.value),
+                record.record_type,
+                record.lsn
+            );
             records.push(record);
         }
 

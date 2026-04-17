@@ -88,7 +88,7 @@ impl WALManager {
             }
         }
 
-        log::info!(
+        log::debug!(
             "Initialized WALManager with active segment ID {}, max segment size {}, wal directory {:?}",
             max_segment_id_value,
             max_segment_size,
@@ -245,22 +245,9 @@ impl WALManager {
                 .fetch_add(1, atomic::Ordering::SeqCst);
             let new_path = self.wal_dir.join(self.active_segment_id.filename());
 
-            // wipe the wal content on the reserved wal file with just only the header, and move it to the new path
-            let file = OpenOptions::new()
-                .write(true)
-                .open(
-                    self.wal_dir
-                        .join(format!("{:020}.log", reserved_segment_id)),
-                )
+            //  remove the wal file with just only the header, and move it to the new path
+            tokio::fs::remove_file(self.wal_dir.join(format!("{:020}.log", prev_segment_id)))
                 .await?;
-            file.set_len(WAL_HEADER_SIZE).await?; // truncate the file to just the header size
-
-            tokio::fs::rename(
-                self.wal_dir
-                    .join(format!("{:020}.log", reserved_segment_id)),
-                &new_path,
-            )
-            .await?;
 
             let new_file = OpenOptions::new()
                 .append(true)
@@ -270,6 +257,10 @@ impl WALManager {
             let mut active = self.active_wal.write().await;
             *active = new_file;
         } else {
+            //  remove the wal file with just only the header, and move it to the new path
+            tokio::fs::remove_file(self.wal_dir.join(format!("{:020}.log", prev_segment_id)))
+                .await?;
+
             self.create_new_wal_file().await?;
 
             // still need to seal the current active wal file and move it to the sealed_wal list, the file will be flushed to disk and can be deleted after the checkpoint is done

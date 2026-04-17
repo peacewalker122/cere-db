@@ -38,6 +38,12 @@ impl ReadManager {
             .next_back()
             .map(|entry| entry.value().clone());
 
+        log::info!(
+            "Searching for key {:?} in memtable with sequence number <= {}: Found: {}",
+            String::from_utf8_lossy(&key),
+            sequence_number,
+            in_mem.is_some()
+        );
         if in_mem.is_some() {
             return Ok(in_mem);
         }
@@ -58,6 +64,19 @@ impl ReadManager {
     ) -> Result<Option<MemtableRecord>, std::io::Error> {
         let mut levels: Vec<(&u32, &Vec<SSTableMeta>)> = manifest_snapshot.levels.iter().collect();
         levels.sort_by_key(|(level, _)| **level);
+
+        log::info!(
+            "Searching for key {:?} in SSTables across levels: {:?}",
+            String::from_utf8_lossy(key),
+            levels
+                .iter()
+                .map(|(level, files)| {
+                    let file_names: Vec<String> =
+                        files.iter().map(|f| f.path.to_string()).collect();
+                    format!("Level {}: [{}]", level, file_names.join(", "))
+                })
+                .collect::<Vec<String>>()
+        );
 
         for (_, files) in levels.into_iter() {
             for sstable in files.iter().rev() {
@@ -88,7 +107,12 @@ impl ReadManager {
             return Ok(None);
         }
 
-        let mut best_visible: Option<MemtableRecord> = None;
+        log::info!(
+            "Key {:?} passed Bloom filter for SSTable {:?}",
+            String::from_utf8_lossy(key),
+            sstable.path
+        );
+
         for index_entry in index.iter() {
             if key < index_entry.first_key.as_slice() || key > index_entry.last_key.as_slice() {
                 continue;
@@ -100,23 +124,32 @@ impl ReadManager {
 
             if let Some(records) = block.data {
                 for record in records {
+                    log::info!(
+                        "Examining record for key {:?} in SSTable {:?}: Record key: {:?}, Record LSN: {}, Record Type: {:?}",
+                        String::from_utf8_lossy(key),
+                        sstable.path,
+                        String::from_utf8_lossy(&record.key),
+                        record.lsn,
+                        record.record_type
+                    );
+
                     if record.key != key {
                         continue;
                     }
 
-                    if record.lsn > sequence_number {
-                        continue;
-                    }
+                    if record.key == key {
+                        let result = match record.record_type {
+                            RecordType::Delete => None,
+                            _ => Some(record),
+                        };
 
-                    match &best_visible {
-                        Some(existing) if existing.lsn >= record.lsn => {}
-                        _ => best_visible = Some(record),
+                        return Ok(result);
                     }
                 }
             }
         }
 
-        Ok(best_visible)
+        Ok(None)
     }
 }
 

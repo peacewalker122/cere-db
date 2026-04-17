@@ -165,6 +165,10 @@ impl KV2 {
     }
 
     async fn maybe_flush_and_compact(&mut self) -> Result<(), DBError> {
+        log::info!(
+            "Checking if flush is needed. Current memtable size: {} bytes",
+            self.write_component.memtable_size_bytes()
+        );
         if self.write_component.memtable_size_bytes() < MEMTABLE_SIZE_THRESHOLD as usize {
             return Ok(());
         }
@@ -173,6 +177,11 @@ impl KV2 {
         let active_memtable = self.write_component.active_memtable_handle();
         let flush_result = self.write_component.flush(locked_memtable).await?;
 
+        log::debug!(
+            "Flushed memtable to SSTable. Flushed size: {} bytes, SSTable path: {}",
+            flush_result.data.len(),
+            flush_result.sstable_path
+        );
         self.read_manager.set_memtable(active_memtable);
 
         self.write_component

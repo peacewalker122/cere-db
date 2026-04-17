@@ -229,7 +229,7 @@ impl SSTableCodec {
             ));
         }
 
-        log::debug!(
+        log::info!(
             "Fetching block for key {:?} at index position {}, block offset range: {} - {}",
             String::from_utf8_lossy(key),
             index_position,

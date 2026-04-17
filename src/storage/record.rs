@@ -363,6 +363,14 @@ impl MemtableRecord {
         reader.read_exact(&mut lsn_buf).await?;
         let lsn = u64::from_le_bytes(lsn_buf);
 
+        log::info!(
+            "Decoded MemtableRecord: key_len={}, value_len={}, record_type={:?}, lsn={}",
+            key_len,
+            value_len,
+            record_type,
+            lsn
+        );
+
         Ok(Self {
             key: key_buf,
             value: value_buf,
