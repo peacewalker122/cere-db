@@ -1,6 +1,7 @@
+[![Rust](https://github.com/peacewalker122/slow-database/actions/workflows/rust.yml/badge.svg)](https://github.com/peacewalker122/slow-database/actions/workflows/rust.yml)
+
 # CereDB
 
-[![Rust](https://github.com/peacewalker122/slow-database/actions/workflows/rust.yml/badge.svg)](https://github.com/peacewalker122/slow-database/actions/workflows/rust.yml)
 An LSM-tree based key-value store built from scratch in Rust. This project is focused on learning storage-engine internals end-to-end: WAL durability, memtable flushing, SSTable codecs, manifests, and leveled compaction.
 
 ## Overview
