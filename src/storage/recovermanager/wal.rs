@@ -21,6 +21,8 @@ use tokio::{
 
 use crate::storage::{constant::*, record::RecordType, recovermanager::segment::SegmentId};
 
+use super::log_store::{LogCommand, LogPosition, LogStore};
+
 // Implement both read, write and recover as a method here also rotation
 pub struct WALManager {
     active_wal: tokio::sync::RwLock<TokioFile>, // File handle for the WAL file (active)
@@ -32,6 +34,8 @@ pub struct WALManager {
 
     wal_dir: PathBuf, // Directory where WAL files are stored
 }
+
+pub type FileWalStore = WALManager;
 
 // Additional methods for writing logs, reading logs, checkpointing, and recovery would go here
 impl WALManager {
@@ -553,6 +557,47 @@ impl Default for WALHeader {
     }
 }
 
+#[async_trait::async_trait]
+impl LogStore for WALManager {
+    async fn append(&self, cmd: LogCommand) -> Result<LogPosition, std::io::Error> {
+        let lsn = self
+            .write_log(&cmd.key, &cmd.value, cmd.lsn, cmd.record_type)
+            .await?;
+        Ok(LogPosition { lsn })
+    }
+
+    async fn recover_commands(&self) -> Result<Vec<LogCommand>, std::io::Error> {
+        let records = self.recover_records().await?;
+        let mut out = Vec::with_capacity(records.len());
+
+        for record in records {
+            let record_type = match record.record_type {
+                1 => RecordType::Put,
+                2 => RecordType::Delete,
+                _ => continue,
+            };
+
+            out.push(LogCommand {
+                record_type,
+                key: record.key,
+                value: record.value,
+                lsn: record.lsn,
+            });
+        }
+
+        Ok(out)
+    }
+
+    async fn rotate(&self) -> Result<u64, std::io::Error> {
+        self.rotate_wal_file().await
+    }
+
+    async fn mark_reserved(&self, segment_id: u64) -> Result<(), std::io::Error> {
+        let _ = self.change_to_reserve(segment_id).await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use tokio::io::AsyncReadExt;
@@ -567,6 +612,7 @@ mod test {
         let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
+
         assert_eq!(
             wal_manager
                 .active_segment_id
