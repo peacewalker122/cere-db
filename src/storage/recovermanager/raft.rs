@@ -35,7 +35,7 @@ impl LogStore for RaftRecoverManager {
     }
     async fn recover_commands(&self) -> Result<Vec<LogCommand>, std::io::Error> {
         // read the logs from raft and convert them to LogCommand
-        let (data) = {
+        let data = {
             let node = self.raft_node.read().await;
 
             let state = node.get_raft_state().await.map_err(|e| {

@@ -1238,7 +1238,7 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 [[package]]
 name = "rust-raft"
 version = "0.1.0"
-source = "git+https://github.com/peacewalker122/rust-raft#b19ce582a85904789a3c3e2509bdc0118b10247e"
+source = "git+https://github.com/peacewalker122/rust-raft#4e8f6a2a492d827baa7ce1a252f83463a016e5fa"
 dependencies = [
  "async-trait",
  "futures-util",
