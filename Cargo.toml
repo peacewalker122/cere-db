@@ -24,11 +24,13 @@ tokio = { version = "1.43", features = [
 ] }
 rayon = "1.11.0"
 rust-raft = { git = "https://github.com/peacewalker122/rust-raft", version = "0.1.0" }
+# rust-raft = { path = "../rust-raft/", version = "0.1.0" }
 
 [dev-dependencies]
 uuid = { version = "1.11", features = ["v4"] }
 tempfile = "3.15"
 dhat = "0.3.3"
+tonic = "0.14"
 
 [profile.release]
 debug = 1

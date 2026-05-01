@@ -1,7 +1,7 @@
-use clap::Parser;
-use log::info;
 use ceredb::repl::run_repl_async;
 use ceredb::{Config, KV2};
+use clap::Parser;
+use log::info;
 
 #[tokio::main]
 async fn main() {

@@ -8,6 +8,64 @@ pub struct LogCommand {
     pub lsn: u64,
 }
 
+impl LogCommand {
+    pub fn new(record_type: RecordType, key: Vec<u8>, value: Vec<u8>, lsn: u64) -> Self {
+        Self {
+            record_type,
+            key,
+            value,
+            lsn,
+        }
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.push(self.record_type as u8);
+
+        data.extend_from_slice(&self.key.len().to_le_bytes());
+        data.extend_from_slice(&self.key);
+        data.extend_from_slice(&self.value.len().to_le_bytes());
+        data.extend_from_slice(&self.value);
+        data.extend_from_slice(&self.lsn.to_le_bytes());
+        data
+    }
+
+    pub fn deserialize(data: &[u8]) -> Result<Self, std::io::Error> {
+        let type_log_buf = data[0];
+        let record_type = match type_log_buf {
+            0 => RecordType::Put,
+            1 => RecordType::Delete,
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid record type",
+                ));
+            }
+        };
+
+        let key_len = u64::from_le_bytes(data[1..9].try_into().unwrap()) as usize;
+        let key = data[9..9 + key_len].to_vec();
+
+        let value_len_start = 9 + key_len;
+        let value_len = u64::from_le_bytes(
+            data[value_len_start..value_len_start + 8]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let value = data[value_len_start + 8..value_len_start + 8 + value_len].to_vec();
+
+        let lsn_start = value_len_start + 8 + value_len;
+        let lsn = u64::from_le_bytes(data[lsn_start..lsn_start + 8].try_into().unwrap());
+
+        Ok(Self {
+            record_type,
+            key,
+            value,
+            lsn,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LogPosition {
     pub lsn: u64,
