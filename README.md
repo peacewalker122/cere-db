@@ -2,111 +2,214 @@
 
 # CereDB
 
-An LSM-tree based key-value store built from scratch in Rust. This project is focused on learning storage-engine internals end-to-end: WAL durability, memtable flushing, SSTable codecs, manifests, and leveled compaction.
+Single-node embedded key-value store in Rust, built as an architecture-focused LSM implementation.
 
-## Overview
+This repository currently implements an async write/read engine (`KV2`) with:
 
-`ceredb` is a single-node embedded KV store with an async engine (`KV2`) and CLI REPL.
+- WAL-backed durability and restart recovery
+- Skiplist memtable with per-key versioning by LSN
+- SSTable flush pipeline (block + sparse index + bloom + footer)
+- Append-only manifest metadata
+- Background leveled compaction trigger path
+- CLI REPL for interactive testing
 
-- **Write path**: WAL append → in-memory SkipMap memtable → flush to L0 SSTable when threshold is reached.
-- **Read path**: memtable first, then leveled SSTables using bloom filters + sparse index.
-- **Compaction path**: background compaction worker merges level-N files and overlapping level-(N+1) files.
+Primary intent of this README: help reviewers evaluate correctness boundaries, coupling, and operational risk in the current design.
 
-## Current Architecture
+---
 
+## What is implemented now
+
+### Write path
+
+`put/delete` in `KV2` delegates to `WriteComponent`:
+
+1. Allocate monotonically increasing LSN.
+2. Append WAL record and `sync_data`.
+3. Insert `(key, lsn) -> MemtableRecord` into `SkipMap`.
+4. Track memtable bytes.
+5. If memtable threshold is reached, rotate active memtable and flush to an L0 SSTable.
+
+Flush threshold is defined in `src/storage/constant.rs`:
+
+- `MEMTABLE_SIZE_THRESHOLD = 409600` bytes (comment says 4MB, value is ~400KB)
+
+### Read path
+
+`ReadManager::get` resolves reads in this order:
+
+1. In-memory snapshot read from memtable range `(key, 0..=sequence_number)` and take newest LSN.
+2. On miss, scan manifest levels in ascending level order.
+3. For each SSTable (newest-first within a level):
+   - Load footer/index/bloom sections.
+   - Bloom negative-check short-circuit.
+   - Use sparse index key range to locate candidate block.
+   - Decode block and resolve exact key record.
+
+Deletes are tombstones (`RecordType::Delete`) and return `None`.
+
+### Flush / SSTable construction
+
+Flush currently:
+
+- Folds memtable versions into latest-per-key winners (highest LSN).
+- Builds 4KB data blocks (`SSTABLE_BLOCK_SIZE = 4096`).
+- Builds sparse index entries with first/last key + block offset + record count.
+- Builds bloom filter over surviving keys.
+- Serializes SSTable sections in this order:
+
+`data blocks -> sparse index -> bloom filter -> footer`
+
+### Manifest
+
+`ManifestManager` is append-only and checksum-protected per entry.
+
+Entry kinds:
+
+- `ADD` SSTable
+- `REMOVE` SSTable
+- `CHECKPOINT` (checkpoint LSN + active WAL segment)
+
+Snapshot API provides consistent metadata view to readers and compaction.
+
+### Compaction
+
+Compaction is triggered when level-0 file count reaches threshold:
+
+- `MAXIMUM_LEVEL_FILES = 2`
+
+Flow:
+
+1. Sender emits `CompactLevel { level: 0 }` into bounded channel.
+2. Dedicated worker thread receives trigger.
+3. Worker runs async compaction with a Tokio runtime inside rayon scope.
+4. Compaction merges:
+   - all files in level N
+   - overlapping files in level N+1 (by key range)
+5. Output SSTable is written into level N+1 and manifest is updated (add new, remove stale).
+
+---
+
+## Architecture review notes
+
+### Component boundaries
+
+- `KV2` is the orchestration boundary (open/recover/wire read+write+compaction trigger).
+- `WriteComponent` owns mutation path concerns (LSN assignment, WAL append, memtable mutation, flush).
+- `ReadManager` owns read resolution order and SSTable probing strategy.
+- `ManifestManager` is the metadata source of truth shared across read/write/compaction.
+- `WALManager` owns durability log file lifecycle and replay.
+
+This separation is clean enough for iterative experimentation, but consistency guarantees are still composition-based (cross-component ordering discipline), not transactionally unified.
+
+### Correctness-critical invariants
+
+Reviewers should validate these invariants remain true across future changes:
+
+1. **WAL-before-memtable** on writes (durability before visibility).
+2. **Monotonic LSN** per process lifetime and after recovery bootstrap.
+3. **Latest-LSN-wins** during flush compaction from `(key, lsn)` space.
+4. **Manifest update durability** for add/remove/checkpoint entries.
+5. **Read precedence**: memtable snapshot first, then persisted levels.
+6. **Tombstone semantics** preserved across memtable, SSTable, and compaction.
+
+### Coupling and concurrency model
+
+- Foreground path is async (`tokio`) for open/read/write/flush IO.
+- Compaction trigger path bridges `crossbeam_channel` + dedicated thread + rayon scope + nested Tokio runtime.
+
+This mixed concurrency stack works functionally, but increases lifecycle/observability complexity (thread ownership, runtime nesting, backpressure behavior).
+
+### Performance-relevant design choices (current)
+
+- 4KB block granularity for SSTable data path.
+- Bloom + sparse index used to reduce negative and wide-scan reads.
+- Level-0 compaction trigger at low threshold (`MAXIMUM_LEVEL_FILES=2`) for early behavior exercise.
+- WAL `sync_data` per write favors durability clarity over throughput.
+
+### Risk areas for architecture evolution
+
+- Manifest and WAL checkpoint coordination is append-only but not yet optimized for long-term metadata growth.
+- Compaction policy is minimal (functional baseline, limited tuning knobs).
+- Some recovery/raft-adjacent files are present but outside active runtime path, which can confuse architectural ownership.
+
+### Architecture review checklist
+
+| Invariant / concern | Primary enforcement point(s) | How to verify quickly |
+|---|---|---|
+| WAL-before-memtable visibility | `WriteComponent::put/delete` (`write.rs`) writes WAL before memtable insert | Inspect call order in code and run crash/restart tests around recent write operations |
+| Monotonic LSN assignment | `WriteComponent.sequence_number` + recovery bootstrap in `KV2::open` | Confirm LSN increases on each mutation and that restart resumes from recovered max LSN |
+| Latest version wins on flush | `WriteComponent::flush` folds by key, keeps highest LSN | Add/verify test with multiple versions of same key before flush |
+| Tombstone correctness | `ReadManager::get` and compaction `flush_winner` skip/delete semantics | Verify delete after put returns `(nil)` before and after flush/compaction |
+| Read precedence (memtable over SSTable) | `ReadManager::get` checks memtable before manifest/SSTables | Create key in memtable shadowing older SSTable value and assert newest read |
+| Manifest as source of truth | `ManifestManager` append+replay and snapshot usage | Validate restart state reconstructs expected level/file metadata |
+| Compaction overlap safety | `compaction.rs` range overlap selection (`smallest_key/largest_key` fallback to index range) | Use fixtures with overlapping/non-overlapping key ranges and assert selected merge set |
+| Background compaction lifecycle | `KV2` channel trigger + worker loop + async compaction invocation | Verify trigger emits when L0 threshold reached and manifest changes after worker completion |
+| SSTable section integrity | `SSTableFooter` checksums/magic + section decode paths | Corrupt footer/index/bloom bytes in test and assert decode failure |
+| Config/runtime consistency | constants + CLI/config defaults (`constant.rs`, `config.rs`) | Ensure README/documented values match code constants and runtime flags |
+
+---
+
+## Current architecture (as coded)
+
+```text
+Client PUT/DELETE
+   -> WAL append + fsync
+   -> Memtable insert (SkipMap key=(user_key, lsn))
+   -> Threshold check
+      -> rotate memtable
+      -> flush winners to L0 SSTable
+      -> manifest register + WAL rotate/checkpoint
+      -> optional compaction trigger
+
+Client GET
+   -> Memtable latest visible LSN lookup
+   -> On miss: manifest snapshot -> leveled SSTable search
+      bloom -> sparse index -> block decode -> key match
 ```
-PUT/DELETE
-   │
-   ▼
-WAL (durability, replay)
-   │
-   ▼
-MemTable (SkipMap, latest LSN wins)
-   │  threshold reached (MEMTABLE_SIZE_THRESHOLD)
-   ▼
-Flush -> SSTable (L0)
-   │
-   ├── Data Blocks (4KB)
-   ├── Sparse Index (first_key/last_key + offset)
-   ├── Bloom Filter
-   └── Footer (offsets + checksums)
-   │
-   ▼
-Manifest (append-only metadata)
-  - file_id, level, path, record_count, bloom
-  - smallest_key/largest_key cache (derived from sparse index)
-   │
-   ▼
-Compaction Worker
-  - Triggered when level file count threshold is exceeded
-  - Selects overlap via key ranges
-  - Merges level N + overlapping level N+1
-  - Writes output into level N+1 and updates manifest
-```
 
-## Features
+---
 
-- **WAL durability + recovery**
-  - CRC32 integrity checks
-  - WAL replay on startup
-  - WAL rotation on successful flush
-- **MemTable on SkipMap** (`crossbeam-skiplist`)
-- **SSTable codec**
-  - 4KB blocks
-  - sparse index for block targeting
-  - bloom filter for negative lookups
-  - fixed-size footer with section offsets and checksums
-- **Manifest manager (`manifest_codec`)**
-  - append-only metadata log
-  - snapshot view for reads/compaction
-  - per-SSTable key-range cache (`smallest_key`, `largest_key`)
-- **Leveled compaction**
-  - compacts full source level with overlapping next-level SSTables
-  - overlap based on key ranges
-  - falls back to sparse-index-derived ranges for legacy entries
-- **CLI REPL**
-  - `SET`, `GET`, `DELETE`, `EXIT/QUIT`
+## Project structure (active paths)
 
-## Project Structure (current)
-
-```
+```text
 src/
 ├── main.rs
 ├── lib.rs
+├── config.rs
 ├── repl.rs
 ├── command.rs
-├── config.rs
-├── error.rs
 ├── api/
 │   └── api.rs                      # KVEngine + AsyncKVEngine traits
 └── storage/
-    ├── kv2.rs                      # Main engine orchestration
-    ├── constant.rs
-    ├── record.rs
-    ├── bloom.rs
-    ├── index.rs
-    ├── footer.rs
-    ├── sstable_codec.rs            # SSTable serialize/deserialize utilities
-    ├── manifest_codec.rs           # Active manifest implementation
+    ├── kv2.rs                      # Engine orchestration
+    ├── constant.rs                 # Core thresholds/layout constants
+    ├── record.rs                   # Memtable record and record type
+    ├── sstable_codec.rs            # SSTable section serialization
+    ├── footer.rs                   # Footer offsets/checksums/magic
+    ├── index.rs                    # Sparse index entry format
+    ├── bloom.rs                    # Bloom filter wrapper
+    ├── manifest_codec.rs           # Append-only manifest manager
     ├── writemanager/
-    │   ├── write.rs                # Flush + register metadata
-    │   └── block.rs
+    │   ├── write.rs                # WAL write + memtable + flush
+    │   └── block.rs                # BlockBuilder / Block encoding
     ├── readmanager/
-    │   └── read.rs
+    │   └── read.rs                 # Memtable + SSTable read path
     ├── compactionmanager/
-    │   └── compaction.rs
+    │   └── compaction.rs           # Leveled compaction
     └── recovermanager/
-        ├── wal.rs
-        └── segment.rs
+        ├── wal.rs                  # WAL manager + replay
+        ├── segment.rs
+        ├── log_store.rs
+        └── raft.rs                 # Future strong-consistency path (not active in KV2 runtime yet)
 ```
 
-> Some older storage files are still present for learning/history, but the active path is driven by `kv2.rs` + manager modules above.
+---
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install) (edition 2024)
+- Rust toolchain (edition 2024)
 
 ### Build
 
@@ -114,23 +217,28 @@ src/
 cargo build
 ```
 
-### Run
+### Run CLI
 
 ```bash
-# Default (info logging)
+# default log level: info
 cargo run
 
-# With debug logging
+# debug logging
 cargo run -- --verbose
 
-# Custom log level and data directory
+# custom log level and data directory
 cargo run -- --log-level trace --data-dir ./mydata
 ```
 
-When running, the binary starts an interactive REPL:
+Startup banner:
 
 ```text
-cere CLI REPL (SET/GET/DELETE). Type EXIT to quit.
+ceredb CLI REPL (SET/GET/DELETE). Type EXIT to quit.
+```
+
+Example session:
+
+```text
 > SET greeting "hello world"
 OK
 > GET greeting
@@ -147,13 +255,15 @@ OK
 cargo test --verbose
 ```
 
-### Heap Profiling
+### Heap profiling
 
 ```bash
 cargo run --features dhat-heap
 ```
 
-## API
+---
+
+## API surface
 
 The async engine implements `AsyncKVEngine`:
 
@@ -165,7 +275,7 @@ pub trait AsyncKVEngine {
 }
 ```
 
-### Usage
+Usage:
 
 ```rust
 use ceredb::api::api::AsyncKVEngine;
@@ -184,36 +294,54 @@ async fn main() {
 }
 ```
 
-## Storage Format
+---
 
-### WAL Record
+## Format details
 
-WAL begins with a fixed header (`WALMGIC\0`) and appends records as:
+### WAL
 
-```
-record_type (1 byte) | lsn (8) | key_len (8) | value_len (8) | key | value | checksum (4)
-```
+WAL files start with a fixed header (`WALMGIC\0`, version, checkpoint metadata).
 
-### SSTable Layout
+Record encoding includes:
 
-```
-Data Blocks -> Sparse Index -> Bloom Filter -> Footer
-```
+- record type
+- LSN
+- key length + value length
+- key bytes + value bytes
+- checksum
 
-Footer stores offsets/checksums for section lookup. Read path uses footer first, then bloom/index to narrow data block reads.
+### SSTable footer
 
-## Learning Resources
+Footer is fixed-size (`64` bytes) and stores:
 
-This project follows a phased learning roadmap (see [`PLAN.md`](./PLAN.md)) around:
+- data/index/bloom offsets
+- index and bloom checksums
+- magic number + footer checksum
 
-- On-disk encoding and checksums
-- WAL + crash recovery
-- Memtable/SSTable/manifest interactions
-- Leveled compaction mechanics
-- Concurrency and background workers
+This enables section-wise reads without full table decode.
 
-### Further Reading
+---
 
-- [LevelDB Implementation Notes](https://github.com/google/leveldb/blob/main/doc/impl.md)
-- [RocksDB Wiki](https://github.com/facebook/rocksdb/wiki)
-- [Database Internals by Alex Petrov](https://www.databass.dev/)
+## Known limitations / in-progress areas
+
+To keep the README aligned with current code, these are explicit:
+
+- Not a distributed/replicated DB; single-node embedded engine.
+- Compaction executes via background trigger path, but policy/tuning is still minimal.
+- Raft-related modules are intentional forward planning for future strong-consistency/distributed behavior; they are not active in the current `KV2` runtime path yet.
+- Constant comments and exact runtime values may diverge in places (e.g., memtable threshold comment vs value).
+- Mixed async/thread/rayon runtime model is functional but not yet simplified for operational ergonomics.
+
+---
+
+## Why this repo is useful for storage-engine learning
+
+This codebase captures the hard boundaries between durability, in-memory state, on-disk structures, and background maintenance:
+
+- WAL fsync semantics vs flush throughput
+- MVCC-like latest-by-LSN resolution in memtable
+- SSTable section layout and lookup accelerators (bloom + sparse index)
+- Manifest as durable metadata source of truth
+- Level overlap analysis during compaction
+
+If your goal is to understand *how LSM pieces fit together in real Rust code*, this repo is designed for that.
