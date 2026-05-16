@@ -5,8 +5,8 @@ use std::{
     thread,
 };
 
-use crossbeam_channel::{Receiver, Sender, bounded};
 use crossbeam_skiplist::SkipMap;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::{
     api::api::AsyncKVEngine,
@@ -49,7 +49,6 @@ pub struct KV2 {
 
     // Async compaction trigger channel (Step 1.3)
     pub compaction_sender: Sender<CompactionTrigger>,
-    _compaction_receiver: Receiver<CompactionTrigger>,
 }
 
 impl KV2 {
@@ -68,6 +67,8 @@ impl KV2 {
 
         tokio::fs::create_dir_all(&wal_dir).await?;
         tokio::fs::create_dir_all(&level0_dir).await?;
+
+        let cancel = tokio_util::sync::CancellationToken::new();
 
         let wal_manager =
             Arc::new(WALManager::new(wal_dir.clone(), DEFAULT_WAL_SEGMENT_SIZE).await?);
@@ -91,19 +92,17 @@ impl KV2 {
         let read_manager = ReadManager::new(active_memtable, Arc::clone(&manifest));
 
         // Step 1.4: Create mpsc channel for async compaction triggers
-        let (compaction_sender, compaction_receiver) = bounded(16);
-        let receiver_clone = compaction_receiver.clone();
+        let (compaction_sender, compaction_receiver) = tokio::sync::mpsc::channel(100);
 
         // Spawn rayon worker thread (Step 1.5) - pass shared Arc<ManifestManager>
         let manifest_for_worker = Arc::clone(&manifest);
         let sstable_dir_for_compaction = sstable_dir.clone();
-        thread::spawn(move || {
-            Self::run_compaction_worker(
-                receiver_clone,
-                manifest_for_worker,
-                sstable_dir_for_compaction,
-            );
-        });
+        Self::run_compaction_worker(
+            compaction_receiver,
+            manifest_for_worker,
+            sstable_dir_for_compaction,
+            cancel.child_token(),
+        );
 
         Ok(Self {
             base_dir,
@@ -115,7 +114,6 @@ impl KV2 {
             write_component,
             read_manager,
             compaction_sender,
-            _compaction_receiver: compaction_receiver,
         })
     }
 
@@ -207,31 +205,38 @@ impl KV2 {
 
     /// Rayon worker that processes compaction triggers received via mpsc channel.
     /// Runs in a dedicated thread, using rayon for parallel compaction work.
-    fn run_compaction_worker(
-        receiver: Receiver<CompactionTrigger>,
+    async fn run_compaction_worker(
+        mut receiver: Receiver<CompactionTrigger>,
         manifest: Arc<ManifestManager>,
         sstable_dir: PathBuf,
+        cancel: tokio_util::sync::CancellationToken,
     ) {
-        // Loop processing triggers from channel
-        while let Ok(trigger) = receiver.recv() {
-            let CompactionTrigger::CompactLevel { level } = trigger;
-            let manifest = Arc::clone(&manifest);
-            let sstable_dir = sstable_dir.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(trigger) = receiver.recv() =>  {
+                        match trigger {
+                            CompactionTrigger::CompactLevel { level } => {
+                                log::info!("Received compaction trigger for level {}", level);
+                                // Perform compaction in a blocking thread to avoid blocking async runtime
+                                let manifest_for_thread = Arc::clone(&manifest);
+                                let sstable_dir_for_thread = sstable_dir.clone();
 
-            // Spawn parallel work with rayon
-            rayon::scope(|s| {
-                s.spawn(|_| {
-                    // Create tokio runtime for async compaction
-                    let rt = tokio::runtime::Runtime::new().ok();
-                    if let Some(runtime) = rt {
-                        runtime.block_on(async {
-                            // Use shared manifest (Arc)
-                            let _ = compaction(Arc::clone(&manifest), level).await;
-                        });
+                                if let Err(e) = compaction(manifest_for_thread, level, cancel.child_token()).await {
+                                    log::error!("Compaction failed for level {}: {}", level, e);
+                                } else {
+                                    log::info!("Compaction completed for level {}", level);
+                                }
+                            }
+                        }
+                    },
+                    _ = cancel.cancelled() => {
+                        log::info!("Compaction worker received shutdown signal");
+                        break;
                     }
-                });
-            });
-        }
+                }
+            }
+        });
     }
 }
 

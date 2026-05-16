@@ -22,8 +22,16 @@ use crate::storage::{
 pub async fn compaction(
     manifest: Arc<ManifestManager>,
     level: u32,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<SSTableCodec, std::io::Error> {
     let snapshot = manifest.snapshot().await;
+    if cancel.is_cancelled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "compaction cancelled",
+        ));
+    }
+
     let manifest_level = snapshot.levels.get(&level);
 
     if manifest_level.is_none() {
@@ -49,7 +57,7 @@ pub async fn compaction(
         .cloned()
         .unwrap_or_default();
 
-    let current_level_range = compute_level_range(&current_level_files)
+    let current_level_range = compute_level_range(&current_level_files, &cancel)
         .await?
         .ok_or_else(|| {
             std::io::Error::new(
@@ -60,7 +68,13 @@ pub async fn compaction(
 
     let mut overlapping_next_level_files = Vec::new();
     for candidate in next_level_files {
-        if let Some(candidate_range) = compute_meta_range(&candidate).await? {
+        if cancel.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "compaction cancelled",
+            ));
+        }
+        if let Some(candidate_range) = compute_meta_range(&candidate, &cancel).await? {
             if ranges_overlap(&current_level_range, &candidate_range) {
                 overlapping_next_level_files.push(candidate);
             }
@@ -75,6 +89,12 @@ pub async fn compaction(
     // provisioning the sstables, we need to read the sstables from the disk, and then we can merge them to 1 file, and then we can update the manifest file with the new level store information
 
     for level_store in &merge_candidates {
+        if cancel.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "compaction cancelled",
+            ));
+        }
         let sstable_file = tokio::fs::File::open(&level_store.path).await?;
         let mut read_buffer = tokio::io::BufReader::new(sstable_file);
         let (footer, index, bloom) = SSTableCodec::deserialize_sections(&mut read_buffer).await?;
@@ -88,7 +108,14 @@ pub async fn compaction(
         });
     }
 
-    let merged_sstable = merge_files(sstables).await?;
+    let merged_sstable = merge_files(sstables, &cancel).await?;
+
+    if cancel.is_cancelled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "compaction cancelled",
+        ));
+    }
 
     if merged_sstable.blocks.is_empty() {
         for stale in &current_level_files {
@@ -109,6 +136,13 @@ pub async fn compaction(
     })?;
 
     let file_id = manifest.allocate_file_id().await?;
+    if cancel.is_cancelled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "compaction cancelled",
+        ));
+    }
+
     let output_path =
         build_compaction_output_path(&current_level_files[0].path, next_level, file_id);
     if let Some(parent) = output_path.parent() {
@@ -119,6 +153,13 @@ pub async fn compaction(
     let mut output_file = tokio::fs::File::create(&output_path).await?;
     output_file.write_all(&encoded).await?;
     output_file.sync_all().await?;
+
+    if cancel.is_cancelled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "compaction cancelled",
+        ));
+    }
 
     let compacted_record_count = merged_sstable
         .blocks
@@ -176,7 +217,15 @@ fn range_from_blocks(
 
 async fn compute_meta_range(
     meta: &SSTableMeta,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<Option<(Vec<u8>, Vec<u8>)>, std::io::Error> {
+    if cancel.is_cancelled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "compaction cancelled",
+        ));
+    }
+
     if !meta.smallest_key.is_empty() && !meta.largest_key.is_empty() {
         return Ok(Some((meta.smallest_key.clone(), meta.largest_key.clone())));
     }
@@ -189,11 +238,18 @@ async fn compute_meta_range(
 
 async fn compute_level_range(
     metas: &[SSTableMeta],
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<Option<(Vec<u8>, Vec<u8>)>, std::io::Error> {
     let mut range: Option<(Vec<u8>, Vec<u8>)> = None;
 
     for meta in metas {
-        if let Some((smallest, largest)) = compute_meta_range(meta).await? {
+        if cancel.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "compaction cancelled",
+            ));
+        }
+        if let Some((smallest, largest)) = compute_meta_range(meta, cancel).await? {
             range = Some(match range {
                 Some((cur_min, cur_max)) => (cur_min.min(smallest), cur_max.max(largest)),
                 None => (smallest, largest),
@@ -204,11 +260,20 @@ async fn compute_level_range(
     Ok(range)
 }
 
-async fn merge_files(sstables: Vec<SSTableCodec>) -> Result<SSTableCodec, std::io::Error> {
+async fn merge_files(
+    sstables: Vec<SSTableCodec>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<SSTableCodec, std::io::Error> {
     let mut merged_by_key: std::collections::BTreeMap<Vec<u8>, MemtableRecord> =
         std::collections::BTreeMap::new();
 
     for sstable in &sstables {
+        if cancel.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "compaction cancelled",
+            ));
+        }
         for block in &sstable.blocks {
             if let Some(records) = &block.data {
                 for record in records {
@@ -232,6 +297,12 @@ async fn merge_files(sstables: Vec<SSTableCodec>) -> Result<SSTableCodec, std::i
     // TODO: need to store the actual number of records on the footer of sstable.
     let mut bloom_filter = BloomFilterWrapper::with_rate(1000000, 0.0001);
     for winner in merged_by_key.into_values() {
+        if cancel.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "compaction cancelled",
+            ));
+        }
         flush_winner(
             &mut block_builder,
             &mut block_entries,
@@ -354,7 +425,8 @@ mod tests {
         let block = make_block(records, 0);
         let sstables = vec![make_sstable(vec![block])];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Verify sorted output
         assert_eq!(result.blocks.len(), 1);
@@ -384,7 +456,8 @@ mod tests {
             make_sstable(vec![make_block(sst2_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Verify all 4 keys in sorted order
         assert_eq!(result.blocks.len(), 1);
@@ -409,7 +482,8 @@ mod tests {
             make_sstable(vec![make_block(sst2_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Verify only one record exists (deduplicated by key)
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -440,7 +514,8 @@ mod tests {
             make_sstable(vec![normal_block]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Should have the normal block's record
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -461,7 +536,8 @@ mod tests {
             make_sstable(vec![make_block(sst3_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Verify all 3 records in sorted order
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -492,7 +568,8 @@ mod tests {
 
         let sstables = vec![make_sstable(vec![make_block(sst_records, 0)])];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Verify multiple blocks were created due to capacity
         assert!(
@@ -528,7 +605,8 @@ mod tests {
             make_sstable(vec![make_block(sst2_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Verify bloom filter contains all merged keys
         assert!(result.bloom.contains(b"key1"));
@@ -550,7 +628,8 @@ mod tests {
         let block = make_block(records, 0);
         let sstables = vec![make_sstable(vec![block])];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Verify delete tombstone is removed
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -570,7 +649,8 @@ mod tests {
             make_sstable(vec![make_block(sst2_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         let total_records: usize = result
             .blocks
@@ -593,7 +673,8 @@ mod tests {
             make_sstable(vec![make_block(sst2_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         let total_records: usize = result
             .blocks
@@ -616,7 +697,8 @@ mod tests {
             make_sstable(vec![make_block(sst2_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         let total_records: usize = result
             .blocks
@@ -644,7 +726,8 @@ mod tests {
             make_sstable(vec![make_block(sst3_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         let total_records: usize = result
             .blocks
@@ -677,7 +760,8 @@ mod tests {
             make_sstable(vec![make_block(sst2_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // key1 should be dropped due to newer delete; key2 and key3 should remain.
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -707,7 +791,8 @@ mod tests {
             make_sstable(vec![make_block(sst2_records, 0)]),
         ];
 
-        let result = merge_files(sstables).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = merge_files(sstables, &cancel).await.unwrap();
 
         // Verify all 4 keys sorted correctly
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -755,7 +840,8 @@ mod tests {
             },
         ];
 
-        let range = compute_level_range(&metas).await.unwrap().unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let range = compute_level_range(&metas, &cancel).await.unwrap().unwrap();
         assert_eq!(range.0, b"a");
         assert_eq!(range.1, b"z");
     }
