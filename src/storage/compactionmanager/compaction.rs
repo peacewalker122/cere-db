@@ -119,10 +119,18 @@ pub async fn compaction(
 
     if merged_sstable.blocks.is_empty() {
         for stale in &current_level_files {
-            manifest.remove_sstable(level, stale.file_id).await?;
+            delete_manifest_with_file(manifest.clone(), &stale.path, level, stale.file_id)
+                .await
+                .map_err(|e| {
+                    log::error!("Failed to delete file {}: {}", stale.path, e);
+                });
         }
         for stale in &overlapping_next_level_files {
-            manifest.remove_sstable(next_level, stale.file_id).await?;
+            delete_manifest_with_file(manifest.clone(), &stale.path, level, stale.file_id)
+                .await
+                .map_err(|err| {
+                    log::error!("Failed to delete overlapping file {}: {}", stale.path, err)
+                });
         }
 
         return Ok(merged_sstable);
@@ -180,13 +188,36 @@ pub async fn compaction(
         .await?;
 
     for stale in &current_level_files {
-        manifest.remove_sstable(level, stale.file_id).await?;
+        delete_manifest_with_file(manifest.clone(), &stale.path, level, stale.file_id)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to delete file {}: {}", stale.path, e);
+            });
     }
     for stale in &overlapping_next_level_files {
-        manifest.remove_sstable(next_level, stale.file_id).await?;
+        delete_manifest_with_file(manifest.clone(), &stale.path, level, stale.file_id)
+            .await
+            .map_err(|err| {
+                log::error!("Failed to delete overlapping file {}: {}", stale.path, err)
+            });
     }
 
     Ok(merged_sstable)
+}
+
+async fn delete_manifest_with_file(
+    manifest: Arc<ManifestManager>,
+    file_path: &str,
+    level: u32,
+    file_id: u64,
+) -> Result<(), std::io::Error> {
+    let manifest = manifest.clone();
+
+    manifest.remove_sstable(level, file_id).await?;
+
+    tokio::fs::remove_file(build_compaction_output_path(file_path, level, file_id)).await?;
+
+    Ok(())
 }
 
 fn build_compaction_output_path(base_file_path: &str, level: u32, file_id: u64) -> PathBuf {
