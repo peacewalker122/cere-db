@@ -74,6 +74,28 @@ pub struct LogPosition {
 #[async_trait::async_trait]
 pub trait LogStore: Send + Sync {
     async fn append(&self, cmd: LogCommand) -> Result<LogPosition, std::io::Error>;
+
+    /// Follower replication path:
+    /// Append leader entries durably, then stage them for commit-gated memtable apply.
+    async fn append_entries_from_leader(
+        &self,
+        entries: Vec<LogCommand>,
+        leader_commit_index: u64,
+    ) -> Result<(), std::io::Error> {
+        let _ = leader_commit_index;
+        for entry in entries {
+            self.append(entry).await?;
+        }
+        Ok(())
+    }
+
+    /// Returns newly committed entries that are ready to be applied into memtable.
+    ///
+    /// Default no-op keeps existing stores backward-compatible.
+    async fn sync_committed_entries_to_memtable(&self) -> Result<Vec<LogCommand>, std::io::Error> {
+        Ok(Vec::new())
+    }
+
     async fn recover_commands(&self) -> Result<Vec<LogCommand>, std::io::Error>;
     async fn rotate(&self) -> Result<u64, std::io::Error>;
     async fn mark_reserved(&self, segment_id: u64) -> Result<(), std::io::Error>;
