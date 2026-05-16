@@ -8,7 +8,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
-use tokio::{io::AsyncWriteExt, sync::RwLock};
 
 use crate::storage::{
     bloom::BloomFilterWrapper,
@@ -60,10 +59,8 @@ impl WriteComponent {
         let key_len = key.len();
         let value_len = value.len();
 
-        self.memtable.insert(
-            (key, lsn),
-            MemtableRecord::new(value, record_type, lsn),
-        );
+        self.memtable
+            .insert((key, lsn), MemtableRecord::new(value, record_type, lsn));
 
         let added_bytes = if record_type == RecordType::Delete {
             key_len
@@ -301,9 +298,6 @@ impl WriteComponent {
             .sstable_dir
             .join(format!("level-0/sstable-{}.dat", file_id));
 
-        // Write encoded SSTable data to disk
-        self.save_buffer(&encoded, &file_path).await?;
-
         self.manifest_manager
             .register_sstable(SSTableMeta {
                 file_id,
@@ -329,16 +323,6 @@ impl WriteComponent {
         })
     }
 
-    pub async fn save_buffer(
-        &self,
-        buffer: &[u8],
-        file_path: &PathBuf,
-    ) -> Result<(), std::io::Error> {
-        let mut file = tokio::fs::File::create(file_path).await?;
-        file.write_all(buffer).await?;
-        file.sync_all().await?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -584,7 +568,12 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
         let write_component = build_write_component(&temp_dir).await;
 
-        let cmd = LogCommand::new(RecordType::Put, b"rep-key".to_vec(), b"rep-value".to_vec(), 7);
+        let cmd = LogCommand::new(
+            RecordType::Put,
+            b"rep-key".to_vec(),
+            b"rep-value".to_vec(),
+            7,
+        );
         write_component.apply_replicated_command(cmd);
 
         assert_eq!(write_component.memtable.len(), 1);

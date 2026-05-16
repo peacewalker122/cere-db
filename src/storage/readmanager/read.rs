@@ -261,10 +261,17 @@ mod tests {
             (key.clone(), 7),
             MemtableRecord::new(b"sstable-value".to_vec(), RecordType::Put, 7),
         );
-        write_component
+        let flush_result = write_component
             .flush(Arc::new(flush_memtable))
             .await
             .unwrap();
+
+        // Write SSTable to disk (caller owns file I/O, not WriteComponent)
+        let mut file = tokio::fs::File::create(&flush_result.sstable_path).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut file, &flush_result.data)
+            .await
+            .unwrap();
+        file.sync_all().await.unwrap();
 
         let manifest_for_read = Arc::new(
             ManifestManager::load_or_create(temp_dir.join("MANIFEST"))

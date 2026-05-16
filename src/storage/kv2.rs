@@ -2,11 +2,13 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
-    thread,
 };
 
 use crossbeam_skiplist::SkipMap;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::mpsc::{Receiver, Sender},
+};
 
 use crate::{
     api::api::AsyncKVEngine,
@@ -182,12 +184,10 @@ impl KV2 {
         );
         self.read_manager.set_memtable(active_memtable);
 
-        self.write_component
-            .save_buffer(
-                &flush_result.data,
-                &PathBuf::from(&flush_result.sstable_path),
-            )
-            .await?;
+        // Write SSTable to disk (file ownership lives in KV2, not WriteComponent)
+        let mut file = tokio::fs::File::create(&flush_result.sstable_path).await?;
+        file.write_all(&flush_result.data).await?;
+        file.sync_all().await?;
 
         // Use shared manifest for snapshot check
         let snapshot = self.manifest.snapshot().await;
