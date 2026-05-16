@@ -23,8 +23,6 @@ tokio = { version = "1.43", features = [
   "time",            # Needed for timeouts (e.g., during network calls)
 ] }
 rayon = "1.11.0"
-rust-raft = { git = "https://github.com/peacewalker122/rust-raft", version = "0.1.0" }
-# rust-raft = { path = "../rust-raft/", version = "0.1.0" }
 
 [dev-dependencies]
 uuid = { version = "1.11", features = ["v4"] }

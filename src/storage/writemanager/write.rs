@@ -15,6 +15,7 @@ use crate::storage::{
     index::SparseIndexEntry,
     manifest_codec::{ManifestManager, SSTableMeta},
     record::{MemtableRecord, RecordType},
+    recovermanager::log_store::LogCommand,
     recovermanager::wal::WALManager,
     sstable_codec::SSTableCodec,
     writemanager::block::{Block, BlockBuilder, BlockBuilderState},
@@ -55,6 +56,25 @@ pub struct WriteComponent {
 }
 
 impl WriteComponent {
+    fn append_to_memtable(&self, key: Vec<u8>, value: Vec<u8>, record_type: RecordType, lsn: u64) {
+        let key_len = key.len();
+        let value_len = value.len();
+
+        self.memtable.insert(
+            (key, lsn),
+            MemtableRecord::new(value, record_type, lsn),
+        );
+
+        let added_bytes = if record_type == RecordType::Delete {
+            key_len
+        } else {
+            key_len + value_len
+        };
+
+        self.memtable_size
+            .fetch_add(added_bytes, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Create a new WriteComponent
     pub fn new(
         sstable_dir: PathBuf,
@@ -102,13 +122,7 @@ impl WriteComponent {
             .write_log(&key, &value, lsn, RecordType::Put)
             .await?;
 
-        let value_len = value.len();
-        self.memtable.insert(
-            (key.clone(), lsn),
-            MemtableRecord::new(value, RecordType::Put, lsn),
-        );
-        self.memtable_size
-            .fetch_add(key.len() + value_len, std::sync::atomic::Ordering::SeqCst);
+        self.append_to_memtable(key, value, RecordType::Put, lsn);
 
         Ok(())
     }
@@ -122,14 +136,26 @@ impl WriteComponent {
             .write_log(&key, &Vec::new(), lsn, RecordType::Delete)
             .await?;
 
-        self.memtable.insert(
-            (key.clone(), lsn),
-            MemtableRecord::new(Vec::new(), RecordType::Delete, lsn),
-        );
-        self.memtable_size
-            .fetch_add(key.len(), std::sync::atomic::Ordering::SeqCst);
+        self.append_to_memtable(key, Vec::new(), RecordType::Delete, lsn);
 
         Ok(())
+    }
+
+    /// Apply a committed replicated command to memtable.
+    ///
+    /// This path intentionally does not write to WAL, because the entry is
+    /// already durable via raft/WAL replication flow.
+    pub fn apply_replicated_command(&self, cmd: LogCommand) {
+        let normalized_value = if cmd.record_type == RecordType::Delete {
+            Vec::new()
+        } else {
+            cmd.value
+        };
+
+        self.append_to_memtable(cmd.key, normalized_value, cmd.record_type, cmd.lsn);
+
+        self.sequence_number
+            .fetch_max(cmd.lsn, std::sync::atomic::Ordering::SeqCst);
     }
 
     // the transtition were managed by the calller. WriteComponent only provide the lock_memtable function to return the current memtable for flushing, and create a new memtable for new writes. This design allows the caller to have more control over the transition process, such as when to trigger the flush and how to handle concurrent writes during the transition.
@@ -321,6 +347,7 @@ mod tests {
     use crate::storage::{
         manifest_codec::ManifestManager,
         record::{MemtableRecord, RecordType},
+        recovermanager::log_store::LogCommand,
         recovermanager::wal::WALManager,
     };
     use crossbeam_skiplist::SkipMap;
@@ -547,6 +574,26 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             key.len()
         );
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_replicated_command_applies_without_wal_write_and_tracks_sequence() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let write_component = build_write_component(&temp_dir).await;
+
+        let cmd = LogCommand::new(RecordType::Put, b"rep-key".to_vec(), b"rep-value".to_vec(), 7);
+        write_component.apply_replicated_command(cmd);
+
+        assert_eq!(write_component.memtable.len(), 1);
+        let entry = write_component.memtable.iter().next().unwrap();
+        assert_eq!(&entry.key().0, &b"rep-key".to_vec());
+        assert_eq!(entry.key().1, 7);
+        assert_eq!(entry.value().record_type, RecordType::Put);
+        assert_eq!(entry.value().value, b"rep-value".to_vec());
+        assert_eq!(write_component.current_sequence_number(), 7);
 
         std::fs::remove_dir_all(temp_dir).unwrap();
     }
