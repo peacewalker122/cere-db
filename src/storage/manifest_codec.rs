@@ -1,11 +1,12 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     io::{Cursor, Read},
     path::PathBuf,
+    sync::Arc,
 };
 
 use tokio::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::{AsyncWriteExt, BufWriter},
     sync::Mutex,
 };
@@ -17,6 +18,99 @@ const ENTRY_KIND_REMOVE: u8 = 2;
 const ENTRY_KIND_CHECKPOINT: u8 = 3;
 
 const MANIFEST_VERSION: u32 = 1;
+
+/// Default maximum number of file handles to keep in the LRU cache.
+const DEFAULT_FILE_CACHE_CAPACITY: usize = 64;
+
+/// LRU cache for SSTable file handles.
+///
+/// Keeps frequently accessed SSTable files open to benefit from OS page cache reuse.
+/// Uses a HashMap for O(1) lookups and a VecDeque for LRU ordering.
+///
+/// The cache stores template `File` handles. Callers should use `try_clone()` to get
+/// an independent handle with its own file position for concurrent reads.
+pub struct LruFileCache {
+    /// Template file handles keyed by path.
+    handles: HashMap<String, Arc<File>>,
+    /// LRU ordering: front = least recently used, back = most recently used.
+    order: VecDeque<String>,
+    /// Maximum number of handles to keep cached.
+    capacity: usize,
+}
+
+impl LruFileCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            handles: HashMap::with_capacity(capacity),
+            order: VecDeque::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    /// Get a cached template file handle, or open and cache a new one.
+    ///
+    /// Callers should use `handle.try_clone()` to get an independent handle
+    /// with its own file position for reading.
+    /// Updates LRU order on hit. Evicts oldest entry on miss if cache is full.
+    pub async fn get_or_open(&mut self, path: &str) -> Result<Arc<File>, std::io::Error> {
+        // Cache hit: update LRU order and return handle
+        if self.handles.contains_key(path) {
+            self.touch(path);
+            return Ok(Arc::clone(self.handles.get(path).unwrap()));
+        }
+
+        // Cache miss: open file
+        let file = File::open(path).await?;
+        let handle = Arc::new(file);
+
+        // Evict if at capacity
+        if self.handles.len() >= self.capacity {
+            self.evict_oldest();
+        }
+
+        self.handles.insert(path.to_string(), Arc::clone(&handle));
+        self.order.push_back(path.to_string());
+
+        Ok(handle)
+    }
+
+    /// Remove a file handle from the cache (called when SSTable is deleted).
+    pub fn remove(&mut self, path: &str) {
+        self.handles.remove(path);
+        self.order.retain(|p| p != path);
+    }
+
+    /// Clear all cached handles.
+    pub fn clear(&mut self) {
+        self.handles.clear();
+        self.order.clear();
+    }
+
+    /// Move a path to the back of the LRU order (most recently used).
+    fn touch(&mut self, path: &str) {
+        // Remove from current position if present
+        self.order.retain(|p| p != path);
+        // Add to back (most recently used)
+        self.order.push_back(path.to_string());
+    }
+
+    /// Evict the least recently used handle.
+    fn evict_oldest(&mut self) {
+        if let Some(oldest) = self.order.pop_front() {
+            self.handles.remove(&oldest);
+        }
+    }
+
+    /// Current number of cached handles.
+    pub fn len(&self) -> usize {
+        self.handles.len()
+    }
+
+    /// Whether the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.handles.is_empty()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SSTableMeta {
@@ -61,9 +155,11 @@ impl Default for ManifestState {
 /// Append-only SSTable manifest manager.
 ///
 /// Owns internal synchronization to keep metadata updates atomic at component level.
+/// Also manages an LRU cache of SSTable file handles for OS page cache reuse.
 pub struct ManifestManager {
     manifest_path: PathBuf,
     state: Mutex<ManifestState>,
+    file_cache: Mutex<LruFileCache>,
 }
 
 impl ManifestManager {
@@ -86,6 +182,7 @@ impl ManifestManager {
         Ok(Self {
             manifest_path,
             state: Mutex::new(state),
+            file_cache: Mutex::new(LruFileCache::new(DEFAULT_FILE_CACHE_CAPACITY)),
         })
     }
 
@@ -125,6 +222,13 @@ impl ManifestManager {
     pub async fn remove_sstable(&self, level: u32, file_id: u64) -> Result<(), std::io::Error> {
         let mut state = self.state.lock().await;
 
+        // Get path before removing so we can evict from cache
+        let path = state
+            .levels
+            .get(&level)
+            .and_then(|files| files.get(&file_id))
+            .map(|meta| meta.path.clone());
+
         let payload = encode_remove_payload(level, file_id);
         let entry = encode_entry(ENTRY_KIND_REMOVE, &payload)?;
         append_manifest_entry(&self.manifest_path, &entry).await?;
@@ -134,6 +238,12 @@ impl ManifestManager {
             if files.is_empty() {
                 state.levels.remove(&level);
             }
+        }
+
+        // Evict from file cache if we had the path
+        drop(state);
+        if let Some(path) = path {
+            self.evict_file(&path).await;
         }
 
         Ok(())
@@ -169,6 +279,34 @@ impl ManifestManager {
                 .map(|(level, files)| (*level, files.values().cloned().collect()))
                 .collect(),
         }
+    }
+
+    /// Get a cached template file handle for an SSTable, or open and cache a new one.
+    ///
+    /// Callers should use `handle.try_clone()` to get an independent handle with its
+    /// own file position for reading. This enables OS page cache reuse by keeping
+    /// frequently accessed files open.
+    pub async fn get_or_open_file(&self, path: &str) -> Result<Arc<File>, std::io::Error> {
+        let mut cache = self.file_cache.lock().await;
+        cache.get_or_open(path).await
+    }
+
+    /// Evict a file handle from the cache (called when SSTable is deleted).
+    pub async fn evict_file(&self, path: &str) {
+        let mut cache = self.file_cache.lock().await;
+        cache.remove(path);
+    }
+
+    /// Clear all cached file handles.
+    pub async fn clear_file_cache(&self) {
+        let mut cache = self.file_cache.lock().await;
+        cache.clear();
+    }
+
+    /// Current number of cached file handles.
+    pub async fn file_cache_len(&self) -> usize {
+        let cache = self.file_cache.lock().await;
+        cache.len()
     }
 }
 
@@ -547,5 +685,155 @@ mod tests {
         let result = decode_entry(&entry, 0);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    // ===== LRU File Cache Tests =====
+
+    #[tokio::test]
+    async fn lru_cache_opens_and_caches_file() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let file_path = temp_dir.join("test.dat");
+        std::fs::write(&file_path, b"hello").unwrap();
+
+        let mut cache = LruFileCache::new(4);
+        let handle1 = cache.get_or_open(file_path.to_str().unwrap()).await.unwrap();
+        let handle2 = cache.get_or_open(file_path.to_str().unwrap()).await.unwrap();
+
+        // Same Arc returned on cache hit
+        assert!(Arc::ptr_eq(&handle1, &handle2));
+        assert_eq!(cache.len(), 1);
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lru_cache_evicts_oldest_when_full() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create 3 files
+        for i in 0..3 {
+            std::fs::write(temp_dir.join(format!("file{i}.dat")), b"data").unwrap();
+        }
+
+        let mut cache = LruFileCache::new(2);
+        let path0 = temp_dir.join("file0.dat").to_string_lossy().to_string();
+        let path1 = temp_dir.join("file1.dat").to_string_lossy().to_string();
+        let path2 = temp_dir.join("file2.dat").to_string_lossy().to_string();
+
+        // Open 3 files with capacity 2
+        let h0 = cache.get_or_open(&path0).await.unwrap();
+        let h1 = cache.get_or_open(&path1).await.unwrap();
+        let h2 = cache.get_or_open(&path2).await.unwrap();
+
+        // Should have evicted file0 (oldest), kept file1 and file2
+        assert_eq!(cache.len(), 2);
+        assert!(!cache.handles.contains_key(&path0));
+        assert!(cache.handles.contains_key(&path1));
+        assert!(cache.handles.contains_key(&path2));
+
+        // Verify Arc pointers for cached files
+        assert!(Arc::ptr_eq(&h1, cache.handles.get(&path1).unwrap()));
+        assert!(Arc::ptr_eq(&h2, cache.handles.get(&path2).unwrap()));
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lru_cache_touch_updates_order() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        for i in 0..3 {
+            std::fs::write(temp_dir.join(format!("file{i}.dat")), b"data").unwrap();
+        }
+
+        let mut cache = LruFileCache::new(2);
+        let path0 = temp_dir.join("file0.dat").to_string_lossy().to_string();
+        let path1 = temp_dir.join("file1.dat").to_string_lossy().to_string();
+        let path2 = temp_dir.join("file2.dat").to_string_lossy().to_string();
+
+        // Open file0, file1
+        cache.get_or_open(&path0).await.unwrap();
+        cache.get_or_open(&path1).await.unwrap();
+
+        // Touch file0 to make it recently used
+        cache.get_or_open(&path0).await.unwrap();
+
+        // Open file2 - should evict file1 (now oldest), not file0
+        cache.get_or_open(&path2).await.unwrap();
+
+        assert_eq!(cache.len(), 2);
+        // file0 should still be cached (was touched)
+        assert!(cache.handles.contains_key(&path0));
+        // file1 should have been evicted
+        assert!(!cache.handles.contains_key(&path1));
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lru_cache_remove_evicts_specific_file() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        for i in 0..3 {
+            std::fs::write(temp_dir.join(format!("file{i}.dat")), b"data").unwrap();
+        }
+
+        let mut cache = LruFileCache::new(4);
+        let path0 = temp_dir.join("file0.dat").to_string_lossy().to_string();
+        let path1 = temp_dir.join("file1.dat").to_string_lossy().to_string();
+        let path2 = temp_dir.join("file2.dat").to_string_lossy().to_string();
+
+        cache.get_or_open(&path0).await.unwrap();
+        cache.get_or_open(&path1).await.unwrap();
+        cache.get_or_open(&path2).await.unwrap();
+
+        assert_eq!(cache.len(), 3);
+
+        // Remove file1
+        cache.remove(&path1);
+        assert_eq!(cache.len(), 2);
+        assert!(!cache.handles.contains_key(&path1));
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn manifest_manager_evicts_file_from_cache_on_remove() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let manifest_path = temp_dir.join("MANIFEST");
+        std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
+
+        let sstable_path = temp_dir.join("sstable/level-0/test.dat");
+        std::fs::write(&sstable_path, b"data").unwrap();
+
+        let manager = ManifestManager::load_or_create(manifest_path).await.unwrap();
+
+        // Open file via cache
+        let _handle = manager.get_or_open_file(&sstable_path.to_string_lossy()).await.unwrap();
+        assert_eq!(manager.file_cache_len().await, 1);
+
+        // Register and then remove
+        let file_id = manager.allocate_file_id().await.unwrap();
+        manager.register_sstable(SSTableMeta {
+            file_id,
+            level: 0,
+            path: sstable_path.to_string_lossy().to_string(),
+            record_count: 1,
+            bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+            smallest_key: b"a".to_vec(),
+            largest_key: b"z".to_vec(),
+        }).await.unwrap();
+
+        manager.remove_sstable(0, file_id).await.unwrap();
+
+        // File should be evicted from cache
+        assert_eq!(manager.file_cache_len().await, 0);
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
     }
 }
