@@ -29,6 +29,10 @@ tempfile = "3.15"
 dhat = "0.3.3"
 tonic = "0.14"
 
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
+
 [profile.release]
 debug = 1
 

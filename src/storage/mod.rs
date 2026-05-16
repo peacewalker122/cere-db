@@ -1,6 +1,6 @@
 pub mod block;
 pub mod bloom;
-mod compactionmanager;
+pub mod compactionmanager;
 pub mod constant;
 pub mod footer;
 pub mod index;
@@ -10,4 +10,4 @@ mod readmanager;
 pub mod record;
 mod recovermanager;
 pub mod sstable_codec;
-mod writemanager;
+pub mod writemanager;

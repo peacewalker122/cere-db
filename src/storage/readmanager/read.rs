@@ -98,7 +98,10 @@ impl ReadManager {
         key: &[u8],
         sequence_number: u64,
     ) -> Result<Option<MemtableRecord>, std::io::Error> {
-        let file = tokio::fs::File::open(&sstable.path).await?;
+        // Use cached file handle for OS page cache reuse.
+        // try_clone() gives an independent handle with its own file position.
+        let template = self.manifest.get_or_open_file(&sstable.path).await?;
+        let file = template.try_clone().await?;
 
         let mut reader = tokio::io::BufReader::new(file);
 

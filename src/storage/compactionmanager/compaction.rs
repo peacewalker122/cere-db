@@ -195,7 +195,7 @@ pub async fn compaction(
             });
     }
     for stale in &overlapping_next_level_files {
-        delete_manifest_with_file(manifest.clone(), &stale.path, level, stale.file_id)
+        delete_manifest_with_file(manifest.clone(), &stale.path, level + 1, stale.file_id)
             .await
             .map_err(|err| {
                 log::error!("Failed to delete overlapping file {}: {}", stale.path, err)
