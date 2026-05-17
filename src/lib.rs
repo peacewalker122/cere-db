@@ -7,4 +7,5 @@ pub mod storage;
 pub mod testing;
 
 pub use config::Config;
+pub use storage::config::StorageConfig;
 pub use storage::kv2::KV2;

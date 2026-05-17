@@ -1,6 +1,7 @@
 pub mod block;
 pub mod bloom;
 pub mod compactionmanager;
+pub mod config;
 pub mod constant;
 pub mod footer;
 pub mod index;

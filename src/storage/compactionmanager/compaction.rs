@@ -13,6 +13,7 @@ use tokio::io::AsyncWriteExt;
 use crate::error::DBError;
 use crate::storage::{
     bloom::{self, BloomFilterWrapper},
+    config::StorageConfig,
     index::SparseIndexEntry,
     manifest_codec::{ManifestManager, SSTableMeta},
     record::{MemtableRecord, RecordType},
@@ -23,6 +24,7 @@ use crate::storage::{
 pub async fn compaction(
     manifest: Arc<ManifestManager>,
     level: u32,
+    config: Arc<StorageConfig>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<SSTableCodec, DBError> {
     let snapshot = manifest.snapshot().await;
@@ -97,7 +99,7 @@ pub async fn compaction(
         });
     }
 
-    let merged_sstable = merge_files(sstables, &cancel).await?;
+    let merged_sstable = merge_files(sstables, &config, &cancel).await?;
 
     if cancel.is_cancelled() {
         return Err(DBError::StorageError("compaction cancelled".to_string()));
@@ -265,6 +267,7 @@ async fn compute_level_range(
 
 async fn merge_files(
     sstables: Vec<SSTableCodec>,
+    config: &Arc<StorageConfig>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<SSTableCodec, DBError> {
     let mut merged_by_key: std::collections::BTreeMap<Vec<u8>, MemtableRecord> =
@@ -295,7 +298,7 @@ async fn merge_files(
     let mut block_entries: Vec<Block> = Vec::new();
 
     // TODO: need to store the actual number of records on the footer of sstable.
-    let mut bloom_filter = BloomFilterWrapper::with_rate(1000000, 0.0001);
+    let mut bloom_filter = BloomFilterWrapper::with_rate(1000000, config.bloom_false_positive_rate);
     for winner in merged_by_key.into_values() {
         if cancel.is_cancelled() {
             return Err(DBError::StorageError("compaction cancelled".to_string()));
@@ -423,7 +426,7 @@ mod tests {
         let sstables = vec![make_sstable(vec![block])];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Verify sorted output
         assert_eq!(result.blocks.len(), 1);
@@ -454,7 +457,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Verify all 4 keys in sorted order
         assert_eq!(result.blocks.len(), 1);
@@ -480,7 +483,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Verify only one record exists (deduplicated by key)
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -512,7 +515,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Should have the normal block's record
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -534,7 +537,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Verify all 3 records in sorted order
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -566,7 +569,7 @@ mod tests {
         let sstables = vec![make_sstable(vec![make_block(sst_records, 0)])];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Verify multiple blocks were created due to capacity
         assert!(
@@ -603,7 +606,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Verify bloom filter contains all merged keys
         assert!(result.bloom.contains(b"key1"));
@@ -626,7 +629,7 @@ mod tests {
         let sstables = vec![make_sstable(vec![block])];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Verify delete tombstone is removed
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -647,7 +650,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         let total_records: usize = result
             .blocks
@@ -671,7 +674,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         let total_records: usize = result
             .blocks
@@ -695,7 +698,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         let total_records: usize = result
             .blocks
@@ -724,7 +727,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         let total_records: usize = result
             .blocks
@@ -758,7 +761,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // key1 should be dropped due to newer delete; key2 and key3 should remain.
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -789,7 +792,7 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
 
         // Verify all 4 keys sorted correctly
         let block_data = result.blocks[0].data.as_ref().unwrap();

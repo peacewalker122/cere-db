@@ -15,6 +15,7 @@ use crate::{
     error::DBError,
     storage::{
         compactionmanager::compaction::compaction,
+        config::StorageConfig,
         constant::{MAXIMUM_LEVEL_FILES, MEMTABLE_SIZE_THRESHOLD},
         manifest_codec::ManifestManager,
         readmanager::read::ReadManager,
@@ -44,6 +45,7 @@ pub struct KV2 {
     pub sstable_dir: PathBuf,
     pub manifest_path: PathBuf,
 
+    pub config: Arc<StorageConfig>,
     wal_manager: Arc<WALManager>,
     manifest: Arc<ManifestManager>, // Single source of truth (Arc) - shared with all components
     write_component: WriteComponent,
@@ -54,13 +56,13 @@ pub struct KV2 {
 }
 
 impl KV2 {
-    /// Open KV2 from a base directory and initialize all managers.
+    /// Open KV2 from a base directory with custom configuration.
     ///
     /// Directory layout:
     /// - {base}/wal
     /// - {base}/sstable/level-0
     /// - {base}/MANIFEST
-    pub async fn open(base_dir: impl AsRef<Path>) -> Result<Self, DBError> {
+    pub async fn open(base_dir: impl AsRef<Path>, config: StorageConfig) -> Result<Self, DBError> {
         let base_dir = base_dir.as_ref().to_path_buf();
         let wal_dir = base_dir.join("wal");
         let sstable_dir = base_dir.join("sstable");
@@ -72,8 +74,10 @@ impl KV2 {
 
         let cancel = tokio_util::sync::CancellationToken::new();
 
+        let config = Arc::new(config);
+
         let wal_manager =
-            Arc::new(WALManager::new(wal_dir.clone(), DEFAULT_WAL_SEGMENT_SIZE).await?);
+            Arc::new(WALManager::new(wal_dir.clone(), config.wal_segment_size).await?);
         let recovered_wal_records = wal_manager.recover_records().await?;
 
         let (recovered_memtable, recovered_sequence, recovered_memtable_size) =
@@ -87,6 +91,7 @@ impl KV2 {
             Arc::clone(&wal_manager),
             Arc::clone(&manifest),
             recovered_sequence,
+            Arc::clone(&config),
         );
         write_component.restore_memtable(recovered_memtable, recovered_memtable_size);
 
@@ -99,10 +104,12 @@ impl KV2 {
         // Spawn rayon worker thread (Step 1.5) - pass shared Arc<ManifestManager>
         let manifest_for_worker = Arc::clone(&manifest);
         let sstable_dir_for_compaction = sstable_dir.clone();
+        let config_for_compaction = Arc::clone(&config);
         Self::run_compaction_worker(
             compaction_receiver,
             manifest_for_worker,
             sstable_dir_for_compaction,
+            config_for_compaction,
             cancel.child_token(),
         );
 
@@ -111,6 +118,7 @@ impl KV2 {
             wal_dir,
             sstable_dir,
             manifest_path,
+            config,
             wal_manager,
             manifest,
             write_component,
@@ -119,12 +127,19 @@ impl KV2 {
         })
     }
 
-    /// Blocking convenience wrapper for sync call sites.
+    /// Open KV2 with default configuration.
+    ///
+    /// Convenience wrapper for backward compatibility with existing code.
+    pub async fn open_with_defaults(base_dir: impl AsRef<Path>) -> Result<Self, DBError> {
+        Self::open(base_dir, StorageConfig::default()).await
+    }
+
+    /// Blocking convenience wrapper for sync call sites with default config.
     pub fn open_blocking(base_dir: impl AsRef<Path>) -> Result<Self, DBError> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| DBError::StorageError(format!("failed to create tokio runtime: {e}")))?;
 
-        runtime.block_on(Self::open(base_dir))
+        runtime.block_on(Self::open_with_defaults(base_dir))
     }
 
     fn build_recovered_memtable(
@@ -209,6 +224,7 @@ impl KV2 {
         mut receiver: Receiver<CompactionTrigger>,
         manifest: Arc<ManifestManager>,
         sstable_dir: PathBuf,
+        config: Arc<StorageConfig>,
         cancel: tokio_util::sync::CancellationToken,
     ) {
         tokio::spawn(async move {
@@ -220,9 +236,9 @@ impl KV2 {
                                 log::info!("Received compaction trigger for level {}", level);
                                 // Perform compaction in a blocking thread to avoid blocking async runtime
                                 let manifest_for_thread = Arc::clone(&manifest);
-                                let sstable_dir_for_thread = sstable_dir.clone();
+                                let config_for_thread = Arc::clone(&config);
 
-                                if let Err(e) = compaction(manifest_for_thread, level, cancel.child_token()).await {
+                                if let Err(e) = compaction(manifest_for_thread, level, config_for_thread, cancel.child_token()).await {
                                     log::error!("Compaction failed for level {}: {}", level, e);
                                 } else {
                                     log::info!("Compaction completed for level {}", level);
@@ -276,7 +292,7 @@ mod tests {
     async fn open_initializes_storage_directories() {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
 
-        let kv2 = KV2::open(&temp_dir).await.unwrap();
+        let kv2 = KV2::open_with_defaults(&temp_dir).await.unwrap();
 
         assert!(kv2.wal_dir.exists());
         assert!(kv2.sstable_dir.join("level-0").exists());
@@ -289,7 +305,7 @@ mod tests {
     async fn kvengine_put_get_delete_roundtrip() {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
 
-        let mut kv2 = KV2::open(&temp_dir).await.unwrap();
+        let mut kv2 = KV2::open_with_defaults(&temp_dir).await.unwrap();
         kv2.put(b"k1".to_vec(), b"v1".to_vec()).await.unwrap();
 
         let value = kv2.get(b"k1").await.unwrap();
@@ -308,13 +324,13 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
 
         {
-            let mut kv2 = KV2::open(&temp_dir).await.unwrap();
+            let mut kv2 = KV2::open_with_defaults(&temp_dir).await.unwrap();
             kv2.put(b"recovery-key".to_vec(), b"recovery-value".to_vec())
                 .await
                 .unwrap();
         }
 
-        let reopened = KV2::open(&temp_dir).await.unwrap();
+        let reopened = KV2::open_with_defaults(&temp_dir).await.unwrap();
         let value = reopened.get(b"recovery-key").await.unwrap();
 
         assert!(value.is_some());
