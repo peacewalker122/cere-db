@@ -9,6 +9,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
 
+use crate::error::DBError;
 use crate::storage::{
     bloom::BloomFilterWrapper,
     index::SparseIndexEntry,
@@ -110,7 +111,7 @@ impl WriteComponent {
         }
     }
 
-    pub async fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), std::io::Error> {
+    pub async fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError> {
         let lsn = self
             .sequence_number
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -124,7 +125,7 @@ impl WriteComponent {
         Ok(())
     }
 
-    pub async fn delete(&self, key: Vec<u8>) -> Result<(), std::io::Error> {
+    pub async fn delete(&self, key: Vec<u8>) -> Result<(), DBError> {
         let lsn = self
             .sequence_number
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -207,7 +208,7 @@ impl WriteComponent {
     pub async fn flush(
         &mut self,
         memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
-    ) -> Result<CheckpointResult, std::io::Error> {
+    ) -> Result<CheckpointResult, DBError> {
         let mut valid_records: std::collections::BTreeMap<Vec<u8>, MemtableRecord> =
             std::collections::BTreeMap::new();
         for entry in memtable.iter() {
@@ -284,9 +285,8 @@ impl WriteComponent {
 
         let (smallest_key, largest_key) =
             SSTableCodec::range_from_index(&codec.index).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "cannot register SSTable without sparse index range",
+                DBError::Corrupted(
+                    "cannot register SSTable without sparse index range".to_string(),
                 )
             })?;
 

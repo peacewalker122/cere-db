@@ -3,6 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncRead, AsyncSeek};
 
+use crate::error::DBError;
+
 /// Get current Unix timestamp in milliseconds
 pub fn current_timestamp_millis() -> u64 {
     SystemTime::now()
@@ -68,7 +70,7 @@ impl Record {
     }
 
     /// Decode a record from a reader at a specific offset
-    pub fn decode<T: Read + Seek>(reader: &mut T) -> Result<Record, std::io::Error> {
+    pub fn decode<T: Read + Seek>(reader: &mut T) -> Result<Record, DBError> {
         let mut record_type_buf = [0u8; 1];
         reader.read_exact(&mut record_type_buf)?;
         let record_type_byte = record_type_buf[0];
@@ -94,20 +96,14 @@ impl Record {
         let checksum = u32::from_be_bytes(checksum_buf);
 
         if crc32fast::hash(&value_buf) != checksum {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Checksum mismatch",
-            ));
+            return Err(DBError::Corrupted("Checksum mismatch".to_string()));
         }
 
         let record_type = match record_type_byte {
             1 => RecordType::Put,
             2 => RecordType::Delete,
             _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid record type",
-                ));
+                return Err(DBError::Corrupted("Invalid record type".to_string()));
             }
         };
 
@@ -179,7 +175,7 @@ pub struct DecodeRecordResult {
 pub fn decode_record<R: Read + Seek>(
     mut reader: R,
     offset: u64,
-) -> Result<DecodeRecordResult, std::io::Error> {
+) -> Result<DecodeRecordResult, DBError> {
     reader.seek(SeekFrom::Start(offset))?;
 
     // Read record type
@@ -189,10 +185,7 @@ pub fn decode_record<R: Read + Seek>(
         1 => RecordType::Put,
         2 => RecordType::Delete,
         _ => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid record type",
-            ));
+            return Err(DBError::Corrupted("Invalid record type".to_string()));
         }
     };
 
@@ -227,10 +220,7 @@ pub fn decode_record<R: Read + Seek>(
     let checksum = u32::from_be_bytes(checksum_buf);
 
     if crc32fast::hash(&value) != checksum {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Checksum mismatch",
-        ));
+        return Err(DBError::Corrupted("Checksum mismatch".to_string()));
     }
 
     // Calculate next offset
@@ -285,7 +275,7 @@ impl MemtableRecord {
         4 + key.len() + 4 + self.value.len() + 1 + 8
     }
 
-    pub fn decode<T: Read + Seek>(encoded: T) -> Result<Self, std::io::Error> {
+    pub fn decode<T: Read + Seek>(encoded: T) -> Result<Self, DBError> {
         let mut reader = encoded;
 
         let mut key_len_buf = [0u8; 4];
@@ -308,10 +298,7 @@ impl MemtableRecord {
             1 => RecordType::Put,
             2 => RecordType::Delete,
             _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid record type",
-                ));
+                return Err(DBError::Corrupted("Invalid record type".to_string()));
             }
         };
 
@@ -329,7 +316,7 @@ impl MemtableRecord {
 
     pub async fn async_decode<T: AsyncRead + AsyncSeek + Unpin>(
         mut reader: T,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<Self, DBError> {
         use tokio::io::AsyncReadExt;
 
         let mut key_len_buf = [0u8; 4];
@@ -352,10 +339,7 @@ impl MemtableRecord {
             1 => RecordType::Put,
             2 => RecordType::Delete,
             _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid record type",
-                ));
+                return Err(DBError::Corrupted("Invalid record type".to_string()));
             }
         };
 
@@ -453,7 +437,7 @@ mod tests {
 
         let result = Record::decode(&mut Cursor::new(encoded));
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert!(matches!(result.unwrap_err(), DBError::Corrupted(_)));
     }
 
     #[test]

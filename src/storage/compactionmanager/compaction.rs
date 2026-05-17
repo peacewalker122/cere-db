@@ -10,6 +10,7 @@ use std::{io::Cursor, path::PathBuf, sync::Arc};
 
 use tokio::io::AsyncWriteExt;
 
+use crate::error::DBError;
 use crate::storage::{
     bloom::{self, BloomFilterWrapper},
     index::SparseIndexEntry,
@@ -23,31 +24,28 @@ pub async fn compaction(
     manifest: Arc<ManifestManager>,
     level: u32,
     cancel: tokio_util::sync::CancellationToken,
-) -> Result<SSTableCodec, std::io::Error> {
+) -> Result<SSTableCodec, DBError> {
     let snapshot = manifest.snapshot().await;
     if cancel.is_cancelled() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "compaction cancelled",
-        ));
+        return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
 
     let manifest_level = snapshot.levels.get(&level);
 
     if manifest_level.is_none() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("Level {} not found in manifest", level),
-        ));
+        return Err(DBError::StorageError(format!(
+            "Level {} not found in manifest",
+            level
+        )));
     }
 
     let current_level_files = manifest_level.unwrap().clone();
     if current_level_files.len() <= 1 {
         log::warn!("Level {} is not full, no need to compact", level);
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Level {} is not full, no need to compact", level),
-        ));
+        return Err(DBError::StorageError(format!(
+            "Level {} is not full, no need to compact",
+            level
+        )));
     }
 
     let next_level = level + 1;
@@ -60,19 +58,13 @@ pub async fn compaction(
     let current_level_range = compute_level_range(&current_level_files, &cancel)
         .await?
         .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Level {} has no valid key range", level),
-            )
+            DBError::Corrupted(format!("Level {} has no valid key range", level))
         })?;
 
     let mut overlapping_next_level_files = Vec::new();
     for candidate in next_level_files {
         if cancel.is_cancelled() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "compaction cancelled",
-            ));
+            return Err(DBError::StorageError("compaction cancelled".to_string()));
         }
         if let Some(candidate_range) = compute_meta_range(&candidate, &cancel).await? {
             if ranges_overlap(&current_level_range, &candidate_range) {
@@ -90,10 +82,7 @@ pub async fn compaction(
 
     for level_store in &merge_candidates {
         if cancel.is_cancelled() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "compaction cancelled",
-            ));
+            return Err(DBError::StorageError("compaction cancelled".to_string()));
         }
         let sstable_file = tokio::fs::File::open(&level_store.path).await?;
         let mut read_buffer = tokio::io::BufReader::new(sstable_file);
@@ -111,10 +100,7 @@ pub async fn compaction(
     let merged_sstable = merge_files(sstables, &cancel).await?;
 
     if cancel.is_cancelled() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "compaction cancelled",
-        ));
+        return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
 
     if merged_sstable.blocks.is_empty() {
@@ -137,18 +123,12 @@ pub async fn compaction(
     }
 
     let merged_range = range_from_blocks(&merged_sstable.blocks).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "compaction output has no key range",
-        )
+        DBError::Corrupted("compaction output has no key range".to_string())
     })?;
 
     let file_id = manifest.allocate_file_id().await?;
     if cancel.is_cancelled() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "compaction cancelled",
-        ));
+        return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
 
     let output_path =
@@ -163,10 +143,7 @@ pub async fn compaction(
     output_file.sync_all().await?;
 
     if cancel.is_cancelled() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "compaction cancelled",
-        ));
+        return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
 
     let compacted_record_count = merged_sstable
@@ -210,7 +187,7 @@ async fn delete_manifest_with_file(
     file_path: &str,
     level: u32,
     file_id: u64,
-) -> Result<(), std::io::Error> {
+) -> Result<(), DBError> {
     let manifest = manifest.clone();
 
     manifest.remove_sstable(level, file_id).await?;
@@ -249,12 +226,9 @@ fn range_from_blocks(
 async fn compute_meta_range(
     meta: &SSTableMeta,
     cancel: &tokio_util::sync::CancellationToken,
-) -> Result<Option<(Vec<u8>, Vec<u8>)>, std::io::Error> {
+) -> Result<Option<(Vec<u8>, Vec<u8>)>, DBError> {
     if cancel.is_cancelled() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "compaction cancelled",
-        ));
+        return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
 
     if !meta.smallest_key.is_empty() && !meta.largest_key.is_empty() {
@@ -270,15 +244,12 @@ async fn compute_meta_range(
 async fn compute_level_range(
     metas: &[SSTableMeta],
     cancel: &tokio_util::sync::CancellationToken,
-) -> Result<Option<(Vec<u8>, Vec<u8>)>, std::io::Error> {
+) -> Result<Option<(Vec<u8>, Vec<u8>)>, DBError> {
     let mut range: Option<(Vec<u8>, Vec<u8>)> = None;
 
     for meta in metas {
         if cancel.is_cancelled() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "compaction cancelled",
-            ));
+            return Err(DBError::StorageError("compaction cancelled".to_string()));
         }
         if let Some((smallest, largest)) = compute_meta_range(meta, cancel).await? {
             range = Some(match range {
@@ -294,16 +265,13 @@ async fn compute_level_range(
 async fn merge_files(
     sstables: Vec<SSTableCodec>,
     cancel: &tokio_util::sync::CancellationToken,
-) -> Result<SSTableCodec, std::io::Error> {
+) -> Result<SSTableCodec, DBError> {
     let mut merged_by_key: std::collections::BTreeMap<Vec<u8>, MemtableRecord> =
         std::collections::BTreeMap::new();
 
     for sstable in &sstables {
         if cancel.is_cancelled() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "compaction cancelled",
-            ));
+            return Err(DBError::StorageError("compaction cancelled".to_string()));
         }
         for block in &sstable.blocks {
             if let Some(records) = &block.data {
@@ -329,10 +297,7 @@ async fn merge_files(
     let mut bloom_filter = BloomFilterWrapper::with_rate(1000000, 0.0001);
     for winner in merged_by_key.into_values() {
         if cancel.is_cancelled() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "compaction cancelled",
-            ));
+            return Err(DBError::StorageError("compaction cancelled".to_string()));
         }
         flush_winner(
             &mut block_builder,

@@ -183,7 +183,7 @@ impl Block {
         buf
     }
 
-    pub fn decode<T: Read + Seek>(mut data: &mut T, offset: u64) -> Result<Self, std::io::Error> {
+    pub fn decode<T: Read + Seek>(mut data: &mut T, offset: u64) -> Result<Self, DBError> {
         // 1. Move the cursor (purely for state consistency, though we use slice offsets)
         data.seek(SeekFrom::Start(offset))?;
 
@@ -228,7 +228,7 @@ impl Block {
 
     pub async fn async_decode<T: AsyncRead + AsyncSeek + Unpin>(
         mut data: &mut T,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<Self, DBError> {
         // 1. Decode First Key
         let mut len_buf = [0u8; 4];
         data.read_exact(&mut len_buf).await?;

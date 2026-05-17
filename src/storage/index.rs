@@ -21,7 +21,7 @@ impl IndexEntry {
         buf
     }
 
-    pub fn decode<R: Read>(mut reader: R) -> Result<Self, std::io::Error> {
+    pub fn decode<R: Read>(mut reader: R) -> Result<Self, DBError> {
         let mut len_buf = [0u8; 8];
         reader.read_exact(&mut len_buf)?;
         let key_len = u64::from_be_bytes(len_buf) as usize;
@@ -72,7 +72,7 @@ impl SparseIndexEntry {
         buf
     }
 
-    pub fn decode<R: Read>(mut reader: R) -> Result<Self, std::io::Error> {
+    pub fn decode<R: Read>(mut reader: R) -> Result<Self, DBError> {
         let mut len_buf = [0u8; 8];
 
         // Decode first_key
@@ -106,7 +106,7 @@ impl SparseIndexEntry {
 
     pub async fn async_decode<R: tokio::io::AsyncRead + Unpin>(
         mut reader: R,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<Self, DBError> {
         let mut len_buf = [0u8; 8];
 
         // Decode first_key
@@ -140,16 +140,13 @@ impl SparseIndexEntry {
 }
 
 /// Helper to verify index checksum
-pub fn verify_index_checksum(data: &[u8], expected: u32) -> Result<(), std::io::Error> {
+pub fn verify_index_checksum(data: &[u8], expected: u32) -> Result<(), DBError> {
     let calculated = crc32fast::hash(data);
     if calculated != expected {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "Index block checksum mismatch: expected 0x{:X}, got 0x{:X}",
-                expected, calculated
-            ),
-        ));
+        return Err(DBError::Corrupted(format!(
+            "Index block checksum mismatch: expected 0x{:X}, got 0x{:X}",
+            expected, calculated
+        )));
     }
     Ok(())
 }
@@ -228,7 +225,7 @@ pub fn search_sstable<R: Read + Seek>(
     mut reader: R,
     key: &[u8],
     index: &BTreeMap<Vec<u8>, u64>,
-) -> Result<Option<Vec<u8>>, std::io::Error> {
+) -> Result<Option<Vec<u8>>, DBError> {
     use super::footer::decode_record_from_file;
 
     // Look up key in index
@@ -260,7 +257,7 @@ pub fn search_sstable_with_bloom<R: Read + Seek>(
     key: &[u8],
     bloom: &BloomFilterWrapper,
     index: &BTreeMap<Vec<u8>, u64>,
-) -> Result<Option<Vec<u8>>, std::io::Error> {
+) -> Result<Option<Vec<u8>>, DBError> {
     // Check bloom filter first - if it returns false, key definitely doesn't exist
     if !bloom.contains(key) {
         return Ok(None);
