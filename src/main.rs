@@ -1,5 +1,5 @@
 use ceredb::repl::run_repl_async;
-use ceredb::{Config, KV2};
+use ceredb::{Config, KV2, StorageConfig};
 use clap::Parser;
 use log::info;
 
@@ -15,7 +15,8 @@ async fn main() {
     info!("Data directory: {}", config.data_dir);
     info!("Log level: {:?}", config.get_log_level());
 
-    let mut kv = match KV2::open(&config.data_dir).await {
+    let storage_config = StorageConfig::default();
+    let mut kv = match KV2::open(&config.data_dir, storage_config).await {
         Ok(engine) => engine,
         Err(err) => {
             eprintln!("Failed to initialize KV2 engine: {err}");

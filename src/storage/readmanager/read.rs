@@ -232,6 +232,7 @@ mod tests {
             Arc::new(wal_manager),
             Arc::clone(&manifest),
             0,
+            Arc::new(crate::storage::config::StorageConfig::default()),
         );
 
         let key = b"sstable-key".to_vec();
@@ -287,6 +288,7 @@ mod tests {
             Arc::new(wal_manager),
             Arc::clone(&manifest),
             0,
+            Arc::new(crate::storage::config::StorageConfig::default()),
         );
 
         let key = b"overlap-key".to_vec();

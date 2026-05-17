@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use ceredb::storage::{
     compactionmanager::compaction::compaction,
+    config::StorageConfig,
     constant::MAXIMUM_LEVEL_FILES,
     manifest_codec::ManifestManager,
 };
@@ -53,7 +54,8 @@ async fn compaction_disk_usage_stable_across_repeated_cycles() {
         );
 
         // Act: Run compaction on L0
-        let result = compaction(Arc::clone(&manifest), 0, cancel.child_token()).await;
+        let config = Arc::new(StorageConfig::default());
+        let result = compaction(Arc::clone(&manifest), 0, config, cancel.child_token()).await;
 
         // Debug: print state after compaction
         let l0_after = count_sstable_files(&base_dir, 0);

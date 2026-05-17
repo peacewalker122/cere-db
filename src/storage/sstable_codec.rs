@@ -509,6 +509,7 @@ mod tests {
             Arc::new(wal_manager),
             manifest_manager,
             0,
+            Arc::new(crate::storage::config::StorageConfig::default()),
         );
 
         let memtable: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();

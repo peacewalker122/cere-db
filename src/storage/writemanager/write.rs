@@ -12,6 +12,7 @@ use crossbeam_skiplist::SkipMap;
 use crate::error::DBError;
 use crate::storage::{
     bloom::BloomFilterWrapper,
+    config::StorageConfig,
     index::SparseIndexEntry,
     manifest_codec::{ManifestManager, SSTableMeta},
     record::{MemtableRecord, RecordType},
@@ -53,6 +54,7 @@ pub struct WriteComponent {
     sstable_dir: PathBuf,
     wal_manager: Arc<WALManager>,
     manifest_manager: Arc<ManifestManager>,
+    config: Arc<StorageConfig>,
 }
 
 impl WriteComponent {
@@ -79,6 +81,7 @@ impl WriteComponent {
         wal_manager: Arc<WALManager>,
         manifest_manager: Arc<ManifestManager>,
         sequence_number: u64, // this is from the wal recovery process
+        config: Arc<StorageConfig>,
     ) -> Self {
         log::info!(
             "Initializing WriteComponent with sequence_number={}, sstable_dir={}",
@@ -93,6 +96,7 @@ impl WriteComponent {
             sstable_dir,
             wal_manager,
             manifest_manager,
+            config,
         }
     }
 
@@ -100,6 +104,7 @@ impl WriteComponent {
     pub fn with_default_dir(
         wal_manager: Arc<WALManager>,
         manifest_manager: Arc<ManifestManager>,
+        config: Arc<StorageConfig>,
     ) -> Self {
         Self {
             memtable: Arc::new(SkipMap::new()),
@@ -108,6 +113,7 @@ impl WriteComponent {
             sstable_dir: PathBuf::from("data"),
             wal_manager,
             manifest_manager,
+            config,
         }
     }
 
@@ -228,7 +234,10 @@ impl WriteComponent {
         let mut block_builder = BlockBuilder::new(0);
         let mut block_entries: Vec<Block> = Vec::new();
         let mut sparse_index = Vec::<SparseIndexEntry>::new();
-        let mut bloom_filter = BloomFilterWrapper::with_rate(valid_records.len() + 10, 0.0001);
+        let mut bloom_filter = BloomFilterWrapper::with_rate(
+            valid_records.len() + 10,
+            self.config.bloom_false_positive_rate,
+        );
 
         let mut encoded_offset: u64 = 0;
 
@@ -355,6 +364,7 @@ mod tests {
             Arc::new(wal_manager),
             manifest_manager,
             0,
+            Arc::new(crate::storage::config::StorageConfig::default()),
         )
     }
 
