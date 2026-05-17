@@ -137,7 +137,7 @@ pub async fn compaction(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let (encoded, _) = merged_sstable.serialize();
+    let (encoded, compaction_footer) = merged_sstable.serialize();
     let mut output_file = tokio::fs::File::create(&output_path).await?;
     output_file.write_all(&encoded).await?;
     output_file.sync_all().await?;
@@ -158,7 +158,8 @@ pub async fn compaction(
             level: next_level,
             path: output_path.to_string_lossy().to_string(),
             record_count: compacted_record_count,
-            bloom_bitmap: merged_sstable.bloom.clone(),
+            bloom_offset: compaction_footer.bloom_block_start,
+            bloom_size: compaction_footer.bloom_block_end - compaction_footer.bloom_block_start,
             smallest_key: merged_range.0,
             largest_key: merged_range.1,
         })
@@ -821,7 +822,8 @@ mod tests {
                 level: 0,
                 path: "unused-a".to_string(),
                 record_count: 10,
-                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                bloom_offset: 4096,
+                bloom_size: 1024,
                 smallest_key: b"b".to_vec(),
                 largest_key: b"d".to_vec(),
             },
@@ -830,7 +832,8 @@ mod tests {
                 level: 0,
                 path: "unused-b".to_string(),
                 record_count: 10,
-                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                bloom_offset: 8192,
+                bloom_size: 1024,
                 smallest_key: b"a".to_vec(),
                 largest_key: b"z".to_vec(),
             },

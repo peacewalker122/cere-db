@@ -281,7 +281,7 @@ impl WriteComponent {
         }
 
         let codec = SSTableCodec::new(block_entries, sparse_index, bloom_filter.clone());
-        let (encoded, _) = codec.serialize();
+        let (encoded, footer) = codec.serialize();
 
         let (smallest_key, largest_key) =
             SSTableCodec::range_from_index(&codec.index).ok_or_else(|| {
@@ -304,7 +304,8 @@ impl WriteComponent {
                 level: 0,
                 path: file_path.to_string_lossy().to_string(),
                 record_count,
-                bloom_bitmap: bloom_filter,
+                bloom_offset: footer.bloom_block_start,
+                bloom_size: footer.bloom_block_end - footer.bloom_block_start,
                 smallest_key,
                 largest_key,
             })
@@ -382,7 +383,11 @@ mod tests {
         let level0_files = snapshot.levels.get(&0).unwrap();
         assert_eq!(level0_files.len(), 1);
         assert_eq!(level0_files[0].record_count, 2);
-        assert!(level0_files[0].bloom_bitmap.contains(b"key1"));
+        // bloom_offset and bloom_size are set from the serialized SSTable footer
+        assert!(
+            level0_files[0].bloom_size > 0,
+            "bloom filter should have non-zero size in manifest"
+        );
         // Note: flush() encodes data but doesn't write to disk - only registers metadata in manifest
         // result.data contains the encoded SSTable bytes
         assert!(!result.data.is_empty(), "flush should return encoded data");
@@ -417,10 +422,15 @@ mod tests {
         let snapshot = write_component.manifest_manager.snapshot().await;
         let level0_files = snapshot.levels.get(&0).unwrap();
         assert_eq!(level0_files.len(), 1);
-        let bloom = &level0_files[0].bloom_bitmap;
-        assert!(bloom.contains(b"key-a"));
-        assert!(bloom.contains(b"key-m"));
-        assert!(bloom.contains(b"key-z"));
+        // Bloom filter metadata is stored as offset+size rather than inline bitmap
+        assert!(
+            level0_files[0].bloom_size > 0,
+            "bloom filter should have non-zero size in manifest metadata"
+        );
+        assert!(
+            level0_files[0].bloom_offset > 0,
+            "bloom filter should have non-zero offset in manifest metadata"
+        );
 
         std::fs::remove_dir_all(temp_dir).unwrap();
     }
