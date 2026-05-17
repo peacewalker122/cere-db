@@ -147,52 +147,6 @@ impl ReadManager {
     }
 }
 
-fn scan_block_payload_for_key(payload: &[u8], target_key: &[u8]) -> Option<MemtableRecord> {
-    let mut offset = 0usize;
-
-    while offset < payload.len() {
-        if payload.len().checked_sub(offset)? < 8 {
-            break;
-        }
-
-        let key_len = u32::from_le_bytes(payload[offset..offset + 4].try_into().ok()?) as usize;
-        offset += 4;
-
-        if payload.len().checked_sub(offset)? < key_len + 4 {
-            break;
-        }
-
-        let key = &payload[offset..offset + key_len];
-        offset += key_len;
-
-        let value_len = u32::from_le_bytes(payload[offset..offset + 4].try_into().ok()?) as usize;
-        offset += 4;
-
-        if payload.len().checked_sub(offset)? < value_len + 1 + 8 {
-            break;
-        }
-
-        let value = payload[offset..offset + value_len].to_vec();
-        offset += value_len;
-
-        let record_type = match payload[offset] {
-            1 => RecordType::Put,
-            2 => RecordType::Delete,
-            _ => return None,
-        };
-        offset += 1;
-
-        let lsn = u64::from_le_bytes(payload[offset..offset + 8].try_into().ok()?);
-        offset += 8;
-
-        if key == target_key {
-            return Some(MemtableRecord::new(value, record_type, lsn));
-        }
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
