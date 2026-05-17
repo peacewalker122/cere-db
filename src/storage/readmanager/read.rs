@@ -79,13 +79,43 @@ impl ReadManager {
                 .collect::<Vec<String>>()
         );
 
-        for (_, files) in levels.into_iter() {
-            for sstable in files.iter().rev() {
-                if let Some(record) = self
-                    .get_from_single_sstable(sstable, key, sequence_number)
-                    .await?
-                {
-                    return Ok(Some(record));
+        for (level, files) in levels.into_iter() {
+            if *level == 0 {
+                // Level 0 files can overlap in key range. Must check ALL files and
+                // return the version with the highest LSN to avoid stale reads.
+                let mut best: Option<MemtableRecord> = None;
+                for sstable in files.iter() {
+                    if let Some(record) = self
+                        .get_from_single_sstable(sstable, key, sequence_number)
+                        .await?
+                    {
+                        let is_newer = best
+                            .as_ref()
+                            .map(|current| record.lsn > current.lsn)
+                            .unwrap_or(true);
+                        if is_newer {
+                            best = Some(record);
+                        }
+                    }
+                }
+                if let Some(record) = best {
+                    match record.record_type {
+                        RecordType::Delete => return Ok(None),
+                        _ => return Ok(Some(record)),
+                    }
+                }
+            } else {
+                // Deeper levels are non-overlapping — first match is correct.
+                for sstable in files.iter().rev() {
+                    if let Some(record) = self
+                        .get_from_single_sstable(sstable, key, sequence_number)
+                        .await?
+                    {
+                        match record.record_type {
+                            RecordType::Delete => return Ok(None),
+                            _ => return Ok(Some(record)),
+                        }
+                    }
                 }
             }
         }
@@ -128,17 +158,8 @@ impl ReadManager {
 
             if let Some(records) = block.data {
                 for record in records {
-                    if record.key != key {
-                        continue;
-                    }
-
                     if record.key == key {
-                        let result = match record.record_type {
-                            RecordType::Delete => None,
-                            _ => Some(record),
-                        };
-
-                        return Ok(result);
+                        return Ok(Some(record));
                     }
                 }
             }
@@ -200,7 +221,7 @@ mod tests {
         let wal_manager = WALManager::new(temp_dir.join("wal"), 1024 * 1024)
             .await
             .unwrap();
-        let manifest_for_write = Arc::new(
+        let manifest = Arc::new(
             ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
                 .await
                 .unwrap(),
@@ -209,7 +230,7 @@ mod tests {
         let mut write_component = WriteComponent::new(
             temp_dir.join("sstable"),
             Arc::new(wal_manager),
-            Arc::clone(&manifest_for_write),
+            Arc::clone(&manifest),
             0,
         );
 
@@ -231,14 +252,9 @@ mod tests {
             .unwrap();
         file.sync_all().await.unwrap();
 
-        let manifest_for_read = Arc::new(
-            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
-                .await
-                .unwrap(),
-        );
         let active_memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> =
             Arc::new(SkipMap::new());
-        let manager = ReadManager::new(active_memtable, manifest_for_read);
+        let manager = ReadManager::new(active_memtable, manifest);
 
         let record = manager.get(key, 7).await.unwrap();
         assert!(record.is_some());
@@ -246,5 +262,73 @@ mod tests {
         assert_eq!(record.value, b"sstable-value".to_vec());
         assert_eq!(record.record_type, RecordType::Put);
         assert_eq!(record.lsn, 7);
+    }
+
+    #[tokio::test]
+    async fn l0_overlap_returns_highest_lsn() {
+        // Regression test for Issue #11: L0 overlapping SSTables should
+        // return the Put with the highest LSN, not just the first match.
+        let temp_dir = with_temp_dir("readmanager-l0-overlap", |p| p);
+
+        std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
+        std::fs::create_dir_all(temp_dir.join("wal")).unwrap();
+
+        let wal_manager = WALManager::new(temp_dir.join("wal"), 1024 * 1024)
+            .await
+            .unwrap();
+        let manifest = Arc::new(
+            ManifestManager::load_or_create(temp_dir.join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
+
+        let mut write_component = WriteComponent::new(
+            temp_dir.join("sstable"),
+            Arc::new(wal_manager),
+            Arc::clone(&manifest),
+            0,
+        );
+
+        let key = b"overlap-key".to_vec();
+
+        // Flush 1: older version (LSN=5)
+        let mt1: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
+        mt1.insert(
+            (key.clone(), 5),
+            MemtableRecord::new(b"old-value".to_vec(), RecordType::Put, 5),
+        );
+        let r1 = write_component.flush(Arc::new(mt1)).await.unwrap();
+        let mut file = tokio::fs::File::create(&r1.sstable_path).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut file, &r1.data)
+            .await
+            .unwrap();
+        file.sync_all().await.unwrap();
+
+        // Flush 2: newer version (LSN=10) — overlapping with flush 1 in L0
+        let mt2: SkipMap<(Vec<u8>, u64), MemtableRecord> = SkipMap::new();
+        mt2.insert(
+            (key.clone(), 10),
+            MemtableRecord::new(b"new-value".to_vec(), RecordType::Put, 10),
+        );
+        let r2 = write_component.flush(Arc::new(mt2)).await.unwrap();
+        let mut file = tokio::fs::File::create(&r2.sstable_path).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut file, &r2.data)
+            .await
+            .unwrap();
+        file.sync_all().await.unwrap();
+
+        // Read via new ReadManager (empty memtable)
+        let active_memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> =
+            Arc::new(SkipMap::new());
+        let manager = ReadManager::new(active_memtable, manifest);
+
+        let record = manager.get(key.clone(), 10).await.unwrap();
+        assert!(record.is_some(), "Should find the key in overlapping L0 files");
+        let record = record.unwrap();
+        assert_eq!(
+            record.value, b"new-value",
+            "Should return the value with the highest LSN"
+        );
+        assert_eq!(record.lsn, 10, "Should return LSN=10 (newest) not LSN=5");
     }
 }
