@@ -1,6 +1,7 @@
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
+use crate::error::DBError;
 use crate::storage::{
     manifest_codec::{ManifestManager, ManifestSnapshot, SSTableMeta},
     record::{MemtableRecord, RecordType},
@@ -31,7 +32,7 @@ impl ReadManager {
         &self,
         key: Vec<u8>,
         sequence_number: u64,
-    ) -> Result<Option<MemtableRecord>, std::io::Error> {
+    ) -> Result<Option<MemtableRecord>, DBError> {
         let in_mem = self
             .memtable
             .range((key.clone(), 0)..=(key.clone(), sequence_number))
@@ -61,7 +62,7 @@ impl ReadManager {
         manifest_snapshot: &ManifestSnapshot,
         key: &[u8],
         sequence_number: u64,
-    ) -> Result<Option<MemtableRecord>, std::io::Error> {
+    ) -> Result<Option<MemtableRecord>, DBError> {
         let mut levels: Vec<(&u32, &Vec<SSTableMeta>)> = manifest_snapshot.levels.iter().collect();
         levels.sort_by_key(|(level, _)| **level);
 
@@ -97,7 +98,7 @@ impl ReadManager {
         sstable: &SSTableMeta,
         key: &[u8],
         sequence_number: u64,
-    ) -> Result<Option<MemtableRecord>, std::io::Error> {
+    ) -> Result<Option<MemtableRecord>, DBError> {
         // Use cached file handle for OS page cache reuse.
         // try_clone() gives an independent handle with its own file position.
         let template = self.manifest.get_or_open_file(&sstable.path).await?;

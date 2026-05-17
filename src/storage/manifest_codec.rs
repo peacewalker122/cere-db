@@ -11,6 +11,7 @@ use tokio::{
     sync::Mutex,
 };
 
+use crate::error::DBError;
 use crate::storage::bloom::BloomFilterWrapper;
 
 const ENTRY_KIND_ADD: u8 = 1;
@@ -52,7 +53,7 @@ impl LruFileCache {
     /// Callers should use `handle.try_clone()` to get an independent handle
     /// with its own file position for reading.
     /// Updates LRU order on hit. Evicts oldest entry on miss if cache is full.
-    pub async fn get_or_open(&mut self, path: &str) -> Result<Arc<File>, std::io::Error> {
+    pub async fn get_or_open(&mut self, path: &str) -> Result<Arc<File>, DBError> {
         // Cache hit: update LRU order and return handle
         if self.handles.contains_key(path) {
             self.touch(path);
@@ -163,7 +164,7 @@ pub struct ManifestManager {
 }
 
 impl ManifestManager {
-    pub async fn load_or_create(manifest_path: PathBuf) -> Result<Self, std::io::Error> {
+    pub async fn load_or_create(manifest_path: PathBuf) -> Result<Self, DBError> {
         if let Some(parent) = manifest_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -174,7 +175,7 @@ impl ManifestManager {
                 tokio::fs::File::create(&manifest_path).await?;
                 Vec::new()
             }
-            Err(err) => return Err(err),
+            Err(err) => return Err(DBError::IO(err)),
         };
 
         let state = replay_manifest(&bytes)?;
@@ -186,17 +187,17 @@ impl ManifestManager {
         })
     }
 
-    pub async fn allocate_file_id(&self) -> Result<u64, std::io::Error> {
+    pub async fn allocate_file_id(&self) -> Result<u64, DBError> {
         let mut state = self.state.lock().await;
         let file_id = state.next_file_id;
         state.next_file_id = state
             .next_file_id
             .checked_add(1)
-            .ok_or_else(|| std::io::Error::other("manifest file id overflow"))?;
+            .ok_or_else(|| DBError::StorageError("manifest file id overflow".to_string()))?;
         Ok(file_id)
     }
 
-    pub async fn register_sstable(&self, meta: SSTableMeta) -> Result<(), std::io::Error> {
+    pub async fn register_sstable(&self, meta: SSTableMeta) -> Result<(), DBError> {
         let mut state = self.state.lock().await;
 
         let payload = encode_add_payload(&meta)?;
@@ -213,13 +214,13 @@ impl ManifestManager {
             state.next_file_id = meta
                 .file_id
                 .checked_add(1)
-                .ok_or_else(|| std::io::Error::other("manifest file id overflow"))?;
+                .ok_or_else(|| DBError::StorageError("manifest file id overflow".to_string()))?;
         }
 
         Ok(())
     }
 
-    pub async fn remove_sstable(&self, level: u32, file_id: u64) -> Result<(), std::io::Error> {
+    pub async fn remove_sstable(&self, level: u32, file_id: u64) -> Result<(), DBError> {
         let mut state = self.state.lock().await;
 
         // Get path before removing so we can evict from cache
@@ -253,7 +254,7 @@ impl ManifestManager {
         &self,
         checkpoint_lsn: u64,
         active_wal_segment: u64,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), DBError> {
         let mut state = self.state.lock().await;
 
         let payload = encode_checkpoint_payload(checkpoint_lsn, active_wal_segment);
@@ -286,7 +287,7 @@ impl ManifestManager {
     /// Callers should use `handle.try_clone()` to get an independent handle with its
     /// own file position for reading. This enables OS page cache reuse by keeping
     /// frequently accessed files open.
-    pub async fn get_or_open_file(&self, path: &str) -> Result<Arc<File>, std::io::Error> {
+    pub async fn get_or_open_file(&self, path: &str) -> Result<Arc<File>, DBError> {
         let mut cache = self.file_cache.lock().await;
         cache.get_or_open(path).await
     }
@@ -310,7 +311,7 @@ impl ManifestManager {
     }
 }
 
-async fn append_manifest_entry(path: &PathBuf, entry: &[u8]) -> Result<(), std::io::Error> {
+async fn append_manifest_entry(path: &PathBuf, entry: &[u8]) -> Result<(), DBError> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -323,7 +324,7 @@ async fn append_manifest_entry(path: &PathBuf, entry: &[u8]) -> Result<(), std::
     Ok(())
 }
 
-fn replay_manifest(data: &[u8]) -> Result<ManifestState, std::io::Error> {
+fn replay_manifest(data: &[u8]) -> Result<ManifestState, DBError> {
     let mut state = ManifestState::default();
     let mut offset = 0usize;
 
@@ -356,10 +357,9 @@ fn replay_manifest(data: &[u8]) -> Result<ManifestState, std::io::Error> {
                 state.active_wal_segment = active_wal_segment;
             }
             _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("unknown manifest entry kind: {kind}"),
-                ));
+                return Err(DBError::Corrupted(format!(
+                    "unknown manifest entry kind: {kind}"
+                )));
             }
         }
 
@@ -369,12 +369,9 @@ fn replay_manifest(data: &[u8]) -> Result<ManifestState, std::io::Error> {
     Ok(state)
 }
 
-fn encode_entry(kind: u8, payload: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+fn encode_entry(kind: u8, payload: &[u8]) -> Result<Vec<u8>, DBError> {
     let payload_len = u32::try_from(payload.len()).map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "manifest entry payload too large",
-        )
+        DBError::StorageError("manifest entry payload too large".to_string())
     })?;
 
     let mut bytes = Vec::with_capacity(1 + 4 + payload.len() + 4);
@@ -388,33 +385,28 @@ fn encode_entry(kind: u8, payload: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     Ok(bytes)
 }
 
-fn decode_entry(data: &[u8], offset: usize) -> Result<(u8, &[u8], usize), std::io::Error> {
+fn decode_entry(data: &[u8], offset: usize) -> Result<(u8, &[u8], usize), DBError> {
     let header_end = offset.checked_add(5).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "manifest offset overflow")
+        DBError::Corrupted("manifest offset overflow".to_string())
     })?;
     if header_end > data.len() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "truncated manifest entry header",
+        return Err(DBError::Corrupted(
+            "truncated manifest entry header".to_string(),
         ));
     }
 
     let kind = data[offset];
     let len = u32::from_be_bytes(data[offset + 1..offset + 5].try_into().unwrap()) as usize;
     let payload_end = header_end.checked_add(len).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "manifest payload overflow")
+        DBError::Corrupted("manifest payload overflow".to_string())
     })?;
     let checksum_end = payload_end.checked_add(4).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "manifest checksum overflow",
-        )
+        DBError::Corrupted("manifest checksum overflow".to_string())
     })?;
 
     if checksum_end > data.len() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "truncated manifest entry payload",
+        return Err(DBError::Corrupted(
+            "truncated manifest entry payload".to_string(),
         ));
     }
 
@@ -422,18 +414,15 @@ fn decode_entry(data: &[u8], offset: usize) -> Result<(u8, &[u8], usize), std::i
     let calculated_checksum = crc32fast::hash(&data[offset..payload_end]);
 
     if stored_checksum != calculated_checksum {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "manifest entry checksum mismatch: expected 0x{calculated_checksum:08X}, got 0x{stored_checksum:08X}"
-            ),
-        ));
+        return Err(DBError::Corrupted(format!(
+            "manifest entry checksum mismatch: expected 0x{calculated_checksum:08X}, got 0x{stored_checksum:08X}"
+        )));
     }
 
     Ok((kind, &data[header_end..payload_end], checksum_end))
 }
 
-fn encode_add_payload(meta: &SSTableMeta) -> Result<Vec<u8>, std::io::Error> {
+fn encode_add_payload(meta: &SSTableMeta) -> Result<Vec<u8>, DBError> {
     let mut payload = Vec::new();
     payload.extend_from_slice(&meta.level.to_be_bytes());
     payload.extend_from_slice(&meta.file_id.to_be_bytes());
@@ -447,7 +436,7 @@ fn encode_add_payload(meta: &SSTableMeta) -> Result<Vec<u8>, std::io::Error> {
     Ok(payload)
 }
 
-fn decode_add_payload(payload: &[u8]) -> Result<SSTableMeta, std::io::Error> {
+fn decode_add_payload(payload: &[u8]) -> Result<SSTableMeta, DBError> {
     let mut cursor = Cursor::new(payload);
 
     let level = read_u32(&mut cursor)?;
@@ -473,10 +462,7 @@ fn decode_add_payload(payload: &[u8]) -> Result<SSTableMeta, std::io::Error> {
         smallest_key,
         largest_key,
         record_count: usize::try_from(record_count).map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "record count does not fit usize",
-            )
+            DBError::Corrupted("record count does not fit usize".to_string())
         })?,
     })
 }
@@ -488,11 +474,10 @@ fn encode_remove_payload(level: u32, file_id: u64) -> Vec<u8> {
     payload
 }
 
-fn decode_remove_payload(payload: &[u8]) -> Result<(u32, u64), std::io::Error> {
+fn decode_remove_payload(payload: &[u8]) -> Result<(u32, u64), DBError> {
     if payload.len() != 12 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "remove payload length must be 12 bytes",
+        return Err(DBError::Corrupted(
+            "remove payload length must be 12 bytes".to_string(),
         ));
     }
 
@@ -508,11 +493,10 @@ fn encode_checkpoint_payload(checkpoint_lsn: u64, active_wal_segment: u64) -> Ve
     payload
 }
 
-fn decode_checkpoint_payload(payload: &[u8]) -> Result<(u64, u64), std::io::Error> {
+fn decode_checkpoint_payload(payload: &[u8]) -> Result<(u64, u64), DBError> {
     if payload.len() != 16 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "checkpoint payload length must be 16 bytes",
+        return Err(DBError::Corrupted(
+            "checkpoint payload length must be 16 bytes".to_string(),
         ));
     }
 
@@ -521,39 +505,36 @@ fn decode_checkpoint_payload(payload: &[u8]) -> Result<(u64, u64), std::io::Erro
     Ok((checkpoint_lsn, active_wal_segment))
 }
 
-fn push_bytes(buf: &mut Vec<u8>, value: &[u8]) -> Result<(), std::io::Error> {
+fn push_bytes(buf: &mut Vec<u8>, value: &[u8]) -> Result<(), DBError> {
     let len = u32::try_from(value.len()).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "field length exceeds u32")
+        DBError::StorageError("field length exceeds u32".to_string())
     })?;
     buf.extend_from_slice(&len.to_be_bytes());
     buf.extend_from_slice(value);
     Ok(())
 }
 
-fn read_vec(cursor: &mut Cursor<&[u8]>) -> Result<Vec<u8>, std::io::Error> {
+fn read_vec(cursor: &mut Cursor<&[u8]>) -> Result<Vec<u8>, DBError> {
     let len = read_u32(cursor)? as usize;
     let mut bytes = vec![0u8; len];
     cursor.read_exact(&mut bytes)?;
     Ok(bytes)
 }
 
-fn read_string(cursor: &mut Cursor<&[u8]>) -> Result<String, std::io::Error> {
+fn read_string(cursor: &mut Cursor<&[u8]>) -> Result<String, DBError> {
     let bytes = read_vec(cursor)?;
     String::from_utf8(bytes).map_err(|err| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("invalid UTF-8 in manifest path: {err}"),
-        )
+        DBError::Corrupted(format!("invalid UTF-8 in manifest path: {err}"))
     })
 }
 
-fn read_u32(cursor: &mut Cursor<&[u8]>) -> Result<u32, std::io::Error> {
+fn read_u32(cursor: &mut Cursor<&[u8]>) -> Result<u32, DBError> {
     let mut b = [0u8; 4];
     cursor.read_exact(&mut b)?;
     Ok(u32::from_be_bytes(b))
 }
 
-fn read_u64(cursor: &mut Cursor<&[u8]>) -> Result<u64, std::io::Error> {
+fn read_u64(cursor: &mut Cursor<&[u8]>) -> Result<u64, DBError> {
     let mut b = [0u8; 8];
     cursor.read_exact(&mut b)?;
     Ok(u64::from_be_bytes(b))
@@ -684,7 +665,7 @@ mod tests {
 
         let result = decode_entry(&entry, 0);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert!(matches!(result.unwrap_err(), DBError::Corrupted(_)));
     }
 
     // ===== LRU File Cache Tests =====
@@ -697,8 +678,14 @@ mod tests {
         std::fs::write(&file_path, b"hello").unwrap();
 
         let mut cache = LruFileCache::new(4);
-        let handle1 = cache.get_or_open(file_path.to_str().unwrap()).await.unwrap();
-        let handle2 = cache.get_or_open(file_path.to_str().unwrap()).await.unwrap();
+        let handle1 = cache
+            .get_or_open(file_path.to_str().unwrap())
+            .await
+            .unwrap();
+        let handle2 = cache
+            .get_or_open(file_path.to_str().unwrap())
+            .await
+            .unwrap();
 
         // Same Arc returned on cache hit
         assert!(Arc::ptr_eq(&handle1, &handle2));
@@ -811,23 +798,31 @@ mod tests {
         let sstable_path = temp_dir.join("sstable/level-0/test.dat");
         std::fs::write(&sstable_path, b"data").unwrap();
 
-        let manager = ManifestManager::load_or_create(manifest_path).await.unwrap();
+        let manager = ManifestManager::load_or_create(manifest_path)
+            .await
+            .unwrap();
 
         // Open file via cache
-        let _handle = manager.get_or_open_file(&sstable_path.to_string_lossy()).await.unwrap();
+        let _handle = manager
+            .get_or_open_file(&sstable_path.to_string_lossy())
+            .await
+            .unwrap();
         assert_eq!(manager.file_cache_len().await, 1);
 
         // Register and then remove
         let file_id = manager.allocate_file_id().await.unwrap();
-        manager.register_sstable(SSTableMeta {
-            file_id,
-            level: 0,
-            path: sstable_path.to_string_lossy().to_string(),
-            record_count: 1,
-            bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
-            smallest_key: b"a".to_vec(),
-            largest_key: b"z".to_vec(),
-        }).await.unwrap();
+        manager
+            .register_sstable(SSTableMeta {
+                file_id,
+                level: 0,
+                path: sstable_path.to_string_lossy().to_string(),
+                record_count: 1,
+                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                smallest_key: b"a".to_vec(),
+                largest_key: b"z".to_vec(),
+            })
+            .await
+            .unwrap();
 
         manager.remove_sstable(0, file_id).await.unwrap();
 

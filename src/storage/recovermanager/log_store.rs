@@ -1,3 +1,4 @@
+use crate::error::DBError;
 use crate::storage::record::RecordType;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,15 +31,14 @@ impl LogCommand {
         data
     }
 
-    pub fn deserialize(data: &[u8]) -> Result<Self, std::io::Error> {
+    pub fn deserialize(data: &[u8]) -> Result<Self, DBError> {
         let type_log_buf = data[0];
         let record_type = match type_log_buf {
             0 => RecordType::Put,
             1 => RecordType::Delete,
             _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid record type",
+                return Err(DBError::Corrupted(
+                    "Invalid record type".to_string(),
                 ));
             }
         };
@@ -73,7 +73,7 @@ pub struct LogPosition {
 
 #[async_trait::async_trait]
 pub trait LogStore: Send + Sync {
-    async fn append(&self, cmd: LogCommand) -> Result<LogPosition, std::io::Error>;
+    async fn append(&self, cmd: LogCommand) -> Result<LogPosition, DBError>;
 
     /// Follower replication path:
     /// Append leader entries durably, then stage them for commit-gated memtable apply.
@@ -81,7 +81,7 @@ pub trait LogStore: Send + Sync {
         &self,
         entries: Vec<LogCommand>,
         leader_commit_index: u64,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), DBError> {
         let _ = leader_commit_index;
         for entry in entries {
             self.append(entry).await?;
@@ -92,11 +92,11 @@ pub trait LogStore: Send + Sync {
     /// Returns newly committed entries that are ready to be applied into memtable.
     ///
     /// Default no-op keeps existing stores backward-compatible.
-    async fn sync_committed_entries_to_memtable(&self) -> Result<Vec<LogCommand>, std::io::Error> {
+    async fn sync_committed_entries_to_memtable(&self) -> Result<Vec<LogCommand>, DBError> {
         Ok(Vec::new())
     }
 
-    async fn recover_commands(&self) -> Result<Vec<LogCommand>, std::io::Error>;
-    async fn rotate(&self) -> Result<u64, std::io::Error>;
-    async fn mark_reserved(&self, segment_id: u64) -> Result<(), std::io::Error>;
+    async fn recover_commands(&self) -> Result<Vec<LogCommand>, DBError>;
+    async fn rotate(&self) -> Result<u64, DBError>;
+    async fn mark_reserved(&self, segment_id: u64) -> Result<(), DBError>;
 }

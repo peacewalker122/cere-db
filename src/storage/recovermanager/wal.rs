@@ -19,6 +19,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
 };
 
+use crate::error::DBError;
 use crate::storage::{constant::*, record::RecordType, recovermanager::segment::SegmentId};
 
 use super::log_store::{LogCommand, LogPosition, LogStore};
@@ -39,7 +40,7 @@ pub type FileWalStore = WALManager;
 
 // Additional methods for writing logs, reading logs, checkpointing, and recovery would go here
 impl WALManager {
-    pub async fn new(wal_dir: PathBuf, max_segment_size: u64) -> Result<Self, std::io::Error> {
+    pub async fn new(wal_dir: PathBuf, max_segment_size: u64) -> Result<Self, DBError> {
         let wal_files = std::fs::read_dir(&wal_dir)?;
 
         // retrieve the latest segment id from the wal_dir
@@ -115,7 +116,7 @@ impl WALManager {
         value: &Vec<u8>,
         lsn: u64,
         record_type: RecordType,
-    ) -> Result<u64, std::io::Error> {
+    ) -> Result<u64, DBError> {
         let mut wal_file = self.active_wal.write().await;
 
         // Check if current segment exceeds max size before writing
@@ -154,7 +155,7 @@ impl WALManager {
     pub async fn recover(
         &self,
         memtable: &mut SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), DBError> {
         let records = self.recover_records().await?;
 
         for record in records {
@@ -176,7 +177,7 @@ impl WALManager {
         Ok(())
     }
 
-    pub async fn recover_records(&self) -> Result<Vec<WALRecord>, std::io::Error> {
+    pub async fn recover_records(&self) -> Result<Vec<WALRecord>, DBError> {
         log::debug!("Starting WAL recovery from directory: {:?}", self.wal_dir);
 
         let mut wal_files = tokio::fs::read_dir(&self.wal_dir).await?;
@@ -212,7 +213,7 @@ impl WALManager {
         Ok(all_records)
     }
 
-    async fn create_new_wal_file(&self) -> Result<(), std::io::Error> {
+    async fn create_new_wal_file(&self) -> Result<(), DBError> {
         self.active_segment_id
             .0
             .fetch_add(1, atomic::Ordering::SeqCst);
@@ -231,7 +232,7 @@ impl WALManager {
         Ok(())
     }
 
-    pub async fn rotate_wal_file(&self) -> Result<u64, std::io::Error> {
+    pub async fn rotate_wal_file(&self) -> Result<u64, DBError> {
         // this will change the state of active wal into locked state and move the current active
         // wal file to the reserved / new wal file, and create a new wal file for the next write, the old wal file will be flushed to disk and can be deleted after the checkpoint is done
         let prev_segment_id = self.active_segment_id.0.load(atomic::Ordering::SeqCst);
@@ -279,7 +280,7 @@ impl WALManager {
     }
 
     // this will change the state of the wal file from sealed to reserved, and move the file handle to the reserved_wal queue, the file will be flushed to disk and can be deleted after the checkpoint is done
-    pub async fn change_to_reserve(&self, locked_wal: u64) -> Result<SegmentId, std::io::Error> {
+    pub async fn change_to_reserve(&self, locked_wal: u64) -> Result<SegmentId, DBError> {
         let mut sealed = self.sealed_wal.lock().await;
 
         if let Some(pos) = sealed.iter().position(|&id| id == locked_wal) {
@@ -287,14 +288,13 @@ impl WALManager {
             self.reserved_wal.lock().await.push_back(segment_id);
             Ok(SegmentId(AtomicU64::new(segment_id)))
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Locked WAL segment not found in sealed WAL list",
+            Err(DBError::StorageError(
+                "Locked WAL segment not found in sealed WAL list".to_string(),
             ))
         }
     }
 
-    async fn read_log(file_path: PathBuf) -> Result<Vec<WALRecord>, std::io::Error> {
+    async fn read_log(file_path: PathBuf) -> Result<Vec<WALRecord>, DBError> {
         let mut wal_file = TokioFile::open(file_path).await?;
         let mut buf = tokio::io::BufReader::with_capacity(64 * 1024, wal_file);
 
@@ -316,16 +316,15 @@ impl WALManager {
             match buf.read_exact(&mut record_type_buf).await {
                 Ok(_) => (),
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break, // reached end of file
-                Err(e) => return Err(e),
+                Err(e) => return Err(e.into()),
             };
 
             let record_type = match record_type_buf[0] {
                 1 => RecordType::Put,
                 2 => RecordType::Delete,
                 _ => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Invalid record type",
+                    return Err(DBError::Corrupted(
+                        "Invalid record type".to_string(),
                     ));
                 }
             };
@@ -336,7 +335,7 @@ impl WALManager {
                     log::warn!("Reached EOF while reading LSN, ending record parse");
                     break;
                 }
-                return Err(e);
+                return Err(e.into());
             }
             let lsn = u64::from_be_bytes(len_buf);
 
@@ -345,7 +344,7 @@ impl WALManager {
                     log::warn!("Reached EOF while reading key length, ending record parse");
                     break;
                 }
-                return Err(e);
+                return Err(e.into());
             }
             let key_len = u64::from_be_bytes(len_buf) as usize;
 
@@ -355,7 +354,7 @@ impl WALManager {
                     log::warn!("Reached EOF while reading key, ending record parse");
                     break;
                 }
-                return Err(e);
+                return Err(e.into());
             }
 
             if let Err(e) = buf.read_exact(&mut len_buf).await {
@@ -363,7 +362,7 @@ impl WALManager {
                     log::warn!("Reached EOF while reading value length, ending record parse");
                     break;
                 }
-                return Err(e);
+                return Err(e.into());
             }
             let value_len = u64::from_be_bytes(len_buf) as usize;
 
@@ -373,7 +372,7 @@ impl WALManager {
                     log::warn!("Reached EOF while reading value, ending record parse");
                     break;
                 }
-                return Err(e);
+                return Err(e.into());
             }
 
             let mut crc_buf = [0u8; 4];
@@ -382,7 +381,7 @@ impl WALManager {
                     log::warn!("Reached EOF while reading checksum, ending record parse");
                     break;
                 }
-                return Err(e);
+                return Err(e.into());
             }
             let checksum = u32::from_be_bytes(crc_buf);
 
@@ -402,9 +401,8 @@ impl WALManager {
                     checksum,
                     crc32fast::hash(&value_bytes)
                 );
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Checksum mismatch",
+                return Err(DBError::Corrupted(
+                    "Checksum mismatch".to_string(),
                 ));
             }
 
@@ -434,7 +432,7 @@ async fn encode_record(
     value: &Vec<u8>,
     record_type: u8,
     lsn: u64,
-) -> Result<Vec<u8>, std::io::Error> {
+) -> Result<Vec<u8>, DBError> {
     let mut buf = Vec::new();
 
     tokio::io::AsyncWriteExt::write_all(&mut buf, &record_type.to_be_bytes()).await?;
@@ -495,11 +493,10 @@ impl WALHeader {
     }
 
     /// Decode header from bytes
-    pub fn decode(buf: &Vec<u8>) -> Result<Self, std::io::Error> {
+    pub fn decode(buf: &Vec<u8>) -> Result<Self, DBError> {
         if buf.len() < WAL_HEADER_SIZE as usize {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "Buffer too short for WAL header",
+            return Err(DBError::Corrupted(
+                "Buffer too short for WAL header".to_string(),
             ));
         }
 
@@ -507,9 +504,8 @@ impl WALHeader {
         magic.copy_from_slice(&buf[0..8]);
 
         if &magic != WAL_MAGIC {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid WAL magic number",
+            return Err(DBError::Corrupted(
+                "Invalid WAL magic number".to_string(),
             ));
         }
 
@@ -531,9 +527,8 @@ impl WALHeader {
         hash.update(&buf[0..32]);
 
         if checksum != hash.finalize() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "WAL header checksum mismatch",
+            return Err(DBError::Corrupted(
+                "WAL header checksum mismatch".to_string(),
             ));
         }
 
@@ -559,14 +554,14 @@ impl Default for WALHeader {
 
 #[async_trait::async_trait]
 impl LogStore for WALManager {
-    async fn append(&self, cmd: LogCommand) -> Result<LogPosition, std::io::Error> {
+    async fn append(&self, cmd: LogCommand) -> Result<LogPosition, DBError> {
         let lsn = self
             .write_log(&cmd.key, &cmd.value, cmd.lsn, cmd.record_type)
             .await?;
         Ok(LogPosition { lsn })
     }
 
-    async fn recover_commands(&self) -> Result<Vec<LogCommand>, std::io::Error> {
+    async fn recover_commands(&self) -> Result<Vec<LogCommand>, DBError> {
         let records = self.recover_records().await?;
         let mut out = Vec::with_capacity(records.len());
 
@@ -588,11 +583,11 @@ impl LogStore for WALManager {
         Ok(out)
     }
 
-    async fn rotate(&self) -> Result<u64, std::io::Error> {
+    async fn rotate(&self) -> Result<u64, DBError> {
         self.rotate_wal_file().await
     }
 
-    async fn mark_reserved(&self, segment_id: u64) -> Result<(), std::io::Error> {
+    async fn mark_reserved(&self, segment_id: u64) -> Result<(), DBError> {
         let _ = self.change_to_reserve(segment_id).await?;
         Ok(())
     }

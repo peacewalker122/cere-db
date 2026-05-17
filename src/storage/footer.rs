@@ -54,7 +54,7 @@ impl SSTableFooter {
         buf
     }
 
-    pub fn decode<R: Read + Seek>(mut reader: R) -> Result<Self, std::io::Error> {
+    pub fn decode<R: Read + Seek>(mut reader: R) -> Result<Self, DBError> {
         log::debug!("Decoding SSTable footer...");
         let mut buf = [0u8; 8];
         let mut footer_data = Vec::with_capacity(60); // All data except final checksum
@@ -98,13 +98,10 @@ impl SSTableFooter {
         let magic = u32::from_be_bytes(magic_buf);
 
         if magic != MAGIC_NUMBER {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Invalid magic number: expected 0x{:X}, got 0x{:X}",
-                    MAGIC_NUMBER, magic
-                ),
-            ));
+            return Err(DBError::Corrupted(format!(
+                "Invalid magic number: expected 0x{:X}, got 0x{:X}",
+                MAGIC_NUMBER, magic
+            )));
         }
 
         // Verify footer checksum
@@ -113,13 +110,10 @@ impl SSTableFooter {
         let calculated_checksum = crc32fast::hash(&footer_data);
 
         if stored_checksum != calculated_checksum {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Footer checksum mismatch: expected 0x{:X}, got 0x{:X}",
-                    calculated_checksum, stored_checksum
-                ),
-            ));
+            return Err(DBError::Corrupted(format!(
+                "Footer checksum mismatch: expected 0x{:X}, got 0x{:X}",
+                calculated_checksum, stored_checksum
+            )));
         }
 
         Ok(SSTableFooter {
@@ -136,7 +130,7 @@ impl SSTableFooter {
 
     pub async fn async_decode<R: AsyncRead + AsyncSeek + Unpin>(
         mut reader: &mut R,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<Self, DBError> {
         reader.seek(SeekFrom::End(-(FOOTER_SIZE as i64))).await?;
         let mut buf = vec![0u8; FOOTER_SIZE as usize];
         tokio::io::AsyncReadExt::read_exact(&mut reader, &mut buf).await?;
@@ -147,16 +141,13 @@ impl SSTableFooter {
 }
 
 /// Helper to verify bloom filter checksum
-pub fn verify_bloom_checksum(data: &[u8], expected: u32) -> Result<(), std::io::Error> {
+pub fn verify_bloom_checksum(data: &[u8], expected: u32) -> Result<(), DBError> {
     let calculated = crc32fast::hash(data);
     if calculated != expected {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "Bloom filter checksum mismatch: expected 0x{:X}, got 0x{:X}",
-                expected, calculated
-            ),
-        ));
+        return Err(DBError::Corrupted(format!(
+            "Bloom filter checksum mismatch: expected 0x{:X}, got 0x{:X}",
+            expected, calculated
+        )));
     }
     Ok(())
 }
@@ -166,37 +157,28 @@ pub fn verify_bloom_checksum(data: &[u8], expected: u32) -> Result<(), std::io::
 pub fn decode_record_from_file(
     reader: &[u8],
     mut offset: usize,
-) -> Result<(Vec<u8>, Vec<u8>, RecordType, usize), std::io::Error> {
+) -> Result<(Vec<u8>, Vec<u8>, RecordType, usize), DBError> {
     // Read record type
 
     let record_type = match reader[offset as usize] {
         1 => RecordType::Put,
         2 => RecordType::Delete,
         _ => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid record type",
-            ));
+            return Err(DBError::Corrupted("Invalid record type".to_string()));
         }
     };
     offset += 1;
 
     // Read key length
     let mut len_buf: [u8; 8] = reader[offset..offset + 8].try_into().map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("Failed to read key length: {:?}", e),
-        )
+        DBError::StorageError(format!("Failed to read key length: {:?}", e))
     })?;
     let key_len = u64::from_be_bytes(len_buf) as usize;
     offset += 8;
 
     // Read value length
     len_buf = reader[offset..offset + 8].try_into().map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("Failed to read value length: {:?}", e),
-        )
+        DBError::StorageError(format!("Failed to read value length: {:?}", e))
     })?;
     let value_len = u64::from_be_bytes(len_buf) as usize;
     offset += 8;
@@ -211,18 +193,12 @@ pub fn decode_record_from_file(
 
     // Read and verify checksum
     let checksum_buf: [u8; 4] = reader[offset..offset + 4].try_into().or_else(|e| {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("Failed to read checksum: {:?}", e),
-        ))
+        Err(DBError::StorageError(format!("Failed to read checksum: {:?}", e)))
     })?;
     let checksum = u32::from_be_bytes(checksum_buf);
 
     if crc32fast::hash(&value) != checksum {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Checksum mismatch",
-        ));
+        return Err(DBError::Corrupted("Checksum mismatch".to_string()));
     }
 
     // Calculate next offset
@@ -232,7 +208,7 @@ pub fn decode_record_from_file(
 }
 
 /// Read the footer from an SSTable file
-pub fn read_sstable_footer<R: Read + Seek>(mut reader: R) -> Result<SSTableFooter, std::io::Error> {
+pub fn read_sstable_footer<R: Read + Seek>(mut reader: R) -> Result<SSTableFooter, DBError> {
     // Seek to footer location (last FOOTER_SIZE bytes)
     reader.seek(SeekFrom::End(-(FOOTER_SIZE as i64)))?;
     SSTableFooter::decode(reader)
@@ -242,7 +218,7 @@ pub fn read_sstable_footer<R: Read + Seek>(mut reader: R) -> Result<SSTableFoote
 pub fn read_sstable_sparse_index<R: Read + Seek>(
     mut reader: R,
     footer: &SSTableFooter,
-) -> Result<Vec<crate::storage::index::SparseIndexEntry>, std::io::Error> {
+) -> Result<Vec<crate::storage::index::SparseIndexEntry>, DBError> {
     use crate::storage::index::{SparseIndexEntry, verify_index_checksum};
 
     // Calculate index block size
@@ -278,7 +254,7 @@ pub fn read_sstable_sparse_index<R: Read + Seek>(
 pub fn read_sstable_index<R: Read + Seek>(
     mut reader: R,
     footer: &SSTableFooter,
-) -> Result<BTreeMap<Vec<u8>, u64>, std::io::Error> {
+) -> Result<BTreeMap<Vec<u8>, u64>, DBError> {
     use crate::storage::index::{IndexEntry, verify_index_checksum};
 
     // Calculate index block size
@@ -314,7 +290,7 @@ pub fn read_sstable_index<R: Read + Seek>(
 pub fn read_sstable_bloom<R: Read + Seek>(
     mut reader: R,
     footer: &SSTableFooter,
-) -> Result<BloomFilterWrapper, std::io::Error> {
+) -> Result<BloomFilterWrapper, DBError> {
     // Calculate bloom filter block size
     let bloom_size = footer.bloom_block_end - footer.bloom_block_start;
 

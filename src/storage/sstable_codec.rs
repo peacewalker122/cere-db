@@ -2,6 +2,7 @@ use std::io::{Cursor, SeekFrom};
 
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 
+use crate::error::DBError;
 use crate::storage::{
     bloom::BloomFilterWrapper, footer::SSTableFooter, index::SparseIndexEntry,
     writemanager::block::Block,
@@ -111,7 +112,7 @@ impl SSTableCodec {
     /// Deserialize footer + sparse index + bloom sections together.
     pub async fn deserialize_sections<R: AsyncRead + AsyncSeek + Unpin>(
         mut reader: &mut R,
-    ) -> Result<(SSTableFooter, Vec<SparseIndexEntry>, BloomFilterWrapper), std::io::Error> {
+    ) -> Result<(SSTableFooter, Vec<SparseIndexEntry>, BloomFilterWrapper), DBError> {
         // get the footer first to know where the index and bloom sections are
 
         // reader.seek(SeekFrom::End(-(FOOTER_SIZE as i64))).await?;
@@ -154,7 +155,7 @@ impl SSTableCodec {
     /// keeping block payload out of memory.
     pub async fn deserialize<R: AsyncBufRead + AsyncSeek + Unpin>(
         reader: &mut R,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<Self, DBError> {
         let (footer, index, bloom) = Self::deserialize_sections(reader).await?;
 
         Ok(Self {
@@ -166,7 +167,7 @@ impl SSTableCodec {
 
     pub async fn deserialize_footer<R: AsyncRead + AsyncSeek + Unpin>(
         reader: &mut R,
-    ) -> Result<SSTableFooter, std::io::Error> {
+    ) -> Result<SSTableFooter, DBError> {
         SSTableFooter::async_decode(reader).await
     }
 
@@ -174,7 +175,7 @@ impl SSTableCodec {
         reader: &mut R,
         footer: &SSTableFooter,
         index: &[SparseIndexEntry],
-    ) -> Result<Vec<Block>, std::io::Error> {
+    ) -> Result<Vec<Block>, DBError> {
         let mut blocks = Vec::new();
         for entry in index.iter() {
             let block = Self::get_block(reader, footer, index, &entry.first_key).await?;
@@ -198,7 +199,7 @@ impl SSTableCodec {
         footer: &SSTableFooter,
         index: &[SparseIndexEntry],
         key: &[u8],
-    ) -> Result<Block, std::io::Error> {
+    ) -> Result<Block, DBError> {
         // find the right block using the sparse index
         let index_position = match index.binary_search_by(|entry| {
             if key < entry.first_key.as_slice() {
@@ -212,9 +213,8 @@ impl SSTableCodec {
             Ok(pos) => pos,
             Err(pos) => {
                 if pos == 0 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "key is smaller than the first key in the index",
+                    return Err(DBError::StorageError(
+                        "key is smaller than the first key in the index".to_string(),
                     ));
                 }
                 pos - 1
@@ -229,9 +229,8 @@ impl SSTableCodec {
         };
 
         if end < start {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid block range in sparse index",
+            return Err(DBError::Corrupted(
+                "invalid block range in sparse index".to_string(),
             ));
         }
 
@@ -249,11 +248,10 @@ impl SSTableCodec {
     }
 }
 
-fn decode_sparse_index(index_block: &[u8]) -> Result<Vec<SparseIndexEntry>, std::io::Error> {
+fn decode_sparse_index(index_block: &[u8]) -> Result<Vec<SparseIndexEntry>, DBError> {
     if index_block.len() < 8 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "Index block too small",
+        return Err(DBError::Corrupted(
+            "Index block too small".to_string(),
         ));
     }
 
