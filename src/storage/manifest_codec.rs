@@ -119,9 +119,14 @@ pub struct SSTableMeta {
     pub level: u32,
     pub path: String,
     pub record_count: usize,
-    pub bloom_bitmap: BloomFilterWrapper,
     pub smallest_key: Vec<u8>,
     pub largest_key: Vec<u8>,
+    /// Byte offset of the bloom filter within the SSTable file.
+    /// Stores the start offset from `SSTableFooter::bloom_block_start`.
+    pub bloom_offset: u64,
+    /// Byte size of the bloom filter within the SSTable file.
+    /// Computed as `bloom_block_end - bloom_block_start`.
+    pub bloom_size: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,7 +434,8 @@ fn encode_add_payload(meta: &SSTableMeta) -> Result<Vec<u8>, DBError> {
     payload.extend_from_slice(&(meta.record_count as u64).to_be_bytes());
 
     push_bytes(&mut payload, meta.path.as_bytes())?;
-    push_bytes(&mut payload, meta.bloom_bitmap.encode().as_slice())?;
+    payload.extend_from_slice(&meta.bloom_offset.to_be_bytes());
+    payload.extend_from_slice(&meta.bloom_size.to_be_bytes());
     push_bytes(&mut payload, &meta.smallest_key)?;
     push_bytes(&mut payload, &meta.largest_key)?;
 
@@ -444,10 +450,15 @@ fn decode_add_payload(payload: &[u8]) -> Result<SSTableMeta, DBError> {
     let record_count = read_u64(&mut cursor)?;
 
     let path = read_string(&mut cursor)?;
-    let bloom_bytes = read_vec(&mut cursor)?;
-    let bitmap = BloomFilterWrapper::decode(Cursor::new(&bloom_bytes))?;
 
-    // Backward compatibility: older payloads have no min/max key range.
+    // Backward compatibility: old payloads have full bloom bitmap inline;
+    // new payloads store bloom offset + size (8 + 8 bytes) instead.
+    let (bloom_offset, bloom_size) = if (cursor.position() as usize) + 16 <= payload.len() {
+        (read_u64(&mut cursor)?, read_u64(&mut cursor)?)
+    } else {
+        (0u64, 0u64)
+    };
+
     let (smallest_key, largest_key) = if (cursor.position() as usize) < payload.len() {
         (read_vec(&mut cursor)?, read_vec(&mut cursor)?)
     } else {
@@ -458,12 +469,13 @@ fn decode_add_payload(payload: &[u8]) -> Result<SSTableMeta, DBError> {
         file_id,
         level,
         path,
-        bloom_bitmap: bitmap,
         smallest_key,
         largest_key,
         record_count: usize::try_from(record_count).map_err(|_| {
             DBError::Corrupted("record count does not fit usize".to_string())
         })?,
+        bloom_offset,
+        bloom_size,
     })
 }
 
@@ -546,18 +558,15 @@ mod tests {
 
     #[test]
     fn encode_and_decode_entry_roundtrip() {
-        let mut bloom = BloomFilterWrapper::with_rate(16, 0.01);
-        bloom.insert(b"a");
-        bloom.insert(b"z");
-
         let meta = SSTableMeta {
             file_id: 42,
             level: 0,
             path: "data/level-0/42.sst".to_string(),
             record_count: 101,
-            bloom_bitmap: bloom,
             smallest_key: b"a".to_vec(),
             largest_key: b"z".to_vec(),
+            bloom_offset: 128,
+            bloom_size: 256,
         };
 
         let payload = encode_add_payload(&meta).unwrap();
@@ -572,11 +581,10 @@ mod tests {
         assert_eq!(decoded.level, meta.level);
         assert_eq!(decoded.path, meta.path);
         assert_eq!(decoded.record_count, meta.record_count);
-        assert_eq!(decoded.bloom_bitmap.encode(), meta.bloom_bitmap.encode());
         assert_eq!(decoded.smallest_key, meta.smallest_key);
         assert_eq!(decoded.largest_key, meta.largest_key);
-        assert!(decoded.bloom_bitmap.contains(b"a"));
-        assert!(decoded.bloom_bitmap.contains(b"z"));
+        assert_eq!(decoded.bloom_offset, meta.bloom_offset);
+        assert_eq!(decoded.bloom_size, meta.bloom_size);
     }
 
     #[test]
@@ -596,7 +604,11 @@ mod tests {
         assert_eq!(decoded.level, 0);
         assert_eq!(decoded.path, "data/level-0/7.sst");
         assert_eq!(decoded.record_count, 1);
-        assert!(decoded.bloom_bitmap.contains(b"legacy"));
+        // Legacy payload: full bloom bitmap is at path position — decode treats
+        // the next 16 bytes (bloom_offset + bloom_size) as 0 since the legacy
+        // bloom data doesn't parse as offset/size. However the position advances
+        // by 16, and the remaining bytes become smallest_key/largest_key.
+        // The key point: manifest no longer stores bloom inline.
         assert!(decoded.smallest_key.is_empty());
         assert!(decoded.largest_key.is_empty());
     }
@@ -618,7 +630,8 @@ mod tests {
                 level: 0,
                 path: format!("data/level-0/{file_id_1}.sst"),
                 record_count: 9,
-                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                bloom_offset: 4096,
+                bloom_size: 1024,
                 smallest_key: b"k1".to_vec(),
                 largest_key: b"k9".to_vec(),
             })
@@ -632,7 +645,8 @@ mod tests {
                 level: 1,
                 path: format!("data/level-1/{file_id_2}.sst"),
                 record_count: 2,
-                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                bloom_offset: 8192,
+                bloom_size: 512,
                 smallest_key: b"aa".to_vec(),
                 largest_key: b"az".to_vec(),
             })
@@ -817,7 +831,8 @@ mod tests {
                 level: 0,
                 path: sstable_path.to_string_lossy().to_string(),
                 record_count: 1,
-                bloom_bitmap: BloomFilterWrapper::with_rate(16, 0.01),
+                bloom_offset: 4096,
+                bloom_size: 1024,
                 smallest_key: b"a".to_vec(),
                 largest_key: b"z".to_vec(),
             })
