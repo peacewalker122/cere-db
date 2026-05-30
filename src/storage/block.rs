@@ -2,6 +2,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 use crate::{error::DBError, storage::record::Record};
 
+use super::checksum::{calculate_crc32, verify_crc32};
 use super::constant::SSTABLE_BLOCK_SIZE;
 
 /// A fixed-size block (4KB) containing sorted key-value records
@@ -74,6 +75,7 @@ impl BlockBuilder {
     }
 
     /// Finalize the current block and return its metadata and data
+    /// The returned block_data has format: [header][record_data][4-byte-crc32]
     pub fn build(self) -> Option<(Block, Vec<u8>)> {
         if self.data.is_empty() {
             return None;
@@ -88,10 +90,17 @@ impl BlockBuilder {
             data: None,
         };
 
-        // prepend the block header to the data
+        // Construct block data: [header][record_data]
         let mut block_data = Vec::new();
-        block_data.extend_from_slice(&block.encode());
+        let header = block.encode();
+        block_data.extend_from_slice(&header);
         block_data.extend_from_slice(&self.data);
+
+        // Calculate CRC32 of the complete block data (header + records)
+        let checksum = calculate_crc32(&block_data);
+
+        // Append the 4-byte CRC32 checksum to the block
+        block_data.extend_from_slice(&checksum.to_be_bytes());
 
         Some((block, block_data))
     }
@@ -131,38 +140,87 @@ impl Block {
     }
 
     pub fn decode<T: Read + Seek>(data: &mut T, offset: u64) -> Result<Self, DBError> {
-        // 1. Move the cursor (purely for state consistency, though we use slice offsets)
+        // 1. Move the cursor to the starting offset
         data.seek(SeekFrom::Start(offset))?;
 
-        // 2. Decode First Key
+        // 2. Read the block header to determine sizes
         let mut len_buf = [0u8; 4];
         data.read_exact(&mut len_buf)?;
         let first_key_len = u32::from_be_bytes(len_buf) as usize;
 
+        // We need to read the entire block to verify checksum
+        // For now, read header, determine total size, then read and verify
+        // This is a simplified approach - in production you might read fixed-size chunks
+
+        // Seek back to start to read the full block
+        data.seek(SeekFrom::Start(offset))?;
+
+        // Read enough bytes to get header information
+        let mut header_buf = vec![0u8; 4]; // first_key_len
+        data.read_exact(&mut header_buf)?;
+        let first_key_len =
+            u32::from_be_bytes([header_buf[0], header_buf[1], header_buf[2], header_buf[3]])
+                as usize;
+
+        // Read first key
         let mut first_key = vec![0u8; first_key_len];
         data.read_exact(&mut first_key)?;
 
-        // 3. Decode Last Key
+        // Read last_key_len
+        let mut len_buf = [0u8; 4];
         data.read_exact(&mut len_buf)?;
         let last_key_len = u32::from_be_bytes(len_buf) as usize;
 
+        // Read last key
         let mut last_key = vec![0u8; last_key_len];
         data.read_exact(&mut last_key)?;
 
-        // 4. Decode record_count and data_size
-        // Both are u32 as per the struct definition
+        // Read record_count and data_size
         data.read_exact(&mut len_buf)?;
         let record_count = u32::from_be_bytes(len_buf);
 
         data.read_exact(&mut len_buf)?;
         let data_size = u32::from_be_bytes(len_buf);
 
+        // Read the record data
+        let mut record_data = vec![0u8; data_size as usize];
+        data.read_exact(&mut record_data)?;
+
+        // Read the checksum (last 4 bytes of the block)
+        let mut checksum_buf = [0u8; 4];
+        data.read_exact(&mut checksum_buf)?;
+        let stored_checksum = u32::from_be_bytes(checksum_buf);
+
+        // 3. Reconstruct the block data for checksum verification
+        // The checksum covers: [header][record_data]
+        let mut block_data_for_checksum = Vec::new();
+
+        // Reconstruct header
+        let header_len_bytes = (first_key_len as u32).to_be_bytes();
+        block_data_for_checksum.extend_from_slice(&header_len_bytes);
+        block_data_for_checksum.extend_from_slice(&first_key);
+
+        let last_key_len_bytes = (last_key_len as u32).to_be_bytes();
+        block_data_for_checksum.extend_from_slice(&last_key_len_bytes);
+        block_data_for_checksum.extend_from_slice(&last_key);
+
+        let record_count_bytes = record_count.to_be_bytes();
+        block_data_for_checksum.extend_from_slice(&record_count_bytes);
+
+        let data_size_bytes = data_size.to_be_bytes();
+        block_data_for_checksum.extend_from_slice(&data_size_bytes);
+
+        // Add the record data
+        block_data_for_checksum.extend_from_slice(&record_data);
+
+        // 4. Verify checksum
+        verify_crc32(&block_data_for_checksum, stored_checksum)?;
+
+        // 5. Decode records from the record data
+        let mut cursor = std::io::Cursor::new(record_data);
         let mut records = Vec::with_capacity(record_count as usize);
         for _ in 0..record_count {
-            // we want to traverse and decode each record that available in
-            // this block
-
-            let record = Record::decode(data)?;
+            let record = Record::decode(&mut cursor)?;
             records.push(record);
         }
 
@@ -170,8 +228,8 @@ impl Block {
 
         Ok(Block {
             offset,
-            first_key: first_key.to_vec(),
-            last_key: last_key.to_vec(),
+            first_key,
+            last_key,
             record_count,
             data_size,
             data: Some(records),
@@ -490,12 +548,12 @@ mod tests {
         // Assert: Cursor should start at 0 and advance to header_size + data_size
         assert_eq!(initial_pos, 0, "Initial cursor position should be 0");
 
-        // Calculate expected position: header size + data size
+        // Calculate expected position: header + data + 4-byte CRC32 checksum
         // Header size = 4 (first_key_len) + first_key.len() + 4 (last_key_len) + last_key.len() + 4 (record_count) + 4 (data_size)
-        let expected_pos = block_metadata.encode().len() + block_metadata.data_size as usize;
+        let expected_pos = block_metadata.encode().len() + block_metadata.data_size as usize + 4;
         assert_eq!(
             final_pos as usize, expected_pos,
-            "Cursor should advance to header_size + data_size"
+            "Cursor should advance to header_size + data_size + checksum"
         );
 
         // Also verify block.data was populated
@@ -577,5 +635,221 @@ mod tests {
             result.is_err(),
             "Decode should fail when record_count exceeds actual records"
         );
+    }
+
+    #[test]
+    fn test_block_builder_appends_checksum() {
+        // Arrange: Create a block with a record
+        let mut builder = BlockBuilder::new(0);
+        let record = Record::new(
+            b"test_key".to_vec(),
+            b"test_value".to_vec(),
+            RecordType::Put,
+            1000,
+        );
+        builder.add_record(&record).unwrap();
+
+        // Act: Build the block
+        let (_, block_data) = builder.build().unwrap();
+
+        // Assert: Block data should be at least 8 bytes (minimum header + checksum)
+        assert!(
+            block_data.len() >= 8,
+            "Block data should include header and checksum"
+        );
+
+        // Extract the last 4 bytes as checksum
+        let checksum_bytes = &block_data[block_data.len() - 4..];
+        let stored_checksum = u32::from_be_bytes([
+            checksum_bytes[0],
+            checksum_bytes[1],
+            checksum_bytes[2],
+            checksum_bytes[3],
+        ]);
+
+        // The stored checksum should be non-zero for non-empty block
+        assert_ne!(
+            stored_checksum, 0,
+            "Checksum should be non-zero for block data"
+        );
+
+        // Verify that the checksum covers the data portion (excluding checksum itself)
+        let data_without_checksum = &block_data[..block_data.len() - 4];
+        let calculated_checksum = calculate_crc32(data_without_checksum);
+
+        assert_eq!(
+            stored_checksum, calculated_checksum,
+            "Stored checksum should match calculated CRC32 of block data"
+        );
+    }
+
+    #[test]
+    fn test_block_checksum_covers_entire_block() {
+        // Arrange: Create a block with multiple records
+        let mut builder = BlockBuilder::new(0);
+        let record1 = Record::new(b"key1".to_vec(), b"value1".to_vec(), RecordType::Put, 1000);
+        let record2 = Record::new(b"key2".to_vec(), b"value2".to_vec(), RecordType::Put, 1001);
+        builder.add_record(&record1).unwrap();
+        builder.add_record(&record2).unwrap();
+
+        // Act: Build the block
+        let (_, block_data) = builder.build().unwrap();
+
+        // Assert: Extract and verify checksum
+        let checksum_bytes = &block_data[block_data.len() - 4..];
+        let stored_checksum = u32::from_be_bytes([
+            checksum_bytes[0],
+            checksum_bytes[1],
+            checksum_bytes[2],
+            checksum_bytes[3],
+        ]);
+
+        let data_without_checksum = &block_data[..block_data.len() - 4];
+        let calculated_checksum = calculate_crc32(data_without_checksum);
+
+        assert_eq!(stored_checksum, calculated_checksum);
+
+        // Verify that checksum is sensitive to data changes
+        let mut modified_data = block_data.clone();
+        if modified_data.len() > 4 {
+            // Flip a bit in the data portion (not the checksum)
+            modified_data[5] ^= 0x01;
+        }
+
+        // Recalculate CRC32 on modified data (excluding the stored checksum)
+        let modified_data_without_checksum = &modified_data[..modified_data.len() - 4];
+        let recalculated_checksum = calculate_crc32(modified_data_without_checksum);
+
+        // Recalculated checksum should differ from the original stored checksum
+        assert_ne!(recalculated_checksum, stored_checksum);
+    }
+
+    #[test]
+    fn test_block_decode_verifies_checksum() {
+        // Arrange: Create a valid block with checksum
+        let mut builder = BlockBuilder::new(0);
+        let record = Record::new(
+            b"test_key".to_vec(),
+            b"test_value".to_vec(),
+            RecordType::Put,
+            1000,
+        );
+        builder.add_record(&record).unwrap();
+        let (_, valid_block_data) = builder.build().unwrap();
+
+        // Act: Decode the valid block
+        let mut cursor = Cursor::new(valid_block_data.clone());
+        let result = Block::decode(&mut cursor, 0);
+
+        // Assert: Decoding should succeed
+        assert!(result.is_ok(), "Valid block should decode successfully");
+        let decoded_block = result.unwrap();
+        assert_eq!(decoded_block.record_count, 1);
+        assert!(decoded_block.data.is_some());
+    }
+
+    #[test]
+    fn test_block_decode_detects_corruption() {
+        // Arrange: Create a valid block, then corrupt a byte in the data
+        let mut builder = BlockBuilder::new(0);
+        let record = Record::new(
+            b"test_key".to_vec(),
+            b"test_value".to_vec(),
+            RecordType::Put,
+            1000,
+        );
+        builder.add_record(&record).unwrap();
+        let (_, mut corrupted_data) = builder.build().unwrap();
+
+        // Corrupt a byte in the middle of the block (but not in the checksum)
+        if corrupted_data.len() > 8 {
+            corrupted_data[10] ^= 0xFF; // Flip all bits in byte at offset 10
+        }
+
+        // Act: Try to decode the corrupted block
+        let mut cursor = Cursor::new(corrupted_data);
+        let result = Block::decode(&mut cursor, 0);
+
+        // Assert: Decoding should fail with Corrupted error
+        assert!(result.is_err(), "Corrupted block should fail to decode");
+
+        if let Err(DBError::Corrupted(msg)) = result {
+            assert!(
+                msg.contains("CRC32 mismatch"),
+                "Error message should indicate CRC32 mismatch: {}",
+                msg
+            );
+        } else {
+            panic!("Expected DBError::Corrupted, got: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_block_decode_detects_checksum_corruption() {
+        // Arrange: Create a valid block
+        let mut builder = BlockBuilder::new(0);
+        let record = Record::new(b"key".to_vec(), b"value".to_vec(), RecordType::Put, 1000);
+        builder.add_record(&record).unwrap();
+        let (_, mut block_data) = builder.build().unwrap();
+
+        // Corrupt the checksum itself (last 4 bytes)
+        if block_data.len() >= 4 {
+            let last_index = block_data.len() - 4;
+            block_data[last_index] ^= 0xFF;
+        }
+
+        // Act: Try to decode
+        let mut cursor = Cursor::new(block_data);
+        let result = Block::decode(&mut cursor, 0);
+
+        // Assert: Should fail due to checksum mismatch
+        assert!(
+            result.is_err(),
+            "Block with corrupted checksum should fail to decode"
+        );
+    }
+
+    #[test]
+    fn test_block_encode_decode_roundtrip_with_checksum() {
+        // Arrange: Create a block with multiple records
+        let mut builder = BlockBuilder::new(0);
+        let records_input = vec![
+            Record::new(b"apple".to_vec(), b"fruit1".to_vec(), RecordType::Put, 1000),
+            Record::new(
+                b"banana".to_vec(),
+                b"fruit2".to_vec(),
+                RecordType::Put,
+                1001,
+            ),
+            Record::new(
+                b"cherry".to_vec(),
+                b"fruit3".to_vec(),
+                RecordType::Put,
+                1002,
+            ),
+        ];
+
+        for record in &records_input {
+            builder.add_record(record).unwrap();
+        }
+        let (_, block_data) = builder.build().unwrap();
+
+        // Act: Decode the block
+        let mut cursor = Cursor::new(block_data);
+        let decoded_block =
+            Block::decode(&mut cursor, 0).expect("Block should decode successfully");
+
+        // Assert: Verify all records are present and intact
+        assert_eq!(decoded_block.record_count as usize, records_input.len());
+        let records = decoded_block.data.unwrap();
+        assert_eq!(records.len(), records_input.len());
+
+        // Verify each record (they're sorted by key)
+        assert_eq!(records[0].key, b"apple");
+        assert_eq!(records[0].value, b"fruit1");
+        assert_eq!(records[1].key, b"banana");
+        assert_eq!(records[1].value, b"fruit2");
+        assert_eq!(records[2].key, b"cherry");
+        assert_eq!(records[2].value, b"fruit3");
     }
 }

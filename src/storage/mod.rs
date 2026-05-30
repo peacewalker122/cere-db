@@ -1,5 +1,6 @@
 pub mod block;
 pub mod bloom;
+pub mod checksum;
 pub mod compactionmanager;
 pub mod config;
 pub mod constant;

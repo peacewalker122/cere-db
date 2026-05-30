@@ -2,6 +2,7 @@ use crate::{
     api::api::{AsyncKVEngine, KVEngine},
     error::DBError,
 };
+use std::ops::RangeBounds;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -214,6 +215,30 @@ mod tests {
         async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
             self.data.remove(&key);
             Ok(())
+        }
+
+        async fn scan(
+            &self,
+            range: impl RangeBounds<Vec<u8>> + Send,
+        ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
+            use std::ops::Bound;
+            let mut results = Vec::new();
+            for (key, value) in &self.data {
+                let in_range = match range.start_bound() {
+                    Bound::Included(start) => key.as_slice() >= start.as_slice(),
+                    Bound::Excluded(start) => key.as_slice() > start.as_slice(),
+                    Bound::Unbounded => true,
+                } && match range.end_bound() {
+                    Bound::Included(end) => key.as_slice() <= end.as_slice(),
+                    Bound::Excluded(end) => key.as_slice() < end.as_slice(),
+                    Bound::Unbounded => true,
+                };
+                if in_range {
+                    results.push((key.clone(), value.clone()));
+                }
+            }
+            results.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok(results)
         }
     }
 

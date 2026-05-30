@@ -7,6 +7,8 @@ use crate::storage::{
     record::{MemtableRecord, RecordType},
     sstable_codec::SSTableCodec,
 };
+use std::collections::HashMap;
+use std::ops::RangeBounds;
 
 pub struct ReadManager {
     memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
@@ -26,6 +28,133 @@ impl ReadManager {
 
     pub fn set_memtable(&mut self, memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>) {
         self.memtable = memtable;
+    }
+
+    /// Scan all keys in the given range, merging memtable + SSTable sources.
+    ///
+    /// Returns sorted unique key-value pairs, newest version per key wins,
+    /// tombstones are filtered out.
+    pub async fn scan_range(
+        &self,
+        range: impl RangeBounds<Vec<u8>>,
+        sequence_number: u64,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
+        // Collect entries from memtable
+        let mut merged: HashMap<Vec<u8>, (Vec<u8>, u64)> = HashMap::new();
+
+        // 1. Scan memtable
+        // SkipMap::range() returns entries in key order. We iterate the range
+        // and keep the highest LSN per key.
+        for entry in self.memtable.range(collect_range_bounds(&range)) {
+            let (key, lsn) = entry.key();
+            let record = entry.value();
+            if *lsn > sequence_number {
+                continue;
+            }
+            // Only track Put (non-tombstone) entries
+            if record.record_type != RecordType::Delete {
+                let is_newer = merged
+                    .get(key)
+                    .map(|(_, existing_lsn)| *lsn > *existing_lsn)
+                    .unwrap_or(true);
+                if is_newer {
+                    merged.insert(key.clone(), (record.value.clone(), *lsn));
+                }
+            } else {
+                // Tombstone: remove any existing entry
+                merged.remove(key);
+            }
+        }
+
+        // 2. Scan SSTable levels
+        let manifest_snapshot = self.manifest.snapshot().await;
+        self.scan_sstables(&manifest_snapshot, &range, sequence_number, &mut merged)
+            .await?;
+
+        // 3. Produce sorted output
+        let mut results: Vec<(Vec<u8>, Vec<u8>)> = merged
+            .into_iter()
+            .map(|(key, (value, _))| (key, value))
+            .collect();
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(results)
+    }
+
+    async fn scan_sstables(
+        &self,
+        manifest_snapshot: &ManifestSnapshot,
+        range: &impl RangeBounds<Vec<u8>>,
+        sequence_number: u64,
+        merged: &mut HashMap<Vec<u8>, (Vec<u8>, u64)>,
+    ) -> Result<(), DBError> {
+        let mut levels: Vec<(&u32, &Vec<SSTableMeta>)> =
+            manifest_snapshot.levels.iter().collect();
+        levels.sort_by_key(|(level, _)| **level);
+
+        for (_level, files) in levels.into_iter() {
+            for sstable in files.iter() {
+                self.scan_single_sstable(sstable, range, sequence_number, merged)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn scan_single_sstable(
+        &self,
+        sstable: &SSTableMeta,
+        range: &impl RangeBounds<Vec<u8>>,
+        sequence_number: u64,
+        merged: &mut HashMap<Vec<u8>, (Vec<u8>, u64)>,
+    ) -> Result<(), DBError> {
+        // Quick range check: skip SSTable if its key range doesn't overlap scan range
+        if !ranges_overlap(range, &sstable.smallest_key, &sstable.largest_key) {
+            return Ok(());
+        }
+
+        let template = self.manifest.get_or_open_file(&sstable.path).await?;
+        let file = template.try_clone().await?;
+        let mut reader = tokio::io::BufReader::new(file);
+
+        let (footer, index, _bloom) =
+            SSTableCodec::deserialize_sections(&mut reader).await?;
+
+        // Iterate through blocks that overlap the scan range
+        for index_entry in index.iter() {
+            // Skip blocks whose entire key range is outside our scan range
+            if !ranges_overlap(range, &index_entry.first_key, &index_entry.last_key) {
+                continue;
+            }
+
+            let block =
+                SSTableCodec::get_block(&mut reader, &footer, &index, &index_entry.first_key)
+                    .await?;
+
+            if let Some(records) = block.data {
+                for record in records {
+                    if record.lsn > sequence_number {
+                        continue;
+                    }
+                    // Check if key is within range
+                    if !key_in_range(&record.key, range) {
+                        continue;
+                    }
+                    if record.record_type != RecordType::Delete {
+                        let key = record.key.clone();
+                        let is_newer = merged
+                            .get(&key)
+                            .map(|(_, existing_lsn)| record.lsn > *existing_lsn)
+                            .unwrap_or(true);
+                        if is_newer {
+                            merged.insert(key, (record.value, record.lsn));
+                        }
+                    } else {
+                        merged.remove(&record.key);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn get(
@@ -167,6 +296,91 @@ impl ReadManager {
 
         Ok(None)
     }
+}
+
+// ── Helper functions for range scan ──────────────────────────────
+
+/// Convert a `RangeBounds<Vec<u8>>` to `(Bound<(Vec<u8>, u64)>, Bound<(Vec<u8>, u64)>)` for SkipMap.
+/// Uses (key, 0) as the lower bound and (key, u64::MAX) as the upper bound to
+/// capture all LSN versions of each key in the range.
+fn collect_range_bounds(
+    range: &impl RangeBounds<Vec<u8>>,
+) -> (std::ops::Bound<(Vec<u8>, u64)>, std::ops::Bound<(Vec<u8>, u64)>) {
+    use std::ops::Bound;
+
+    let start: Bound<(Vec<u8>, u64)> = match range.start_bound() {
+        Bound::Included(key) => Bound::Included((key.clone(), 0)),
+        Bound::Excluded(key) => Bound::Excluded((key.clone(), u64::MAX)),
+        Bound::Unbounded => Bound::Unbounded,
+    };
+    let end: Bound<(Vec<u8>, u64)> = match range.end_bound() {
+        Bound::Included(key) => Bound::Included((key.clone(), u64::MAX)),
+        Bound::Excluded(key) => Bound::Excluded((key.clone(), 0)),
+        Bound::Unbounded => Bound::Unbounded,
+    };
+
+    (start, end)
+}
+
+/// Check if an SSTable's key range overlaps with the scan range.
+fn ranges_overlap(range: &impl RangeBounds<Vec<u8>>, sst_start: &[u8], sst_end: &[u8]) -> bool {
+    use std::ops::Bound;
+
+    let range_start: Option<&[u8]> = match range.start_bound() {
+        Bound::Included(key) | Bound::Excluded(key) => Some(key.as_slice()),
+        Bound::Unbounded => None,
+    };
+    let range_end: Option<&[u8]> = match range.end_bound() {
+        Bound::Included(key) | Bound::Excluded(key) => Some(key.as_slice()),
+        Bound::Unbounded => None,
+    };
+
+    // If range has an end and SSTable starts after it → no overlap
+    if let Some(end) = range_end {
+        if sst_start > end {
+            return false;
+        }
+    }
+    // If range has a start and SSTable ends before it → no overlap
+    if let Some(start) = range_start {
+        if sst_end < start {
+            return false;
+        }
+    }
+    true
+}
+
+/// Check if a key falls within the given range.
+fn key_in_range(key: &[u8], range: &impl RangeBounds<Vec<u8>>) -> bool {
+    use std::ops::Bound;
+
+    match range.start_bound() {
+        Bound::Included(start) => {
+            if key < start.as_slice() {
+                return false;
+            }
+        }
+        Bound::Excluded(start) => {
+            if key <= start.as_slice() {
+                return false;
+            }
+        }
+        Bound::Unbounded => {}
+    }
+    match range.end_bound() {
+        Bound::Included(end) => {
+            if key > end.as_slice() {
+                return false;
+            }
+        }
+        Bound::Excluded(end) => {
+            if key >= end.as_slice() {
+                return false;
+            }
+        }
+        Bound::Unbounded => {}
+    }
+    true
 }
 
 #[cfg(test)]

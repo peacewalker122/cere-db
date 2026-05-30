@@ -9,6 +9,7 @@ use tokio::io::{AsyncRead, AsyncSeek};
 use crate::{
     error::DBError,
     storage::{
+        checksum::{calculate_crc32, verify_crc32},
         constant::SSTABLE_BLOCK_SIZE,
         record::{MemtableRecord, Record},
     },
@@ -180,6 +181,10 @@ impl Block {
             }
         }
 
+        // Append CRC32 checksum covering header + records
+        let checksum = calculate_crc32(&buf);
+        buf.extend_from_slice(&checksum.to_be_bytes());
+
         buf
     }
 
@@ -187,7 +192,8 @@ impl Block {
         // 1. Move the cursor (purely for state consistency, though we use slice offsets)
         data.seek(SeekFrom::Start(offset))?;
 
-        // 2. Decode First Key
+        // 2. Read full block data for checksum verification
+        //    We read header + records first, then verify CRC32
         let mut len_buf = [0u8; 4];
         data.read_exact(&mut len_buf)?;
         let first_key_len = u32::from_be_bytes(len_buf) as usize;
@@ -195,24 +201,44 @@ impl Block {
         let mut first_key = vec![0u8; first_key_len];
         data.read_exact(&mut first_key)?;
 
-        // 3. Decode Last Key
         data.read_exact(&mut len_buf)?;
         let last_key_len = u32::from_be_bytes(len_buf) as usize;
 
         let mut last_key = vec![0u8; last_key_len];
         data.read_exact(&mut last_key)?;
 
-        // 4. Decode record_count and data_size
-        // Both are u32 as per the struct definition
         data.read_exact(&mut len_buf)?;
         let record_count = u32::from_be_bytes(len_buf);
 
         data.read_exact(&mut len_buf)?;
         let data_size = u32::from_be_bytes(len_buf);
 
+        let mut record_bytes = vec![0u8; data_size as usize];
+        data.read_exact(&mut record_bytes)?;
+
+        // 3. Read the CRC32 checksum
+        let mut checksum_buf = [0u8; 4];
+        data.read_exact(&mut checksum_buf)?;
+        let stored_checksum = u32::from_be_bytes(checksum_buf);
+
+        // 4. Reconstruct the data for verification
+        let mut block_data = Vec::new();
+        block_data.extend_from_slice(&(first_key_len as u32).to_be_bytes());
+        block_data.extend_from_slice(&first_key);
+        block_data.extend_from_slice(&(last_key_len as u32).to_be_bytes());
+        block_data.extend_from_slice(&last_key);
+        block_data.extend_from_slice(&record_count.to_be_bytes());
+        block_data.extend_from_slice(&data_size.to_be_bytes());
+        block_data.extend_from_slice(&record_bytes);
+
+        // 5. Verify checksum
+        verify_crc32(&block_data, stored_checksum)?;
+
+        // 6. Decode records from the record bytes
+        let mut cursor = Cursor::new(record_bytes);
         let mut records = Vec::with_capacity(record_count as usize);
         for _ in 0..record_count {
-            let record = MemtableRecord::decode(&mut data)?;
+            let record = MemtableRecord::decode(&mut cursor)?;
             records.push(record);
         }
 
@@ -233,14 +259,9 @@ impl Block {
         let mut len_buf = [0u8; 4];
         data.read_exact(&mut len_buf).await?;
         let first_key_len = u32::from_be_bytes(len_buf) as usize;
-        log::debug!("Decoding block: first_key_len = {}", first_key_len);
 
         let mut first_key = vec![0u8; first_key_len];
         data.read_exact(&mut first_key).await?;
-        log::debug!(
-            "Decoding block: first_key = {:?}",
-            String::from_utf8_lossy(&first_key)
-        );
 
         // 2. Decode Last Key
         data.read_exact(&mut len_buf).await?;
@@ -250,18 +271,39 @@ impl Block {
         data.read_exact(&mut last_key).await?;
 
         // 3. Decode record_count and data_size
-        // Both are u32 as per the struct definition
         data.read_exact(&mut len_buf).await?;
         let record_count = u32::from_be_bytes(len_buf);
 
         data.read_exact(&mut len_buf).await?;
         let data_size = u32::from_be_bytes(len_buf);
 
+        // 4. Read record data
+        let mut record_bytes = vec![0u8; data_size as usize];
+        data.read_exact(&mut record_bytes).await?;
+
+        // 5. Read the CRC32 checksum
+        let mut checksum_buf = [0u8; 4];
+        data.read_exact(&mut checksum_buf).await?;
+        let stored_checksum = u32::from_be_bytes(checksum_buf);
+
+        // 6. Reconstruct block data for verification
+        let mut block_data = Vec::new();
+        block_data.extend_from_slice(&(first_key_len as u32).to_be_bytes());
+        block_data.extend_from_slice(&first_key);
+        block_data.extend_from_slice(&(last_key_len as u32).to_be_bytes());
+        block_data.extend_from_slice(&last_key);
+        block_data.extend_from_slice(&record_count.to_be_bytes());
+        block_data.extend_from_slice(&data_size.to_be_bytes());
+        block_data.extend_from_slice(&record_bytes);
+
+        // 7. Verify checksum
+        verify_crc32(&block_data, stored_checksum)?;
+
+        // 8. Decode records from the record bytes
+        let mut cursor = Cursor::new(record_bytes);
         let mut records = Vec::with_capacity(record_count as usize);
-
         for _ in 0..record_count {
-            let record = MemtableRecord::async_decode(&mut data).await?;
-
+            let record = MemtableRecord::decode(&mut cursor)?;
             records.push(record);
         }
 
@@ -482,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_block_encode_header() {
-        // Test Block::encode produces correct header
+        // Test Block::encode produces correct header + CRC32 checksum
         let block = Block {
             offset: 0,
             first_key: b"first".to_vec(),
@@ -495,8 +537,8 @@ mod tests {
         let encoded = block.encode();
 
         // Verify header structure:
-        // first_key_len (4 bytes) + first_key + last_key_len (4 bytes) + last_key + record_count (4 bytes) + data_size (4 bytes)
-        assert_eq!(encoded.len(), 4 + 5 + 4 + 4 + 4 + 4); // 25 bytes
+        // first_key_len (4 bytes) + first_key + last_key_len (4 bytes) + last_key + record_count (4 bytes) + data_size (4 bytes) + CRC32 (4 bytes)
+        assert_eq!(encoded.len(), 4 + 5 + 4 + 4 + 4 + 4 + 4); // 29 bytes
 
         // Parse and verify
         let first_key_len =
@@ -512,6 +554,16 @@ mod tests {
 
         let data_size = u32::from_be_bytes([encoded[21], encoded[22], encoded[23], encoded[24]]);
         assert_eq!(data_size, 100);
+
+        // Verify CRC32 checksum is present in last 4 bytes
+        let checksum_bytes = &encoded[encoded.len() - 4..];
+        let stored_checksum = u32::from_be_bytes([
+            checksum_bytes[0],
+            checksum_bytes[1],
+            checksum_bytes[2],
+            checksum_bytes[3],
+        ]);
+        assert_ne!(stored_checksum, 0, "CRC32 checksum should be non-zero");
     }
 
     #[test]
