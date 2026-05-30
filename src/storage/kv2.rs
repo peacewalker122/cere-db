@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    ops::RangeBounds,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -16,7 +17,6 @@ use crate::{
     storage::{
         compactionmanager::compaction::compaction,
         config::StorageConfig,
-        constant::{MAXIMUM_LEVEL_FILES, MEMTABLE_SIZE_THRESHOLD},
         manifest_codec::ManifestManager,
         readmanager::read::ReadManager,
         record::{MemtableRecord, RecordType},
@@ -30,8 +30,6 @@ use crate::{
 pub enum CompactionTrigger {
     CompactLevel { level: u32 },
 }
-
-const DEFAULT_WAL_SEGMENT_SIZE: u64 = 1024 * 1024;
 
 /// KV2 is the frontline orchestrator for storage managers.
 ///
@@ -184,7 +182,7 @@ impl KV2 {
             "Checking if flush is needed. Current memtable size: {} bytes",
             self.write_component.memtable_size_bytes()
         );
-        if self.write_component.memtable_size_bytes() < MEMTABLE_SIZE_THRESHOLD as usize {
+        if self.write_component.memtable_size_bytes() < self.config.memtable_size_threshold as usize {
             return Ok(());
         }
 
@@ -208,7 +206,7 @@ impl KV2 {
         let snapshot = self.manifest.snapshot().await;
         let level0_count = snapshot.levels.get(&0).map_or(0, |files| files.len());
 
-        if level0_count >= MAXIMUM_LEVEL_FILES {
+        if level0_count >= self.config.max_level0_files {
             // Send trigger to rayon worker (non-blocking)
             let _ = self
                 .compaction_sender
@@ -281,6 +279,14 @@ impl AsyncKVEngine for KV2 {
 
         Ok(())
     }
+
+    async fn scan(
+        &self,
+        range: impl RangeBounds<Vec<u8>> + Send,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
+        let sequence_number = self.write_component.current_sequence_number();
+        self.read_manager.scan_range(range, sequence_number).await
+    }
 }
 
 #[cfg(test)]
@@ -335,6 +341,104 @@ mod tests {
 
         assert!(value.is_some());
         assert_eq!(value.unwrap().as_ref(), b"recovery-value");
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn open_with_custom_config() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+
+        // Create custom config with different parameters
+        let custom_config = crate::storage::config::StorageConfig::builder()
+            .memtable_size_threshold(8 * 1024 * 1024) // 8 MB instead of 4 MB
+            .max_level0_files(4) // 4 instead of 2
+            .build()
+            .unwrap();
+
+        let kv2 = KV2::open(&temp_dir, custom_config.clone()).await.unwrap();
+
+        // Verify config was set correctly
+        assert_eq!(kv2.config.memtable_size_threshold, 8 * 1024 * 1024);
+        assert_eq!(kv2.config.max_level0_files, 4);
+        assert_eq!(kv2.config.sstable_block_size, 4096); // default
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn scan_returns_all_keys_in_range() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+
+        let mut kv2 = KV2::open_with_defaults(&temp_dir).await.unwrap();
+
+        kv2.put(b"alpha".to_vec(), b"value_a".to_vec())
+            .await
+            .unwrap();
+        kv2.put(b"beta".to_vec(), b"value_b".to_vec())
+            .await
+            .unwrap();
+        kv2.put(b"gamma".to_vec(), b"value_c".to_vec())
+            .await
+            .unwrap();
+
+        // Scan full range
+        let results = kv2.scan(..).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].0, b"alpha");
+        assert_eq!(results[1].0, b"beta");
+        assert_eq!(results[2].0, b"gamma");
+
+        // Scan sub-range
+        let results = kv2.scan(b"beta".to_vec()..=b"gamma".to_vec()).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, b"beta");
+        assert_eq!(results[1].0, b"gamma");
+
+        // Scan empty range
+        let results = kv2.scan(b"x".to_vec()..b"z".to_vec()).await.unwrap();
+        assert!(results.is_empty());
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn scan_filters_tombstones() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+
+        let mut kv2 = KV2::open_with_defaults(&temp_dir).await.unwrap();
+
+        kv2.put(b"keep".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        kv2.put(b"remove".to_vec(), b"temp".to_vec())
+            .await
+            .unwrap();
+        kv2.delete(b"remove".to_vec()).await.unwrap();
+
+        let results = kv2.scan(..).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, b"keep");
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn scan_returns_newest_version_of_overwritten_keys() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+
+        let mut kv2 = KV2::open_with_defaults(&temp_dir).await.unwrap();
+
+        kv2.put(b"key".to_vec(), b"old_value".to_vec())
+            .await
+            .unwrap();
+        kv2.put(b"key".to_vec(), b"new_value".to_vec())
+            .await
+            .unwrap();
+
+        let results = kv2.scan(..).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, b"new_value");
 
         std::fs::remove_dir_all(temp_dir).unwrap();
     }
