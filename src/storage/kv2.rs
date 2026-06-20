@@ -730,7 +730,7 @@ mod raft_tests {
         let mut kv = RaftKV2::open(dir.path(), StorageConfig::default(), cfg)
             .await
             .unwrap();
-        kv.raft_layer.initialize().await.unwrap();
+        kv.raft_layer.initialize(&[1]).await.unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         assert!(kv.raft_layer.is_leader().await);
         let val = kv.get(b"nonexistent").await.unwrap();
@@ -771,7 +771,7 @@ mod raft_tests {
         let kv = RaftKV2::open(dir.path(), StorageConfig::default(), cfg)
             .await
             .unwrap();
-        kv.raft_layer.initialize().await.unwrap();
+        kv.raft_layer.initialize(&[1]).await.unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         assert!(kv.raft_layer.is_leader().await);
         let results = kv.scan(..).await.unwrap();

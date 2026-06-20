@@ -58,10 +58,11 @@ impl RaftNetworkFactory<TypeConfig> for RaftHttpNetwork {
         target: u64,
         _node: &openraft::impls::BasicNode,
     ) -> Self::Network {
-        let url = self
+        let addr = self
             .url_for(target)
             .await
-            .unwrap_or_else(|| format!("http://node-{target}:21001"));
+            .unwrap_or_else(|| format!("node-{target}:21001"));
+        let url = format!("http://{addr}");
         RaftHttpClient { target_url: url }
     }
 }

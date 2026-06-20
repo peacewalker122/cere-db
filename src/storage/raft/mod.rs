@@ -141,13 +141,25 @@ impl RaftConsensusLayer {
         &self.raft
     }
 
-    /// Initialize the cluster as a single-node cluster (first node).
-    pub async fn initialize(&self) -> Result<(), DBError> {
+    /// Initialize the cluster with the given set of initial member node IDs.
+    ///
+    /// Should be called once on **one** node — usually the first node — to
+    /// bootstrap the cluster.  All initial members must be listed so they
+    /// participate in leader election.
+    pub async fn initialize(&self, members: &[u64]) -> Result<(), DBError> {
+        let cluster: BTreeMap<u64, BasicNode> = members
+            .iter()
+            .map(|id| (*id, BasicNode::default()))
+            .collect();
         self.raft
-            .initialize(BTreeMap::from([(self.node_id, BasicNode::default())]))
+            .initialize(cluster)
             .await
             .map_err(|e| DBError::StorageError(format!("raft initialize: {e}")))?;
-        log::info!("Raft cluster initialized with node {}", self.node_id);
+        log::info!(
+            "Raft cluster initialized with {} members: {:?}",
+            members.len(),
+            members
+        );
         Ok(())
     }
 

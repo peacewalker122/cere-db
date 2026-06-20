@@ -70,7 +70,6 @@ async fn handle_append_entries(
 ) -> Json<openraft::raft::AppendEntriesResponse<u64>> {
     let resp = state.raft.append_entries(req).await.unwrap_or_else(|e| {
         log::error!("append_entries handler error: {e}");
-        // Return a generic failure response
         openraft::raft::AppendEntriesResponse::HigherVote(Default::default())
     });
     Json(resp)
