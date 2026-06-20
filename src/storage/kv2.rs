@@ -11,6 +11,9 @@ use tokio::{
     sync::mpsc::{Receiver, Sender},
 };
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::RwLock;
+
 use crate::{
     api::api::AsyncKVEngine,
     error::DBError,
@@ -18,9 +21,13 @@ use crate::{
         compactionmanager::compaction::compaction,
         config::StorageConfig,
         manifest_codec::ManifestManager,
+        raft::{RaftConsensusLayer, RaftNodeConfig},
         readmanager::read::ReadManager,
         record::{MemtableRecord, RecordType},
-        recovermanager::wal::{WALManager, WALRecord},
+        recovermanager::{
+            log_store::{LogCommand, LogStore},
+            wal::{WALManager, WALRecord},
+        },
         writemanager::write::WriteComponent,
     },
 };
@@ -441,5 +448,334 @@ mod tests {
         assert_eq!(results[0].1, b"new_value");
 
         std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+}
+
+// ============================================================================
+// RaftKV2 — Raft-backed KV engine
+// ============================================================================
+
+/// Raft-backed KV engine.
+///
+/// Behaviour summary:
+///
+/// | Operation | Leader | Follower |
+/// |-----------|--------|----------|
+/// | `put`     | Propose to Raft -> apply on commit | Reject / redirect |
+/// | `delete`  | Propose to Raft -> apply on commit | Reject / redirect |
+/// | `get`     | Local read (state machine) | Local read (may lag slightly) |
+/// | `scan`    | Local read | Local read (may lag slightly) |
+pub struct RaftKV2 {
+    base_dir: PathBuf,
+    config: Arc<StorageConfig>,
+    _manifest: Arc<ManifestManager>,
+    read_manager: ReadManager,
+    compaction_sender: Sender<CompactionTrigger>,
+    /// Shared sequence number — updated by both the leader propose path and
+    /// the state machine apply path.
+    sequence_number: Arc<AtomicU64>,
+    raft_layer: RaftConsensusLayer,
+    /// Shared handle to the write pipeline — same instance as in the state machine.
+    write_handle: Arc<RwLock<WriteComponent>>,
+}
+
+impl RaftKV2 {
+    /// Open or create a Raft-backed KV store.
+    pub async fn open(
+        base_dir: impl AsRef<Path>,
+        config: StorageConfig,
+        raft_config: RaftNodeConfig,
+    ) -> Result<Self, DBError> {
+        let base_dir = base_dir.as_ref().to_path_buf();
+        let sstable_dir = base_dir.join("sstable");
+        let level0_dir = sstable_dir.join("level-0");
+        let manifest_path = base_dir.join("MANIFEST");
+
+        tokio::fs::create_dir_all(&level0_dir).await?;
+
+        let config = Arc::new(config);
+
+        // --- Manifest ---
+        let manifest = Arc::new(ManifestManager::load_or_create(manifest_path).await?);
+
+        // --- Write component (no WAL needed; Raft log is the WAL) ---
+        let wal_dir = base_dir.join("raft-wal");
+        tokio::fs::create_dir_all(&wal_dir).await?;
+        let dummy_wal = Arc::new(
+            WALManager::new(wal_dir, config.wal_segment_size).await?,
+        );
+
+        let write_component = WriteComponent::new(
+            sstable_dir,
+            dummy_wal,
+            Arc::clone(&manifest),
+            0,
+            Arc::clone(&config),
+        );
+        let write_handle: Arc<RwLock<WriteComponent>> = Arc::new(RwLock::new(write_component));
+
+        // --- Raft consensus layer (owns LogStore + KVStateMachine) ---
+        let raft_layer = RaftConsensusLayer::start(raft_config, Arc::clone(&write_handle)).await?;
+
+        // --- Read manager ---
+        let active_memtable = write_handle.read().await.active_memtable_handle();
+        let read_manager = ReadManager::new(active_memtable, Arc::clone(&manifest));
+
+        // --- Compaction worker ---
+        let (compaction_sender, compaction_receiver) = tokio::sync::mpsc::channel(100);
+        let manifest_for_worker = Arc::clone(&manifest);
+        let sstable_dir_for_compaction = base_dir.join("sstable");
+        let config_for_compaction = Arc::clone(&config);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        Self::run_compaction_worker(
+            compaction_receiver,
+            manifest_for_worker,
+            sstable_dir_for_compaction,
+            config_for_compaction,
+            cancel,
+        );
+
+        // --- Shared sequence number ---
+        let seq_arc = Arc::new(AtomicU64::new(0));
+
+        log::info!("RaftKV2 opened at {:?}", base_dir);
+
+        Ok(Self {
+            base_dir,
+            config,
+            _manifest: manifest,
+            read_manager,
+            compaction_sender,
+            sequence_number: seq_arc,
+            raft_layer,
+            write_handle,
+        })
+    }
+
+    fn build_recovered_memtable(
+        commands: Vec<LogCommand>,
+    ) -> (crossbeam_skiplist::SkipMap<(Vec<u8>, u64), MemtableRecord>, u64, usize) {
+        let memtable = crossbeam_skiplist::SkipMap::new();
+        let mut max_lsn = 0u64;
+        let mut total_size = 0usize;
+        for cmd in commands {
+            max_lsn = max_lsn.max(cmd.lsn);
+            let value = if cmd.record_type == RecordType::Delete {
+                Vec::new()
+            } else {
+                cmd.value
+            };
+            total_size += cmd.key.len() + value.len();
+            memtable.insert(
+                (cmd.key.clone(), cmd.lsn),
+                MemtableRecord::new(value, cmd.record_type, cmd.lsn),
+            );
+        }
+        (memtable, max_lsn, total_size)
+    }
+
+    fn run_compaction_worker(
+        mut receiver: Receiver<CompactionTrigger>,
+        manifest: Arc<ManifestManager>,
+        sstable_dir: PathBuf,
+        config: Arc<StorageConfig>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(trigger) = receiver.recv() => {
+                        if let CompactionTrigger::CompactLevel { level } = trigger {
+                            log::info!("RaftKV2 compacting level {level}");
+                            if let Err(e) = compaction(
+                                Arc::clone(&manifest), level, Arc::clone(&config), cancel.child_token()
+                            ).await {
+                                log::error!("RaftKV2 compaction failed: {e}");
+                            }
+                        }
+                    }
+                    _ = cancel.cancelled() => break,
+                }
+            }
+        });
+    }
+
+    async fn maybe_flush(&mut self) -> Result<(), DBError> {
+        {
+            let wc = self.write_handle.read().await;
+            if wc.memtable_size_bytes() < self.config.memtable_size_threshold as usize {
+                return Ok(());
+            }
+        }
+        let (new_memtable, result) = {
+            let mut wc = self.write_handle.write().await;
+            let locked = wc.lock_memtable().await;
+            let new_memtable = wc.active_memtable_handle();
+            let result = wc.flush(locked).await?;
+            (new_memtable, result)
+        };
+        let mut file = tokio::fs::File::create(&result.sstable_path).await?;
+        file.write_all(&result.data).await?;
+        file.sync_all().await?;
+        self.read_manager.set_memtable(new_memtable);
+
+        let snapshot = self._manifest.snapshot().await;
+        let l0 = snapshot.levels.get(&0).map_or(0, |f| f.len());
+        if l0 >= self.config.max_level0_files {
+            let _ = self.compaction_sender.send(CompactionTrigger::CompactLevel { level: 0 });
+        }
+        Ok(())
+    }
+
+    /// Return a reference to the Raft consensus layer.
+    pub fn raft_layer(&self) -> &RaftConsensusLayer {
+        &self.raft_layer
+    }
+}
+
+impl AsyncKVEngine for RaftKV2 {
+    async fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError> {
+        if !self.raft_layer.is_leader().await {
+            return Err(DBError::StorageError(
+                "not the leader; redirect reads to leader node".to_string(),
+            ));
+        }
+        let seq = self.sequence_number.load(Ordering::Acquire);
+        let record = self.read_manager.get(key.to_vec(), seq).await?;
+        match record {
+            Some(rec) if rec.record_type == RecordType::Delete => Ok(None),
+            Some(rec) => Ok(Some(Cow::Owned(rec.value))),
+            None => Ok(None),
+        }
+    }
+
+    async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError> {
+        if !self.raft_layer.is_leader().await {
+            let leader = self.raft_layer.current_leader().await;
+            return Err(DBError::StorageError(format!(
+                "not the leader; redirect to leader node {:?}",
+                leader
+            )));
+        }
+        let lsn = self.sequence_number.fetch_add(1, Ordering::SeqCst) + 1;
+        let cmd = LogCommand::new(RecordType::Put, key, value, lsn);
+        let data = cmd.serialize();
+        self.raft_layer.propose(data).await?;
+        self.write_handle.write().await.apply_replicated_command(cmd);
+        self.maybe_flush().await?;
+        Ok(())
+    }
+
+    async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
+        if !self.raft_layer.is_leader().await {
+            let leader = self.raft_layer.current_leader().await;
+            return Err(DBError::StorageError(format!(
+                "not the leader; redirect to leader node {:?}",
+                leader
+            )));
+        }
+        let lsn = self.sequence_number.fetch_add(1, Ordering::SeqCst) + 1;
+        let cmd = LogCommand::new(RecordType::Delete, key, Vec::new(), lsn);
+        let data = cmd.serialize();
+        self.raft_layer.propose(data).await?;
+        self.write_handle.write().await.apply_replicated_command(cmd);
+        self.maybe_flush().await?;
+        Ok(())
+    }
+
+    async fn scan(
+        &self,
+        range: impl RangeBounds<Vec<u8>> + Send,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
+        if !self.raft_layer.is_leader().await {
+            return Err(DBError::StorageError(
+                "not the leader; redirect reads to leader node".to_string(),
+            ));
+        }
+        let seq = self.sequence_number.load(Ordering::Acquire);
+        self.read_manager.scan_range(range, seq).await
+    }
+}
+
+#[cfg(test)]
+mod raft_tests {
+    use super::*;
+    use crate::storage::raft::RaftNodeConfig;
+
+    fn test_config(node_id: u64, dir: &tempfile::TempDir) -> RaftNodeConfig {
+        RaftNodeConfig {
+            node_id,
+            peers: vec![],
+            http_bind: "127.0.0.1:0".parse().unwrap(),
+            raft_dir: dir.path().join("raft"),
+        }
+    }
+
+    #[tokio::test]
+    async fn open_creates_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(1, &dir);
+        let kv = RaftKV2::open(dir.path(), StorageConfig::default(), cfg)
+            .await
+            .unwrap();
+        assert!(dir.path().join("sstable/level-0").exists());
+        assert!(dir.path().join("MANIFEST").exists());
+        kv.raft_layer.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn get_returns_none_for_missing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(1, &dir);
+        let mut kv = RaftKV2::open(dir.path(), StorageConfig::default(), cfg)
+            .await
+            .unwrap();
+        kv.raft_layer.initialize().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        assert!(kv.raft_layer.is_leader().await);
+        let val = kv.get(b"nonexistent").await.unwrap();
+        assert!(val.is_none());
+        kv.raft_layer.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn put_on_non_leader_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(1, &dir);
+        let mut kv = RaftKV2::open(dir.path(), StorageConfig::default(), cfg)
+            .await
+            .unwrap();
+        let result = kv.put(b"k".to_vec(), b"v".to_vec()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not the leader"));
+        kv.raft_layer.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn delete_on_non_leader_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(1, &dir);
+        let mut kv = RaftKV2::open(dir.path(), StorageConfig::default(), cfg)
+            .await
+            .unwrap();
+        let result = kv.delete(b"k".to_vec()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not the leader"));
+        kv.raft_layer.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn scan_returns_empty_for_empty_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = test_config(1, &dir);
+        let kv = RaftKV2::open(dir.path(), StorageConfig::default(), cfg)
+            .await
+            .unwrap();
+        kv.raft_layer.initialize().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        assert!(kv.raft_layer.is_leader().await);
+        let results = kv.scan(..).await.unwrap();
+        assert!(results.is_empty());
+        kv.raft_layer.shutdown().await;
     }
 }

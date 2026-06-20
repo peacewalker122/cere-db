@@ -43,18 +43,39 @@ pub struct CheckpointResult {
 /// - Convert memtable (SkipMap) to SSTable
 /// - Write SSTable to disk
 /// - Return checkpoint metadata
+/// WriteComponent handles checkpoint operations
+///
+/// Responsibilities:
+/// - Convert memtable (SkipMap) to SSTable
+/// - Write SSTable to disk
+/// - Return checkpoint metadata
 pub struct WriteComponent {
     /// Base directory for SSTable storage
     /// MemTable key is (key, lsn) composite for MVCC support (ADR-0002)
     memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
-    memtable_size: std::sync::atomic::AtomicUsize,
 
-    sequence_number: std::sync::atomic::AtomicU64,
+    /// Memtable size tracking (shared via Arc for Clone support).
+    memtable_size: Arc<std::sync::atomic::AtomicUsize>,
+    sequence_number: Arc<std::sync::atomic::AtomicU64>,
 
     sstable_dir: PathBuf,
     wal_manager: Arc<WALManager>,
     manifest_manager: Arc<ManifestManager>,
     config: Arc<StorageConfig>,
+}
+
+impl Clone for WriteComponent {
+    fn clone(&self) -> Self {
+        Self {
+            memtable: Arc::clone(&self.memtable),
+            memtable_size: Arc::clone(&self.memtable_size),
+            sequence_number: Arc::clone(&self.sequence_number),
+            sstable_dir: self.sstable_dir.clone(),
+            wal_manager: Arc::clone(&self.wal_manager),
+            manifest_manager: Arc::clone(&self.manifest_manager),
+            config: Arc::clone(&self.config),
+        }
+    }
 }
 
 impl WriteComponent {
@@ -91,8 +112,8 @@ impl WriteComponent {
 
         Self {
             memtable: Arc::new(SkipMap::new()),
-            memtable_size: std::sync::atomic::AtomicUsize::new(0),
-            sequence_number: std::sync::atomic::AtomicU64::new(sequence_number),
+            memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(sequence_number)),
             sstable_dir,
             wal_manager,
             manifest_manager,
@@ -108,8 +129,8 @@ impl WriteComponent {
     ) -> Self {
         Self {
             memtable: Arc::new(SkipMap::new()),
-            memtable_size: std::sync::atomic::AtomicUsize::new(0),
-            sequence_number: std::sync::atomic::AtomicU64::new(0),
+            memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             sstable_dir: PathBuf::from("data"),
             wal_manager,
             manifest_manager,
@@ -332,7 +353,6 @@ impl WriteComponent {
             data: encoded,
         })
     }
-
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use ceredb::repl::run_repl_async;
 use ceredb::{Config, KV2};
+use ceredb::storage::kv2::RaftKV2;
 use clap::Parser;
 use log::info;
 
@@ -28,15 +29,39 @@ async fn main() {
     info!("SSTable block size: {} KB", config.block_size_kb);
     info!("Max Level-0 files: {}", config.max_level0_files);
 
-    let mut kv = match KV2::open(&config.data_dir, storage_config).await {
-        Ok(engine) => engine,
-        Err(err) => {
-            eprintln!("Failed to initialize KV2 engine: {err}");
-            return;
-        }
-    };
+    if config.raft_mode {
+        info!("Raft mode: enabled");
+        let raft_config = config.to_raft_node_config().expect("raft config should be valid");
+        info!("Raft node ID: {}", raft_config.node_id);
+        info!("Raft peers: {:?}", raft_config.peers);
+        info!("Raft HTTP bind: {}", raft_config.http_bind);
 
-    if let Err(err) = run_repl_async(&mut kv).await {
-        eprintln!("REPL error: {err}");
+        let mut kv = match RaftKV2::open(&config.data_dir, storage_config, raft_config).await {
+            Ok(engine) => engine,
+            Err(err) => {
+                eprintln!("Failed to initialize RaftKV2 engine: {err}");
+                return;
+            }
+        };
+
+        if let Err(err) = run_repl_async(&mut kv).await {
+            eprintln!("REPL error: {err}");
+        }
+
+        kv.raft_layer().shutdown().await;
+    } else {
+        info!("Raft mode: disabled (single-node WAL mode)");
+
+        let mut kv = match KV2::open(&config.data_dir, storage_config).await {
+            Ok(engine) => engine,
+            Err(err) => {
+                eprintln!("Failed to initialize KV2 engine: {err}");
+                return;
+            }
+        };
+
+        if let Err(err) = run_repl_async(&mut kv).await {
+            eprintln!("REPL error: {err}");
+        }
     }
 }
