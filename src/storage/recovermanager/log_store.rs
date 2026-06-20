@@ -34,8 +34,8 @@ impl LogCommand {
     pub fn deserialize(data: &[u8]) -> Result<Self, DBError> {
         let type_log_buf = data[0];
         let record_type = match type_log_buf {
-            0 => RecordType::Put,
-            1 => RecordType::Delete,
+            1 => RecordType::Put,
+            2 => RecordType::Delete,
             _ => {
                 return Err(DBError::Corrupted(
                     "Invalid record type".to_string(),

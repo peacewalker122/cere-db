@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAFT DASHBOARD</title>
+<style>
+/* ── brutalism reset ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+body {
+  font-family: "Monaspace Neon", "Cascadia Code", "JetBrains Mono",
+               "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  background: #fff;
+  color: #111;
+  padding: 1.5rem;
+  line-height: 1.4;
+}
+
+/* ── typography ──────────────────────────────────────────────── */
+h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -0.025em;
+  border: 4px solid #111;
+  padding: 0.6rem 1rem;
+  display: inline-block;
+  margin-bottom: 1rem;
+}
+h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+  border-bottom: 3px solid #111;
+  padding-bottom: 0.3rem;
+}
+
+/* ── layout ──────────────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  border: 3px solid #111;
+  background: #f5f5f5;
+}
+.toolbar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.toolbar-group label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.toolbar-group input,
+.toolbar-group select {
+  font-family: inherit;
+  font-size: 0.85rem;
+  border: 2px solid #111;
+  padding: 0.35rem 0.5rem;
+  background: #fff;
+  color: #111;
+  outline: none;
+  min-width: 120px;
+}
+.toolbar-group input:focus,
+.toolbar-group select:focus {
+  background: #ff0;
+}
+.toolbar button {
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  border: 3px solid #111;
+  padding: 0.5rem 1rem;
+  background: #111;
+  color: #fff;
+  cursor: pointer;
+  transition: none;
+}
+.toolbar button:hover {
+  background: #fff;
+  color: #111;
+}
+.toolbar button.danger {
+  background: #d00;
+  border-color: #d00;
+  color: #fff;
+}
+.toolbar button.danger:hover {
+  background: #fff;
+  color: #d00;
+  border-color: #d00;
+}
+
+/* ── node grid ───────────────────────────────────────────────── */
+.node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+.node-card {
+  border: 3px solid #111;
+  padding: 1rem;
+  position: relative;
+  transition: none;
+}
+.node-card.state-leader   { border-color: #111; }
+.node-card.state-follower { border-color: #111; }
+.node-card.state-candidate{ border-color: #f80; }
+.node-card.state-learner  { border-color: #888; }
+.node-card.state-shutdown { border-color: #d00; opacity: 0.5; }
+
+.node-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #111;
+}
+.node-id {
+  font-size: 1.3rem;
+  font-weight: 800;
+}
+.node-state-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.2rem 0.5rem;
+  border: 2px solid #111;
+  letter-spacing: 0.05em;
+}
+.state-leader .node-state-badge {
+  background: #111;
+  color: #fff;
+}
+.state-follower .node-state-badge {
+  background: #fff;
+  color: #111;
+}
+.state-candidate .node-state-badge {
+  background: #f80;
+  color: #111;
+  border-color: #f80;
+}
+.state-learner .node-state-badge {
+  background: #888;
+  color: #fff;
+  border-color: #888;
+}
+.state-shutdown .node-state-badge {
+  background: #d00;
+  color: #fff;
+  border-color: #d00;
+}
+
+.node-card-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem 1rem;
+}
+.metric-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #555;
+}
+.metric-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.metric-value.leader-self::after { content: " ★"; color: #111; font-size: 1rem; }
+.metric-value.leader-other::after { content: " ☆"; color: #888; }
+
+/* ── replication (leader only) ───────────────────────────────── */
+.replication-section {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 2px solid #111;
+}
+.replication-section h3 {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 0.4rem;
+  color: #555;
+}
+.repl-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.25rem;
+}
+.repl-node-id {
+  font-weight: 700;
+  font-size: 0.8rem;
+  min-width: 2rem;
+}
+.repl-bar-track {
+  flex: 1;
+  height: 12px;
+  border: 2px solid #111;
+  background: #eee;
+  position: relative;
+}
+.repl-bar-fill {
+  height: 100%;
+  background: #111;
+  transition: width 0.3s ease;
+}
+.repl-bar-fill.stalled {
+  background: #f80;
+}
+.repl-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  min-width: 4rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── timeline / log ──────────────────────────────────────────── */
+.event-log {
+  border: 3px solid #111;
+  padding: 1rem;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+}
+.event-log::-webkit-scrollbar { width: 8px; }
+.event-log::-webkit-scrollbar-track { background: #eee; }
+.event-log::-webkit-scrollbar-thumb { background: #111; }
+.event-entry {
+  padding: 0.2rem 0;
+  border-bottom: 1px solid #ddd;
+  display: flex;
+  gap: 0.5rem;
+}
+.event-time {
+  color: #888;
+  font-weight: 600;
+  white-space: nowrap;
+  min-width: 5rem;
+}
+.event-msg { flex: 1; }
+.event-msg .hl-term  { color: #00a; font-weight: 700; }
+.event-msg .hl-leader{ color: #111; font-weight: 700; }
+.event-msg .hl-vote  { color: #a00; font-weight: 700; }
+
+/* ── status bar ──────────────────────────────────────────────── */
+.status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  border: 2px solid #111;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.pulse {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border: 2px solid #111;
+  margin-right: 0.4rem;
+  animation: pulse 1.5s steps(2) infinite;
+}
+@keyframes pulse { 0% { background: #111; } 50% { background: #fff; } }
+.pulse.error { border-color: #d00; animation: pulse-red 1.5s steps(2) infinite; }
+@keyframes pulse-red { 0% { background: #d00; } 50% { background: #fff; } }
+
+/* ── responsive ──────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  body { padding: 0.75rem; }
+  .node-grid { grid-template-columns: 1fr; }
+  .toolbar { flex-direction: column; align-items: stretch; }
+  .toolbar-group input { min-width: auto; }
+}
+</style>
+</head>
+<body>
+
+<h1>RAFT DASHBOARD</h1>
+
+<div class="toolbar" id="toolbar">
+  <div class="toolbar-group">
+    <label>Node URL (host:port)</label>
+    <input type="text" id="nodeUrl" value="127.0.0.1:21011"
+           placeholder="127.0.0.1:21011">
+  </div>
+  <button id="addNodeBtn">+ ADD NODE</button>
+  <div class="toolbar-group">
+    <label>Poll interval (ms)</label>
+    <input type="number" id="pollInterval" value="500" min="100" max="10000">
+  </div>
+  <button id="clearLogBtn" class="danger">CLEAR LOG</button>
+</div>
+
+<div class="node-grid" id="nodeGrid">
+  <!-- cards rendered by JS -->
+</div>
+
+<h2>EVENT LOG</h2>
+<div class="event-log" id="eventLog">
+  <div class="event-entry"><span class="event-time">—</span><span class="event-msg">Dashboard ready. Add nodes to begin.</span></div>
+</div>
+
+<div class="status-bar">
+  <span id="statusText"><span class="pulse"></span> IDLE</span>
+  <span id="statusDetail">0 nodes · 0 errors</span>
+</div>
+
+<script>
+// ── state ──────────────────────────────────────────────────────
+const state = {
+  nodes: {},            // key: "host:port" → last metrics snapshot
+  polling: null,
+  interval: 500,
+  prev: {},             // key: "host:port" → previous snapshot (for change detection)
+};
+
+const logEl = document.getElementById('eventLog');
+const gridEl = document.getElementById('nodeGrid');
+const statusText = document.getElementById('statusText');
+const statusDetail = document.getElementById('statusDetail');
+
+// ── helpers ────────────────────────────────────────────────────
+function ts() {
+  return new Date().toLocaleTimeString('en-US', { hour12: false });
+}
+
+function log(msg, cls = '') {
+  const entry = document.createElement('div');
+  entry.className = 'event-entry';
+  entry.innerHTML = `<span class="event-time">${ts()}</span><span class="event-msg">${msg}</span>`;
+  logEl.appendChild(entry);
+  logEl.scrollTop = logEl.scrollHeight;
+  // keep last 200 entries
+  while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+}
+
+// ── polling ────────────────────────────────────────────────────
+async function pollNode(url) {
+  const fullUrl = `http://${url}/raft/metrics`;
+  try {
+    const resp = await fetch(fullUrl, { signal: AbortSignal.timeout(3000) });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    state.nodes[url] = data;
+    detectChanges(url, data);
+    return true;
+  } catch (err) {
+    state.nodes[url] = { ...(state.nodes[url] || {}), _error: err.message };
+    log(`<b>${url}</b> poll error: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+function detectChanges(url, metrics) {
+  const prev = state.prev[url];
+  if (!prev) { state.prev[url] = metrics; return; }
+
+  const msgs = [];
+
+  // state change
+  if (prev.state !== metrics.state) {
+    msgs.push(`<b>${url}</b> state ${prev.state} → <b>${metrics.state}</b>`);
+  }
+
+  // leader change
+  if (prev.current_leader !== metrics.current_leader) {
+    msgs.push(`<b>${url}</b> leader ${prev.current_leader ?? '?'} → ${metrics.current_leader ?? '?'}`);
+  }
+
+  // term change
+  if (prev.current_term !== metrics.current_term) {
+    msgs.push(`<b>${url}</b> term ${prev.current_term} → ${metrics.current_term}`);
+  }
+
+  // new log entries
+  const prevLast = prev.last_log_index ?? 0;
+  const curLast = metrics.last_log_index ?? 0;
+  if (curLast > prevLast) {
+    msgs.push(`<b>${url}</b> log ${prevLast} → ${curLast} (+${curLast - prevLast})`);
+  }
+
+  // applied entries
+  const prevApplied = prev.last_applied?.LogId?.index ?? prev.last_applied?.index ?? 0;
+  const curApplied = metrics.last_applied?.LogId?.index ?? metrics.last_applied?.index ?? 0;
+  if (curApplied > prevApplied && metrics.state === 'Leader') {
+    msgs.push(`<b>${url}</b> applied ${prevApplied} → ${curApplied}`);
+  }
+
+  for (const m of msgs) log(m);
+  state.prev[url] = metrics;
+}
+
+async function pollAll() {
+  let errors = 0;
+  const urls = Object.keys(state.nodes);
+  for (const url of urls) {
+    const ok = await pollNode(url);
+    if (!ok) errors++;
+  }
+  render();
+  const n = urls.length;
+  statusText.innerHTML = `<span class="pulse${errors > 0 ? ' error' : ''}"></span> ${n} node${n !== 1 ? 's' : ''} · ${errors} error${errors !== 1 ? 's' : ''}`;
+}
+
+function startPolling() {
+  if (state.polling) clearInterval(state.polling);
+  state.interval = parseInt(document.getElementById('pollInterval').value, 10) || 500;
+  state.polling = setInterval(pollAll, state.interval);
+  // also poll immediately
+  pollAll();
+}
+
+// ── render ─────────────────────────────────────────────────────
+function render() {
+  let html = '';
+  const urls = Object.keys(state.nodes);
+  if (urls.length === 0) {
+    html = `<div class="node-card" style="grid-column:1/-1;text-align:center;padding:2rem;color:#888;">
+      Add nodes to start monitoring the cluster.</div>`;
+    gridEl.innerHTML = html;
+    statusDetail.textContent = '0 nodes · awaiting configuration';
+    return;
+  }
+  for (const url of urls) {
+    html += renderCard(url, state.nodes[url] || {});
+  }
+  gridEl.innerHTML = html;
+  statusDetail.textContent = `${urls.length} node${urls.length !== 1 ? 's' : ''} · polling ${state.interval}ms`;
+}
+
+function renderCard(url, m) {
+  const id = m.id ?? '?';
+  const stateStr = m.state ?? 'Unknown';
+  const term = m.current_term ?? 0;
+  const leader = m.current_leader;
+  const lastLog = m.last_log_index ?? '—';
+  const lastApplied = m.last_applied?.LogId?.index ?? m.last_applied?.index ?? '—';
+  const snapshot = m.snapshot?.LogId?.index ?? m.snapshot?.index ?? '—';
+  const vote = m.vote?.NodeId ?? '—';
+  const runningOk = m.running_state === null || m.running_state === undefined || m.running_state === 'Ok' || m.running_state?.Ok !== undefined;
+  const error = m._error;
+  const isLeader = stateStr === 'Leader';
+  const isSelfLeader = leader !== null && leader !== undefined && leader === id;
+
+  const stateClass = (stateStr ?? '').toLowerCase();
+  const leaderLabel = leader != null ? leader : '—';
+
+  // ── replication table (leader-only) ─────────────────────────
+  let replHtml = '';
+  if (isLeader && m.replication) {
+    let replItems = '';
+    // replication is a map of nodeId → last_log_id for followers
+    // In openraft 0.9.24, replication is BTreeMap<NID, Option<LogId<NID>>>
+    // with serde serialization, it becomes an object with string keys
+    const repl = m.replication;
+    // Find max log index for progress bars
+    let maxIdx = lastLog !== '—' ? lastLog : 0;
+
+    for (const [nodeId, logId] of Object.entries(repl)) {
+      const replIdx = logId?.LogId?.index ?? logId?.index ?? 0;
+      const pct = maxIdx > 0 ? Math.round((replIdx / maxIdx) * 100) : 0;
+      const stalled = maxIdx > 0 && pct < 100 && pct < 30;
+      replItems += `
+        <div class="repl-row">
+          <span class="repl-node-id">${nodeId}</span>
+          <div class="repl-bar-track">
+            <div class="repl-bar-fill${stalled ? ' stalled' : ''}" style="width:${pct}%"></div>
+          </div>
+          <span class="repl-label">${replIdx}</span>
+        </div>`;
+    }
+    if (replItems) {
+      replHtml = `
+        <div class="replication-section">
+          <h3>Replication</h3>
+          ${replItems}
+        </div>`;
+    }
+  }
+
+  const errorHtml = error
+    ? `<div style="margin-top:0.5rem;padding:0.3rem 0.5rem;border:2px solid #d00;color:#d00;font-size:0.75rem;font-weight:700;">! ${error}</div>`
+    : '';
+
+  const statusIcon = runningOk ? '' : '<span style="color:#d00;font-weight:700;"> [DOWN]</span>';
+
+  return `
+<div class="node-card state-${stateClass}">
+  <div class="node-card-header">
+    <span class="node-id">NODE ${id}${statusIcon}</span>
+    <span class="node-state-badge">${stateStr}</span>
+  </div>
+  <div class="node-card-body">
+    <span class="metric-label">URL</span>
+    <span class="metric-value" style="font-size:0.75rem;">${url}</span>
+
+    <span class="metric-label">Term</span>
+    <span class="metric-value">${term}</span>
+
+    <span class="metric-label">Leader</span>
+    <span class="metric-value ${isSelfLeader ? 'leader-self' : (leader !== '—' ? 'leader-other' : '')}">${leaderLabel}</span>
+
+    <span class="metric-label">Last Log</span>
+    <span class="metric-value">${lastLog}</span>
+
+    <span class="metric-label">Last Applied</span>
+    <span class="metric-value">${lastApplied}</span>
+
+    <span class="metric-label">Vote</span>
+    <span class="metric-value">${vote}</span>
+
+    <span class="metric-label">Snapshot</span>
+    <span class="metric-value">${snapshot}</span>
+  </div>
+  ${replHtml}
+  ${errorHtml}
+</div>`;
+}
+
+// ── manage nodes ───────────────────────────────────────────────
+function addNode() {
+  const input = document.getElementById('nodeUrl');
+  const url = input.value.trim();
+  if (!url) return;
+  if (state.nodes[url]) {
+    log(`<b>${url}</b> already monitored`);
+    return;
+  }
+  state.nodes[url] = {};
+  state.prev[url] = null;
+  log(`<b>${url}</b> added to monitoring`);
+  input.value = '';
+  if (!state.polling) startPolling();
+}
+
+function removeNode(url) {
+  delete state.nodes[url];
+  delete state.prev[url];
+  log(`<b>${url}</b> removed from monitoring`);
+  render();
+  const n = Object.keys(state.nodes).length;
+  if (n === 0 && state.polling) {
+    clearInterval(state.polling);
+    state.polling = null;
+    statusText.innerHTML = '<span class="pulse"></span> IDLE';
+    statusDetail.textContent = '0 nodes · stopped';
+  }
+}
+
+// ── init ───────────────────────────────────────────────────────
+document.getElementById('addNodeBtn').addEventListener('click', addNode);
+document.getElementById('nodeUrl').addEventListener('keydown', e => { if (e.key === 'Enter') addNode(); });
+document.getElementById('clearLogBtn').addEventListener('click', () => {
+  logEl.innerHTML = '<div class="event-entry"><span class="event-time">—</span><span class="event-msg">Log cleared.</span></div>';
+});
+document.getElementById('pollInterval').addEventListener('change', () => {
+  if (state.polling) startPolling();
+});
+
+// Right-click to remove a node (delegated)
+gridEl.addEventListener('contextmenu', e => {
+  const card = e.target.closest('.node-card');
+  if (!card) return;
+  // find the URL from the card content
+  const urlSpan = card.querySelector('.metric-value:first-child');
+  if (urlSpan) {
+    const url = urlSpan.textContent.trim();
+    if (url && state.nodes[url]) {
+      e.preventDefault();
+      if (confirm(`Remove ${url} from monitoring?`)) removeNode(url);
+    }
+  }
+});
+
+log('<b>Dashboard loaded.</b> Add node URLs (e.g. <code>127.0.0.1:21011</code>) and click "+ ADD NODE".');
+log('Right-click a node card to remove it from monitoring.');
+</script>
+</body>
+</html>

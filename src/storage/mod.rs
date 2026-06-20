@@ -8,6 +8,7 @@ pub mod footer;
 pub mod index;
 pub mod kv2;
 pub mod manifest_codec;
+pub mod raft;
 mod readmanager;
 pub mod record;
 mod recovermanager;
