@@ -9,6 +9,6 @@ pub const SSTABLE_BLOCK_SIZE: usize = 4096; // 4KB - DEPRECATED: use StorageConf
 // WAL (Write-Ahead Log) constants
 pub const WAL_HEADER_SIZE: u64 = 36; // Header size in bytes
 pub const WAL_MAGIC: &[u8; 8] = b"WALMGIC\0"; // Magic number for WAL file identification
-pub const WAL_VERSION: u64 = 1; // WAL format version
+pub const WAL_VERSION: u64 = 2; // WAL format version
 
 pub const MAXIMUM_LEVEL_FILES: usize = 2; // DEPRECATED: use StorageConfig::max_level0_files - Maximum number of files allowed in each level before triggering compaction

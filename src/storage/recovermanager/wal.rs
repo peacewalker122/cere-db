@@ -1,110 +1,169 @@
-// need to expose given API
-// 1. write log with group commit
-// 2. read log with offset and length (canceled, use recover)
-// 3. checkpoint/flushing entrypoint (this is for easier wal "deletion" whenever checkpoint is done, we can just move the offset forward and ignore old logs)
-// 4. recovery entrypoint (given a wal file, read from the last checkpoint offset and apply all logs to recover the state)
-// 5. Manifest file management (keep track of wal files, their offsets, and checkpoint information)
-// use async primivites with tokio
-
 use std::{
-    collections::VecDeque,
-    io::Write,
-    path::PathBuf,
-    sync::atomic::{self, AtomicU64},
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+    sync::atomic::AtomicU64,
 };
 
 use crossbeam_skiplist::SkipMap;
 use tokio::{
-    fs::{File as TokioFile, OpenOptions},
-    io::{AsyncReadExt, AsyncWriteExt},
+    fs::{File, OpenOptions},
+    io::AsyncWriteExt,
+    sync::Mutex,
 };
 
-use crate::error::DBError;
-use crate::storage::{constant::*, record::RecordType, recovermanager::segment::SegmentId};
+use super::{
+    log_store::{LogCommand, LogPosition, LogStore},
+    segment::SegmentId,
+};
+use crate::{
+    error::DBError,
+    storage::{constant::*, record::RecordType},
+};
 
-use super::log_store::{LogCommand, LogPosition, LogStore};
+const LEGACY_WAL_VERSION: u64 = 1;
+const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024;
+const FRAME_HEADER_SIZE: usize = 20;
 
-// Implement both read, write and recover as a method here also rotation
 pub struct WALManager {
-    active_wal: tokio::sync::RwLock<TokioFile>, // File handle for the WAL file (active)
-    sealed_wal: tokio::sync::Mutex<Vec<u64>>, // File handles for sealed WAL files that are being flushed
-    reserved_wal: tokio::sync::Mutex<VecDeque<u64>>, // File handles for reserved WAL files that are waiting to be flushed after checkpoint is done
+    state: Mutex<WriterState>,
+    max_segment_size: u64,
+    wal_dir: PathBuf,
+}
 
-    active_segment_id: SegmentId, // Current WAL segment ID for log rotation
-    max_segment_size: u64,        // Maximum size of a WAL segment before rotation
-
-    wal_dir: PathBuf, // Directory where WAL files are stored
+struct WriterState {
+    file: File,
+    segment_id: u64,
+    size: u64,
+    next_lsn: u64,
+    poisoned: bool,
+    sealed: BTreeSet<u64>,
 }
 
 pub type FileWalStore = WALManager;
 
-// Additional methods for writing logs, reading logs, checkpointing, and recovery would go here
+#[derive(Debug, Clone)]
+pub struct WALRecord {
+    pub record_type: u8,
+    pub lsn: u64,
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+    pub checksum: u32,
+}
+
+#[derive(Debug)]
+enum TransactionRecord {
+    Update(LogCommand),
+    Commit,
+}
+
+#[derive(Debug)]
+struct Frame {
+    lsn: u64,
+    transaction_id: u64,
+    previous_lsn: u64,
+    record: TransactionRecord,
+}
+
+#[derive(Default)]
+struct Analysis {
+    latest_lsn: u64,
+    previous_lsns: BTreeMap<u64, u64>,
+    committed_transactions: BTreeSet<u64>,
+    updates: Vec<LoggedUpdate>,
+    legacy: Vec<WALRecord>,
+}
+
+struct LoggedUpdate {
+    transaction_id: u64,
+    command: LogCommand,
+    checksum: u32,
+}
+
+impl Analysis {
+    fn accept(&mut self, frame: Frame, checksum: u32) -> Result<(), DBError> {
+        let previous_lsn = self
+            .previous_lsns
+            .get(&frame.transaction_id)
+            .copied()
+            .unwrap_or(0);
+        if frame.lsn != self.latest_lsn + 1
+            || frame.transaction_id == 0
+            || self.committed_transactions.contains(&frame.transaction_id)
+            || frame.previous_lsn != previous_lsn
+        {
+            return Err(DBError::Corrupted("Invalid WAL transaction chain".into()));
+        }
+        match frame.record {
+            TransactionRecord::Update(command) => {
+                self.updates.push(LoggedUpdate {
+                    transaction_id: frame.transaction_id,
+                    command,
+                    checksum,
+                });
+            }
+            TransactionRecord::Commit => {
+                if previous_lsn == 0 {
+                    return Err(DBError::Corrupted("Commit without update".into()));
+                }
+                self.committed_transactions.insert(frame.transaction_id);
+            }
+        }
+        self.latest_lsn = frame.lsn;
+        self.previous_lsns.insert(frame.transaction_id, frame.lsn);
+        Ok(())
+    }
+
+    fn redo(self) -> Vec<WALRecord> {
+        let mut records = self.legacy;
+        records.extend(
+            self.updates
+                .into_iter()
+                .filter(|update| self.committed_transactions.contains(&update.transaction_id))
+                .map(|update| WALRecord {
+                    record_type: update.command.record_type as u8,
+                    lsn: update.command.lsn,
+                    key: update.command.key,
+                    value: update.command.value,
+                    checksum: update.checksum,
+                }),
+        );
+        records
+    }
+}
+
 impl WALManager {
     pub async fn new(wal_dir: PathBuf, max_segment_size: u64) -> Result<Self, DBError> {
-        let wal_files = std::fs::read_dir(&wal_dir)?;
-
-        // retrieve the latest segment id from the wal_dir
-        let mut max_segment_id: SegmentId = SegmentId(AtomicU64::new(0));
-        for entry in wal_files.flatten() {
-            match entry.file_name().to_str() {
-                Some(file_name) if file_name.ends_with(".log") => {
-                    if let Ok(id) = file_name[..file_name.len() - 4].parse::<u64>() {
-                        let max = std::cmp::max(
-                            max_segment_id.0.load(std::sync::atomic::Ordering::SeqCst),
-                            id,
-                        );
-                        max_segment_id = SegmentId(AtomicU64::new(max));
-                    }
-                }
-                _ => (),
-            }
+        tokio::fs::create_dir_all(&wal_dir).await?;
+        let paths = segment_paths(&wal_dir).await?;
+        let mut analysis = Analysis::default();
+        let mut latest_version = WAL_VERSION;
+        for (index, (_, path)) in paths.iter().enumerate() {
+            latest_version = scan_segment(path, index + 1 == paths.len(), &mut analysis).await?;
         }
-        let mut wal_file: TokioFile;
-        let max_segment_id_value = max_segment_id.0.load(std::sync::atomic::Ordering::SeqCst);
-
-        if max_segment_id_value > 0 {
-            // Open existing segment with highest ID
-            let file = OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(wal_dir.join(max_segment_id.filename()))
-                .await?;
-            wal_file = file;
+        let mut segment_id = paths.last().map_or(0, |(id, _)| *id);
+        let mut sealed: BTreeSet<u64> = paths.iter().map(|(id, _)| *id).collect();
+        if latest_version == LEGACY_WAL_VERSION && !paths.is_empty() {
+            segment_id = segment_id
+                .checked_add(1)
+                .ok_or_else(|| DBError::StorageError("WAL segment ID exhausted".into()))?;
+        }
+        let path = segment_path(&wal_dir, segment_id);
+        let file = if paths.is_empty() || latest_version == LEGACY_WAL_VERSION {
+            create_segment(&wal_dir, segment_id).await?
         } else {
-            // Check if segment 0 already exists (recovery scenario)
-            let seg0_path = wal_dir.join(max_segment_id.filename());
-            if seg0_path.exists() {
-                // Open existing segment 0
-                let file = OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(&seg0_path)
-                    .await?;
-                wal_file = file;
-            } else {
-                // Create new segment 0
-                wal_file = OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(&seg0_path)
-                    .await?;
-                let header: WALHeader = WALHeader::default();
-                wal_file.write_all(&header.encode()).await?;
-            }
-        }
-
-        log::debug!(
-            "Initialized WALManager with active segment ID {}, max segment size {}, wal directory {:?}",
-            max_segment_id_value,
-            max_segment_size,
-            wal_dir
-        );
-
-        Ok(WALManager {
-            active_wal: tokio::sync::RwLock::new(wal_file), // File will be opened lazily when writing logs
-            sealed_wal: tokio::sync::Mutex::new(vec![]),    // No sealed WAL files at initialization
-            reserved_wal: tokio::sync::Mutex::new(VecDeque::new()), // No reserved WAL files at initialization
-            active_segment_id: max_segment_id,                      // default 0
+            OpenOptions::new().append(true).open(path).await?
+        };
+        sealed.remove(&segment_id);
+        let size = file.metadata().await?.len();
+        Ok(Self {
+            state: Mutex::new(WriterState {
+                file,
+                segment_id,
+                size,
+                next_lsn: analysis.latest_lsn + 1,
+                poisoned: false,
+                sealed,
+            }),
             max_segment_size,
             wal_dir,
         })
@@ -117,353 +176,416 @@ impl WALManager {
         lsn: u64,
         record_type: RecordType,
     ) -> Result<u64, DBError> {
-        let mut wal_file = self.active_wal.write().await;
-
-        // Check if current segment exceeds max size before writing
-        let metadata = wal_file.metadata().await?;
-        if metadata.len() >= self.max_segment_size {
-            log::info!(
-                "WAL segment {} reached max size ({} bytes), rotating to new segment",
-                self.active_segment_id.0.load(atomic::Ordering::SeqCst),
-                metadata.len()
-            );
-            drop(wal_file); // Release the lock before creating new file
-            self.create_new_wal_file().await?;
-            wal_file = self.active_wal.write().await;
-        }
-
-        let record = encode_record(key, value, record_type as u8, lsn).await?;
-
-        log::info!(
-            "Writing log with LSN {}: key_len={}, key={}, value_len={}, value={}, record_type={:?}, wal_file={:?}",
-            lsn,
-            key.len(),
-            String::from_utf8_lossy(key),
-            value.len(),
-            String::from_utf8_lossy(value),
+        self.write_transaction(vec![LogCommand::new(
             record_type,
-            wal_file
-        );
-
-        // TODO: add grouped commit mechanism here
-        wal_file.write_all(&record).await?;
-        wal_file.sync_data().await?;
-
+            key.clone(),
+            value.clone(),
+            lsn,
+        )])
+        .await?;
         Ok(lsn)
+    }
+
+    pub async fn write_transaction(&self, commands: Vec<LogCommand>) -> Result<(), DBError> {
+        if commands.is_empty() {
+            return Err(DBError::StorageError(
+                "WAL transaction must contain an update".into(),
+            ));
+        }
+        let mut state = self.state.lock().await;
+        ensure_healthy(&state)?;
+        let transaction_id = state.next_lsn;
+        let mut bytes = Vec::new();
+        let mut previous_lsn = 0;
+        let mut next_lsn = state.next_lsn;
+        for command in commands {
+            if command.record_type == RecordType::Delete && !command.value.is_empty() {
+                return Err(DBError::StorageError("Delete contains a value".into()));
+            }
+            bytes.extend(encode_frame(&Frame {
+                lsn: next_lsn,
+                transaction_id,
+                previous_lsn,
+                record: TransactionRecord::Update(command),
+            })?);
+            previous_lsn = next_lsn;
+            next_lsn = next_lsn
+                .checked_add(1)
+                .ok_or_else(|| DBError::StorageError("WAL LSN exhausted".into()))?;
+        }
+        bytes.extend(encode_frame(&Frame {
+            lsn: next_lsn,
+            transaction_id,
+            previous_lsn,
+            record: TransactionRecord::Commit,
+        })?);
+        let following_lsn = next_lsn
+            .checked_add(1)
+            .ok_or_else(|| DBError::StorageError("WAL LSN exhausted".into()))?;
+        state.poisoned = true;
+        if state.size > WAL_HEADER_SIZE
+            && state.size.saturating_add(bytes.len() as u64) > self.max_segment_size
+        {
+            self.rotate_locked(&mut state).await?;
+        }
+        state.file.write_all(&bytes).await?;
+        state.file.sync_data().await?;
+        state.size += bytes.len() as u64;
+        state.next_lsn = following_lsn;
+        state.poisoned = false;
+        Ok(())
     }
 
     pub async fn recover(
         &self,
         memtable: &mut SkipMap<Vec<u8>, (RecordType, Vec<u8>)>,
     ) -> Result<(), DBError> {
-        let records = self.recover_records().await?;
-
-        for record in records {
-            let key = record.key;
-            let value = record.value;
-            let record_type = match record.record_type {
-                1 => RecordType::Put,
-                2 => RecordType::Delete,
-                _ => continue,
-            };
-
-            if record_type == RecordType::Put {
-                memtable.insert(key, (record_type, value));
-            } else {
-                memtable.insert(key, (record_type, vec![]));
-            }
+        for record in self.recover_records().await? {
+            let record_type = decode_record_type(record.record_type)?;
+            memtable.insert(record.key, (record_type, record.value));
         }
-
         Ok(())
     }
 
     pub async fn recover_records(&self) -> Result<Vec<WALRecord>, DBError> {
-        log::debug!("Starting WAL recovery from directory: {:?}", self.wal_dir);
-
-        let mut wal_files = tokio::fs::read_dir(&self.wal_dir).await?;
-
-        let mut filenames = vec![];
-        while let Ok(Some(entry)) = wal_files.next_entry().await {
-            if entry
-                .file_name()
-                .to_str()
-                .is_some_and(|s| s.ends_with(".log"))
-            {
-                filenames.push(entry.path());
-            }
+        let state = self.state.lock().await;
+        ensure_healthy(&state)?;
+        let mut analysis = Analysis::default();
+        for (_, path) in segment_paths(&self.wal_dir).await? {
+            scan_segment(&path, false, &mut analysis).await?;
         }
-        filenames.sort();
-
-        let mut all_records = Vec::new();
-        for file_path in filenames {
-            let records = Self::read_log(file_path).await?;
-            all_records.extend(records);
-        }
-
-        for record in &all_records {
-            log::info!(
-                "Recovering WAL record: key={:?}, value_len={}, type={:?}, lsn={}",
-                String::from_utf8_lossy(&record.key),
-                String::from_utf8_lossy(&record.value),
-                record.record_type,
-                record.lsn
-            );
-        }
-
-        Ok(all_records)
+        Ok(analysis.redo())
     }
 
-    async fn create_new_wal_file(&self) -> Result<(), DBError> {
-        self.active_segment_id
-            .0
-            .fetch_add(1, atomic::Ordering::SeqCst);
-        let wal_file_path = self.wal_dir.join(self.active_segment_id.filename());
-        let mut new_file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&wal_file_path)
-            .await?;
-
-        let header: WALHeader = WALHeader::default();
-        new_file.write_all(&header.encode()).await?;
-
-        let mut active = self.active_wal.write().await;
-        *active = new_file;
+    async fn rotate_locked(&self, state: &mut WriterState) -> Result<(), DBError> {
+        state.file.sync_all().await?;
+        let next_id = state
+            .segment_id
+            .checked_add(1)
+            .ok_or_else(|| DBError::StorageError("WAL segment ID exhausted".into()))?;
+        let file = create_segment(&self.wal_dir, next_id).await?;
+        state.sealed.insert(state.segment_id);
+        state.file = file;
+        state.segment_id = next_id;
+        state.size = WAL_HEADER_SIZE;
         Ok(())
     }
 
     pub async fn rotate_wal_file(&self) -> Result<u64, DBError> {
-        // this will change the state of active wal into locked state and move the current active
-        // wal file to the reserved / new wal file, and create a new wal file for the next write, the old wal file will be flushed to disk and can be deleted after the checkpoint is done
-        let prev_segment_id = self.active_segment_id.0.load(atomic::Ordering::SeqCst);
-
-        // check if there's a file on the reserve
-        // if exist, use it and change the filename to the new segment id use the lowest segmentid first , if not, create a new file with the new segment id
-        if let Some(reserved_segment_id) = self.reserved_wal.lock().await.pop_front() {
-            // seal the current active wal file and move it to the sealed_wal list, the file will be flushed to disk and can be deleted after the checkpoint is done
-            let mut sealed = self.sealed_wal.lock().await;
-            sealed.push(prev_segment_id);
-
-            let _ = self
-                .active_segment_id
-                .0
-                .fetch_add(1, atomic::Ordering::SeqCst);
-            let new_path = self.wal_dir.join(self.active_segment_id.filename());
-
-            //  remove the wal file with just only the header, and move it to the new path
-            tokio::fs::remove_file(self.wal_dir.join(format!("{:020}.log", prev_segment_id)))
-                .await?;
-
-            let new_file = OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&new_path)
-                .await?;
-            let mut active = self.active_wal.write().await;
-            *active = new_file;
-        } else {
-            //  remove the wal file with just only the header, and move it to the new path
-            tokio::fs::remove_file(self.wal_dir.join(format!("{:020}.log", prev_segment_id)))
-                .await?;
-
-            self.create_new_wal_file().await?;
-
-            // still need to seal the current active wal file and move it to the sealed_wal list, the file will be flushed to disk and can be deleted after the checkpoint is done
-            let mut sealed = self.sealed_wal.lock().await;
-            sealed.push(prev_segment_id);
-
-            // return the new segment id after rotation, the caller can use this to update the manifest file with the new active wal segment id
-            return Ok(self.active_segment_id.0.load(atomic::Ordering::SeqCst));
-        }
-
-        Ok(prev_segment_id)
+        let mut state = self.state.lock().await;
+        ensure_healthy(&state)?;
+        state.poisoned = true;
+        self.rotate_locked(&mut state).await?;
+        state.poisoned = false;
+        Ok(state.segment_id)
     }
 
-    // this will change the state of the wal file from sealed to reserved, and move the file handle to the reserved_wal queue, the file will be flushed to disk and can be deleted after the checkpoint is done
     pub async fn change_to_reserve(&self, locked_wal: u64) -> Result<SegmentId, DBError> {
-        let mut sealed = self.sealed_wal.lock().await;
-
-        if let Some(pos) = sealed.iter().position(|&id| id == locked_wal) {
-            let segment_id = sealed.remove(pos);
-            self.reserved_wal.lock().await.push_back(segment_id);
-            Ok(SegmentId(AtomicU64::new(segment_id)))
-        } else {
-            Err(DBError::StorageError(
-                "Locked WAL segment not found in sealed WAL list".to_string(),
-            ))
+        let mut state = self.state.lock().await;
+        ensure_healthy(&state)?;
+        if !state.sealed.remove(&locked_wal) {
+            return Err(DBError::StorageError("WAL segment is not sealed".into()));
         }
+        Ok(SegmentId(AtomicU64::new(locked_wal)))
     }
 
-    async fn read_log(file_path: PathBuf) -> Result<Vec<WALRecord>, DBError> {
-        let mut wal_file = TokioFile::open(file_path).await?;
-        let mut buf = tokio::io::BufReader::with_capacity(64 * 1024, wal_file);
+    #[cfg(test)]
+    async fn read_committed_file(path: PathBuf) -> Result<Vec<WALRecord>, DBError> {
+        let mut analysis = Analysis::default();
+        scan_segment(&path, false, &mut analysis).await?;
+        Ok(analysis.redo())
+    }
+}
 
-        // read the header first
-        let mut header_buf = vec![0u8; WAL_HEADER_SIZE as usize];
-        buf.read_exact(&mut header_buf).await?;
-        let header = WALHeader::decode(&header_buf)?;
+fn ensure_healthy(state: &WriterState) -> Result<(), DBError> {
+    if state.poisoned {
+        return Err(DBError::StorageError(
+            "WAL write interrupted or failed; reopen before reuse".into(),
+        ));
+    }
+    Ok(())
+}
 
-        let mut record_offset = header.last_checkpoint_offset;
-        if record_offset == 0 {
-            record_offset = WAL_HEADER_SIZE; // start reading records right after the header if no checkpoint offset is set
-        }
+fn segment_path(directory: &Path, id: u64) -> PathBuf {
+    directory.join(format!("{id:020}.log"))
+}
 
-        let mut result = vec![];
-
-        // should read the log records in a loop until the end of the file, and decode each record into WALRecord struct, for now we just return an empty vec to make the code compile
-        loop {
-            let mut record_type_buf = [0u8; 1];
-            match buf.read_exact(&mut record_type_buf).await {
-                Ok(_) => (),
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break, // reached end of file
-                Err(e) => return Err(e.into()),
-            };
-
-            let record_type = match record_type_buf[0] {
-                1 => RecordType::Put,
-                2 => RecordType::Delete,
-                _ => {
-                    return Err(DBError::Corrupted(
-                        "Invalid record type".to_string(),
-                    ));
-                }
-            };
-
-            let mut len_buf = [0u8; 8];
-            if let Err(e) = buf.read_exact(&mut len_buf).await {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    log::warn!("Reached EOF while reading LSN, ending record parse");
-                    break;
-                }
-                return Err(e.into());
-            }
-            let lsn = u64::from_be_bytes(len_buf);
-
-            if let Err(e) = buf.read_exact(&mut len_buf).await {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    log::warn!("Reached EOF while reading key length, ending record parse");
-                    break;
-                }
-                return Err(e.into());
-            }
-            let key_len = u64::from_be_bytes(len_buf) as usize;
-
-            let mut key_bytes = vec![0u8; key_len];
-            if let Err(e) = buf.read_exact(&mut key_bytes).await {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    log::warn!("Reached EOF while reading key, ending record parse");
-                    break;
-                }
-                return Err(e.into());
-            }
-
-            if let Err(e) = buf.read_exact(&mut len_buf).await {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    log::warn!("Reached EOF while reading value length, ending record parse");
-                    break;
-                }
-                return Err(e.into());
-            }
-            let value_len = u64::from_be_bytes(len_buf) as usize;
-
-            let mut value_bytes = vec![0u8; value_len];
-            if let Err(e) = buf.read_exact(&mut value_bytes).await {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    log::warn!("Reached EOF while reading value, ending record parse");
-                    break;
-                }
-                return Err(e.into());
-            }
-
-            let mut crc_buf = [0u8; 4];
-            if let Err(e) = buf.read_exact(&mut crc_buf).await {
-                if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    log::warn!("Reached EOF while reading checksum, ending record parse");
-                    break;
-                }
-                return Err(e.into());
-            }
-            let checksum = u32::from_be_bytes(crc_buf);
-
-            let mut hasher = crc32fast::Hasher::new();
-            hasher.update(&record_type_buf);
-            hasher.update(&lsn.to_be_bytes());
-            hasher.update(&(key_len as u64).to_be_bytes());
-            hasher.update(&key_bytes);
-            hasher.update(&(value_len as u64).to_be_bytes());
-            hasher.update(&value_bytes);
-            let crc = hasher.finalize();
-
-            if crc != checksum {
-                log::error!(
-                    "Checksum mismatch for record with LSN {}: expected {}, got {}",
-                    lsn,
-                    checksum,
-                    crc32fast::hash(&value_bytes)
-                );
+async fn segment_paths(directory: &Path) -> Result<Vec<(u64, PathBuf)>, DBError> {
+    let mut entries = tokio::fs::read_dir(directory).await?;
+    let mut paths = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        if let Some(id) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.strip_suffix(".log"))
+            .and_then(|id| id.parse::<u64>().ok())
+        {
+            if !entry.file_type().await?.is_file() {
                 return Err(DBError::Corrupted(
-                    "Checksum mismatch".to_string(),
+                    "WAL segment is not a regular file".into(),
                 ));
             }
-
-            result.push(WALRecord {
-                record_type: record_type_buf[0],
-                lsn,
-                key: key_bytes,
-                value: value_bytes,
-                checksum,
-            });
+            paths.push((id, entry.path()));
         }
+    }
+    paths.sort_by_key(|(id, _)| *id);
+    if paths
+        .windows(2)
+        .any(|pair| pair[0].0 == pair[1].0 || pair[0].0.checked_add(1) != Some(pair[1].0))
+    {
+        return Err(DBError::Corrupted(
+            "Duplicate or missing WAL segment".into(),
+        ));
+    }
+    Ok(paths)
+}
 
-        Ok(result)
+async fn create_segment(directory: &Path, id: u64) -> Result<File, DBError> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .append(true)
+        .open(segment_path(directory, id))
+        .await?;
+    file.write_all(&WALHeader::default().encode()).await?;
+    file.sync_all().await?;
+    File::open(directory).await?.sync_all().await?;
+    Ok(file)
+}
+
+fn encode_frame(frame: &Frame) -> Result<Vec<u8>, DBError> {
+    if let TransactionRecord::Update(command) = &frame.record {
+        let size = 42usize
+            .checked_add(command.key.len())
+            .and_then(|size| size.checked_add(command.value.len()));
+        if size.is_none_or(|size| size > MAX_FRAME_SIZE) {
+            return Err(DBError::StorageError("WAL frame exceeds 64 MiB".into()));
+        }
+    }
+    let mut body = Vec::new();
+    body.push(match frame.record {
+        TransactionRecord::Update(_) => 1,
+        TransactionRecord::Commit => 2,
+    });
+    body.extend_from_slice(&frame.transaction_id.to_be_bytes());
+    body.extend_from_slice(&frame.previous_lsn.to_be_bytes());
+    if let TransactionRecord::Update(command) = &frame.record {
+        body.push(command.record_type as u8);
+        body.extend_from_slice(&command.lsn.to_be_bytes());
+        body.extend_from_slice(&(command.key.len() as u64).to_be_bytes());
+        body.extend_from_slice(&(command.value.len() as u64).to_be_bytes());
+        body.extend_from_slice(&command.key);
+        body.extend_from_slice(&command.value);
+    }
+    if body.len() > MAX_FRAME_SIZE {
+        return Err(DBError::StorageError("WAL frame exceeds 64 MiB".into()));
+    }
+    let mut bytes = Vec::with_capacity(FRAME_HEADER_SIZE + body.len());
+    bytes.extend_from_slice(&frame.lsn.to_be_bytes());
+    bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&bytes);
+    hasher.update(&body);
+    bytes.extend_from_slice(&hasher.finalize().to_be_bytes());
+    bytes.extend_from_slice(&crc32fast::hash(&bytes).to_be_bytes());
+    bytes.extend_from_slice(&body);
+    Ok(bytes)
+}
+
+struct Decoder<'a> {
+    remaining: &'a [u8],
+}
+
+impl<'a> Decoder<'a> {
+    fn take(&mut self, length: usize) -> Result<&'a [u8], DBError> {
+        if length > self.remaining.len() {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+        }
+        let (value, remaining) = self.remaining.split_at(length);
+        self.remaining = remaining;
+        Ok(value)
+    }
+
+    fn number(&mut self) -> Result<u64, DBError> {
+        Ok(u64::from_be_bytes(self.take(8)?.try_into()?))
+    }
+
+    fn payload(&mut self, length: u64) -> Result<Vec<u8>, DBError> {
+        let length = usize::try_from(length)
+            .map_err(|_| DBError::Corrupted("WAL length overflow".into()))?;
+        Ok(self.take(length)?.to_vec())
     }
 }
 
-pub struct WALRecord {
-    pub record_type: u8,
-    pub lsn: u64,
-    pub key: Vec<u8>,
-    pub value: Vec<u8>,
-    pub checksum: u32,
+fn decode_record_type(value: u8) -> Result<RecordType, DBError> {
+    match value {
+        1 => Ok(RecordType::Put),
+        2 => Ok(RecordType::Delete),
+        _ => Err(DBError::Corrupted("Invalid WAL operation".into())),
+    }
 }
 
-async fn encode_record(
-    key: &Vec<u8>,
-    value: &Vec<u8>,
-    record_type: u8,
-    lsn: u64,
-) -> Result<Vec<u8>, DBError> {
-    let mut buf = Vec::new();
-
-    tokio::io::AsyncWriteExt::write_all(&mut buf, &record_type.to_be_bytes()).await?;
-    tokio::io::AsyncWriteExt::write_all(&mut buf, &lsn.to_be_bytes()).await?;
-    tokio::io::AsyncWriteExt::write_all(&mut buf, &(key.len() as u64).to_be_bytes()).await?;
-    tokio::io::AsyncWriteExt::write_all(&mut buf, key).await?;
-    tokio::io::AsyncWriteExt::write_all(&mut buf, &(value.len() as u64).to_be_bytes()).await?;
-    tokio::io::AsyncWriteExt::write_all(&mut buf, value).await?;
-
-    let mut hash = crc32fast::Hasher::new();
-    hash.update(&record_type.to_be_bytes());
-    hash.update(&lsn.to_be_bytes());
-    hash.update(&(key.len() as u64).to_be_bytes());
-    hash.update(key);
-    hash.update(&(value.len() as u64).to_be_bytes());
-    hash.update(value);
-
-    let checksum = hash.finalize();
-    tokio::io::AsyncWriteExt::write_all(&mut buf, &checksum.to_be_bytes()).await?;
-
-    log::info!(
-        "Encoded record with LSN {}: key_len={},key={}, value_len={}, value={}, checksum={}",
+fn decode_frame(lsn: u64, body: &[u8]) -> Result<Frame, DBError> {
+    let mut decoder = Decoder { remaining: body };
+    let kind = decoder.take(1)?[0];
+    let transaction_id = decoder.number()?;
+    let previous_lsn = decoder.number()?;
+    let record = match kind {
+        1 => {
+            let record_type = decode_record_type(decoder.take(1)?[0])?;
+            let command_lsn = decoder.number()?;
+            let key_length = decoder.number()?;
+            let value_length = decoder.number()?;
+            let key = decoder.payload(key_length)?;
+            let value = decoder.payload(value_length)?;
+            if record_type == RecordType::Delete && !value.is_empty() {
+                return Err(DBError::Corrupted("Delete contains a value".into()));
+            }
+            TransactionRecord::Update(LogCommand::new(record_type, key, value, command_lsn))
+        }
+        2 => TransactionRecord::Commit,
+        _ => return Err(DBError::Corrupted("Invalid WAL transaction record".into())),
+    };
+    if !decoder.remaining.is_empty() {
+        return Err(DBError::Corrupted("Trailing WAL record bytes".into()));
+    }
+    Ok(Frame {
         lsn,
-        key.len(),
-        String::from_utf8_lossy(key),
-        value.len(),
-        String::from_utf8_lossy(value),
-        checksum
-    );
+        transaction_id,
+        previous_lsn,
+        record,
+    })
+}
 
-    Ok(buf)
+async fn scan_segment(
+    path: &Path,
+    repair_tail: bool,
+    analysis: &mut Analysis,
+) -> Result<u64, DBError> {
+    let mut bytes = tokio::fs::read(path).await?;
+    if bytes.len() < WAL_HEADER_SIZE as usize && repair_tail {
+        let header = [WAL_VERSION, LEGACY_WAL_VERSION]
+            .into_iter()
+            .filter(|version| *version != LEGACY_WAL_VERSION || analysis.latest_lsn == 0)
+            .map(|version| {
+                WALHeader {
+                    version,
+                    ..WALHeader::default()
+                }
+                .encode()
+            })
+            .find(|header| header.starts_with(&bytes))
+            .ok_or_else(|| DBError::Corrupted("Invalid incomplete WAL header".into()))?;
+        let mut file = OpenOptions::new().append(true).open(path).await?;
+        file.write_all(&header[bytes.len()..]).await?;
+        file.sync_all().await?;
+        File::open(
+            path.parent().ok_or_else(|| {
+                DBError::StorageError("WAL segment has no parent directory".into())
+            })?,
+        )
+        .await?
+        .sync_all()
+        .await?;
+        bytes = header;
+    }
+    let header = WALHeader::decode(&bytes)?;
+    if header.version == LEGACY_WAL_VERSION && analysis.latest_lsn != 0 {
+        return Err(DBError::Corrupted(
+            "Legacy WAL after transactional segment".into(),
+        ));
+    }
+    if header.last_checkpoint != 0 || header.last_checkpoint_offset != 0 {
+        return Err(DBError::Corrupted(
+            "Unsupported WAL checkpoint metadata".into(),
+        ));
+    }
+    let mut offset = WAL_HEADER_SIZE as usize;
+    while offset < bytes.len() {
+        let start = offset;
+        if header.version == LEGACY_WAL_VERSION {
+            match decode_legacy(&bytes[offset..]) {
+                Ok((record, length)) => {
+                    analysis.legacy.push(record);
+                    offset += length;
+                }
+                Err(DBError::IO(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            if bytes.len() - offset < FRAME_HEADER_SIZE {
+                break;
+            }
+            let header_checksum = u32::from_be_bytes(bytes[offset + 16..offset + 20].try_into()?);
+            if header_checksum != crc32fast::hash(&bytes[offset..offset + 16]) {
+                return Err(DBError::Corrupted(
+                    "WAL frame header checksum mismatch".into(),
+                ));
+            }
+            let lsn = u64::from_be_bytes(bytes[offset..offset + 8].try_into()?);
+            let length = u32::from_be_bytes(bytes[offset + 8..offset + 12].try_into()?) as usize;
+            if !(17..=MAX_FRAME_SIZE).contains(&length) {
+                return Err(DBError::Corrupted("Invalid WAL frame size".into()));
+            }
+            if bytes.len() - offset - FRAME_HEADER_SIZE < length {
+                break;
+            }
+            let checksum = u32::from_be_bytes(bytes[offset + 12..offset + 16].try_into()?);
+            let end = offset + FRAME_HEADER_SIZE + length;
+            let body = &bytes[offset + FRAME_HEADER_SIZE..end];
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&bytes[offset..offset + 12]);
+            hasher.update(body);
+            if checksum != hasher.finalize() {
+                return Err(DBError::Corrupted("WAL frame checksum mismatch".into()));
+            }
+            let frame = decode_frame(lsn, body)
+                .map_err(|error| DBError::Corrupted(format!("Invalid WAL frame: {error}")))?;
+            analysis.accept(frame, checksum)?;
+            offset = end;
+        }
+        if offset == start {
+            break;
+        }
+    }
+    if offset != bytes.len() {
+        if !repair_tail {
+            return Err(DBError::Corrupted(
+                "Incomplete WAL frame in sealed segment".into(),
+            ));
+        }
+        let file = OpenOptions::new().write(true).open(path).await?;
+        file.set_len(offset as u64).await?;
+        file.sync_all().await?;
+    }
+    Ok(header.version)
+}
+
+fn decode_legacy(bytes: &[u8]) -> Result<(WALRecord, usize), DBError> {
+    let mut decoder = Decoder { remaining: bytes };
+    let record_type = decoder.take(1)?[0];
+    decode_record_type(record_type)?;
+    let lsn = decoder.number()?;
+    let key_length = decoder.number()?;
+    let key = decoder.payload(key_length)?;
+    let value_length = decoder.number()?;
+    let value = decoder.payload(value_length)?;
+    let payload_length = bytes.len() - decoder.remaining.len();
+    let checksum = u32::from_be_bytes(decoder.take(4)?.try_into()?);
+    if crc32fast::hash(&bytes[..payload_length]) != checksum {
+        return Err(DBError::Corrupted("Legacy WAL checksum mismatch".into()));
+    }
+    Ok((
+        WALRecord {
+            record_type,
+            lsn,
+            key,
+            value,
+            checksum,
+        },
+        bytes.len() - decoder.remaining.len(),
+    ))
 }
 
 /// WAL file header structure (32 Bytes + 4 bytes checksum)
@@ -493,7 +615,7 @@ impl WALHeader {
     }
 
     /// Decode header from bytes
-    pub fn decode(buf: &Vec<u8>) -> Result<Self, DBError> {
+    pub fn decode(buf: &[u8]) -> Result<Self, DBError> {
         if buf.len() < WAL_HEADER_SIZE as usize {
             return Err(DBError::Corrupted(
                 "Buffer too short for WAL header".to_string(),
@@ -504,14 +626,15 @@ impl WALHeader {
         magic.copy_from_slice(&buf[0..8]);
 
         if &magic != WAL_MAGIC {
-            return Err(DBError::Corrupted(
-                "Invalid WAL magic number".to_string(),
-            ));
+            return Err(DBError::Corrupted("Invalid WAL magic number".to_string()));
         }
 
         let mut b = [0u8; 8];
         b.copy_from_slice(&buf[8..16]);
         let version = u64::from_be_bytes(b);
+        if version != LEGACY_WAL_VERSION && version != WAL_VERSION {
+            return Err(DBError::Corrupted("Unsupported WAL version".into()));
+        }
 
         b.copy_from_slice(&buf[16..24]);
         let last_checkpoint = u64::from_be_bytes(b);
@@ -554,33 +677,25 @@ impl Default for WALHeader {
 
 #[async_trait::async_trait]
 impl LogStore for WALManager {
-    async fn append(&self, cmd: LogCommand) -> Result<LogPosition, DBError> {
-        let lsn = self
-            .write_log(&cmd.key, &cmd.value, cmd.lsn, cmd.record_type)
-            .await?;
+    async fn append(&self, command: LogCommand) -> Result<LogPosition, DBError> {
+        let lsn = command.lsn;
+        self.write_transaction(vec![command]).await?;
         Ok(LogPosition { lsn })
     }
 
     async fn recover_commands(&self) -> Result<Vec<LogCommand>, DBError> {
-        let records = self.recover_records().await?;
-        let mut out = Vec::with_capacity(records.len());
-
-        for record in records {
-            let record_type = match record.record_type {
-                1 => RecordType::Put,
-                2 => RecordType::Delete,
-                _ => continue,
-            };
-
-            out.push(LogCommand {
-                record_type,
-                key: record.key,
-                value: record.value,
-                lsn: record.lsn,
-            });
-        }
-
-        Ok(out)
+        self.recover_records()
+            .await?
+            .into_iter()
+            .map(|record| {
+                Ok(LogCommand::new(
+                    decode_record_type(record.record_type)?,
+                    record.key,
+                    record.value,
+                    record.lsn,
+                ))
+            })
+            .collect()
     }
 
     async fn rotate(&self) -> Result<u64, DBError> {
@@ -588,13 +703,14 @@ impl LogStore for WALManager {
     }
 
     async fn mark_reserved(&self, segment_id: u64) -> Result<(), DBError> {
-        let _ = self.change_to_reserve(segment_id).await?;
+        self.change_to_reserve(segment_id).await?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
+    use std::io::Write;
     use tokio::io::AsyncReadExt;
 
     use super::*;
@@ -604,22 +720,17 @@ mod test {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string()); // make sure to use a unique temp directory for each test run
         std::fs::create_dir_all(&wal_dir).unwrap();
 
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
 
+        assert_eq!(wal_manager.state.lock().await.segment_id, 0);
         assert_eq!(
             wal_manager
-                .active_segment_id
-                .0
-                .load(std::sync::atomic::Ordering::SeqCst),
-            0
-        );
-        assert_eq!(
-            wal_manager
-                .active_wal
-                .read()
+                .state
+                .lock()
                 .await
+                .file
                 .metadata()
                 .await
                 .unwrap()
@@ -638,7 +749,7 @@ mod test {
 
         println!("Testing WALManager write_log with wal_dir: {:?}", wal_dir);
 
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
 
@@ -654,17 +765,14 @@ mod test {
         assert_eq!(lsn, 1);
 
         // Segment ID should remain at 0 (no rotation with 1MB segment size)
-        assert_eq!(
-            wal_manager
-                .active_segment_id
-                .0
-                .load(std::sync::atomic::Ordering::SeqCst),
-            0
-        );
+        assert_eq!(wal_manager.state.lock().await.segment_id, 0);
 
         // check the attached file, is it contains the log entry we just wrote?
-        let wal_file_path = wal_dir.join(wal_manager.active_segment_id.filename());
-        let mut wal_file = TokioFile::open(&wal_file_path).await.unwrap();
+        let wal_file_path = wal_dir.join(format!(
+            "{:020}.log",
+            wal_manager.state.lock().await.segment_id
+        ));
+        let mut wal_file = File::open(&wal_file_path).await.unwrap();
 
         // read from the header_last_offset to the end of the file
         let mut buf = Vec::new();
@@ -678,7 +786,9 @@ mod test {
         assert_eq!(header.last_checkpoint_offset, 0);
 
         // verify the log entry content
-        let log_entry = WALManager::read_log(wal_file_path).await.unwrap();
+        let log_entry = WALManager::read_committed_file(wal_file_path)
+            .await
+            .unwrap();
         assert_eq!(log_entry.len(), 1);
         assert_eq!(log_entry[0].record_type, record_type as u8);
         assert_eq!(log_entry[0].key, key);
@@ -693,7 +803,7 @@ mod test {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&wal_dir).unwrap();
 
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
 
@@ -710,7 +820,9 @@ mod test {
 
         // Read back and verify
         let wal_file_path = wal_dir.join("00000000000000000000.log");
-        let records = WALManager::read_log(wal_file_path).await.unwrap();
+        let records = WALManager::read_committed_file(wal_file_path)
+            .await
+            .unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].key, key);
@@ -725,7 +837,7 @@ mod test {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&wal_dir).unwrap();
 
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
 
@@ -743,7 +855,9 @@ mod test {
 
         // Read back and verify all records
         let wal_file_path = wal_dir.join("00000000000000000000.log");
-        let records = WALManager::read_log(wal_file_path).await.unwrap();
+        let records = WALManager::read_committed_file(wal_file_path)
+            .await
+            .unwrap();
 
         assert_eq!(records.len(), 5);
         for (i, record) in records.iter().enumerate() {
@@ -760,7 +874,7 @@ mod test {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&wal_dir).unwrap();
 
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
 
@@ -775,7 +889,9 @@ mod test {
 
         // Read back and verify
         let wal_file_path = wal_dir.join("00000000000000000000.log");
-        let records = WALManager::read_log(wal_file_path).await.unwrap();
+        let records = WALManager::read_committed_file(wal_file_path)
+            .await
+            .unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].key, key);
@@ -790,7 +906,7 @@ mod test {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&wal_dir).unwrap();
 
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
 
@@ -806,7 +922,9 @@ mod test {
 
         // Read back and verify
         let wal_file_path = wal_dir.join("00000000000000000000.log");
-        let records = WALManager::read_log(wal_file_path).await.unwrap();
+        let records = WALManager::read_committed_file(wal_file_path)
+            .await
+            .unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].key, key);
@@ -821,7 +939,7 @@ mod test {
         let wal_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&wal_dir).unwrap();
 
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
 
@@ -838,7 +956,9 @@ mod test {
 
         // Read back and verify
         let wal_file_path = wal_dir.join("00000000000000000000.log");
-        let records = WALManager::read_log(wal_file_path).await.unwrap();
+        let records = WALManager::read_committed_file(wal_file_path)
+            .await
+            .unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].key.len(), 10000);
@@ -855,7 +975,7 @@ mod test {
         std::fs::create_dir_all(&wal_dir).unwrap();
 
         // Create an empty WAL directory
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
 
@@ -874,7 +994,7 @@ mod test {
 
         // Write some records first
         {
-            let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+            let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
                 .await
                 .unwrap();
 
@@ -893,7 +1013,7 @@ mod test {
         }
 
         // Recover into a new memtable
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
         let mut memtable = SkipMap::new();
@@ -927,7 +1047,7 @@ mod test {
 
         // Write put and delete records
         {
-            let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+            let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
                 .await
                 .unwrap();
 
@@ -944,7 +1064,7 @@ mod test {
         }
 
         // Recover
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+        let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
             .await
             .unwrap();
         let mut memtable = SkipMap::new();
@@ -967,7 +1087,7 @@ mod test {
 
         // Write a valid record
         {
-            let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
+            let wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
                 .await
                 .unwrap();
 
@@ -985,22 +1105,19 @@ mod test {
                 .write(true)
                 .open(&wal_file_path)
                 .unwrap();
-            // Header is 36 bytes, record starts at offset 36:
-            // 1 byte record_type + 8 bytes lsn + 8 bytes key_len + 3 bytes key + 8 bytes value_len = offset 64 for value
-            // Corrupt a byte in the value ("value" = 5 bytes at offsets 64-68)
             use std::io::Seek;
-            file.seek(std::io::SeekFrom::Start(65)).unwrap(); // corrupt 2nd byte of value
+            file.seek(std::io::SeekFrom::Start(65)).unwrap();
             file.write_all(&[0xFF]).unwrap();
         }
 
         // Recover should fail due to checksum mismatch
-        let mut wal_manager = super::WALManager::new(wal_dir.clone(), 1024 * 1024)
-            .await
-            .unwrap();
-        let mut memtable = SkipMap::new();
-        let result = wal_manager.recover(&mut memtable).await;
-        assert!(result.is_err());
+        let result = super::WALManager::new(wal_dir.clone(), 1024 * 1024).await;
+        assert!(matches!(result, Err(DBError::Corrupted(_))));
 
         std::fs::remove_dir_all(wal_dir).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "wal_tests.rs"]
+mod crash_tests;

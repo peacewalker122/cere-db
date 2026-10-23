@@ -8,6 +8,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
+use tokio::io::AsyncWriteExt;
 
 use crate::error::DBError;
 use crate::storage::{
@@ -194,6 +195,23 @@ impl WriteComponent {
         old_memtable
     }
 
+    pub async fn flush_active_memtable(&mut self) -> Result<CheckpointResult, DBError> {
+        let snapshot = Arc::new(SkipMap::new());
+        for entry in self.memtable.iter() {
+            snapshot.insert(entry.key().clone(), entry.value().clone());
+        }
+        let result = self.flush(Arc::clone(&snapshot)).await?;
+        let mut removed_bytes = 0;
+        for entry in snapshot.iter() {
+            if let Some(removed) = self.memtable.remove(entry.key()) {
+                removed_bytes += removed.key().0.len() + removed.value().value.len();
+            }
+        }
+        self.memtable_size
+            .fetch_sub(removed_bytes, std::sync::atomic::Ordering::SeqCst);
+        Ok(result)
+    }
+
     pub fn active_memtable_handle(&self) -> Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> {
         Arc::clone(&self.memtable)
     }
@@ -315,18 +333,34 @@ impl WriteComponent {
 
         let (smallest_key, largest_key) =
             SSTableCodec::range_from_index(&codec.index).ok_or_else(|| {
-                DBError::Corrupted(
-                    "cannot register SSTable without sparse index range".to_string(),
-                )
+                DBError::Corrupted("cannot register SSTable without sparse index range".to_string())
             })?;
 
         let record_count = valid_records.len();
 
-        let file_id = self.manifest_manager.allocate_file_id().await?;
-
-        let file_path = self
-            .sstable_dir
-            .join(format!("level-0/sstable-{}.dat", file_id));
+        tokio::fs::create_dir_all(self.sstable_dir.join("level-0")).await?;
+        let (file_id, file_path, mut file) = loop {
+            let file_id = self.manifest_manager.allocate_file_id().await?;
+            let file_path = self
+                .sstable_dir
+                .join(format!("level-0/sstable-{}.dat", file_id));
+            match tokio::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&file_path)
+                .await
+            {
+                Ok(file) => break (file_id, file_path, file),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        };
+        file.write_all(&encoded).await?;
+        file.sync_all().await?;
+        tokio::fs::File::open(self.sstable_dir.join("level-0"))
+            .await?
+            .sync_all()
+            .await?;
 
         self.manifest_manager
             .register_sstable(SSTableMeta {
@@ -341,9 +375,15 @@ impl WriteComponent {
             })
             .await?;
 
-        // wal rotate should be called after the checkpoint is successful, so we can use the wal_path to name the sstable file.
-        let lsn = self.wal_manager.rotate_wal_file().await?;
-        self.manifest_manager.mark_checkpoint(lsn, lsn).await?;
+        let active_segment = self.wal_manager.rotate_wal_file().await?;
+        let checkpoint_lsn = valid_records
+            .values()
+            .map(|record| record.lsn)
+            .max()
+            .unwrap_or(0);
+        self.manifest_manager
+            .mark_checkpoint(checkpoint_lsn, active_segment)
+            .await?;
 
         Ok(CheckpointResult {
             sstable_path: file_path.to_string_lossy().to_string(), // Will be set after flush_memtable
@@ -389,6 +429,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn active_flush_preserves_cloned_writes_and_shared_accounting() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut component = build_write_component(directory.path()).await;
+        component.apply_replicated_command(LogCommand::new(
+            RecordType::Put,
+            b"old".to_vec(),
+            b"yes".to_vec(),
+            1,
+        ));
+        let clone = component.clone();
+        let reader = component.active_memtable_handle();
+        let mut flush = Box::pin(component.flush_active_memtable());
+        std::future::poll_fn(|context| {
+            assert!(std::future::Future::poll(flush.as_mut(), context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        clone.apply_replicated_command(LogCommand::new(
+            RecordType::Delete,
+            b"new".to_vec(),
+            Vec::new(),
+            2,
+        ));
+        flush.await.unwrap();
+        assert!(Arc::ptr_eq(&reader, &component.active_memtable_handle()));
+        assert_eq!(reader.len(), 1);
+        assert_eq!(
+            reader.iter().next().unwrap().value().record_type,
+            RecordType::Delete
+        );
+        assert_eq!(component.memtable_size_bytes(), 3);
+        assert_eq!(clone.memtable_size_bytes(), 3);
+        component.flush_active_memtable().await.unwrap();
+        assert!(reader.is_empty());
+        assert_eq!(clone.memtable_size_bytes(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_active_flush_retains_shared_entries_for_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut component = build_write_component(directory.path()).await;
+        component
+            .put(b"old".to_vec(), b"yes".to_vec())
+            .await
+            .unwrap();
+        component.delete(b"gone".to_vec()).await.unwrap();
+        let reader = component.active_memtable_handle();
+        let mut flush = Box::pin(component.flush_active_memtable());
+        std::future::poll_fn(|context| {
+            assert!(std::future::Future::poll(flush.as_mut(), context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(flush);
+        assert!(Arc::ptr_eq(&reader, &component.active_memtable_handle()));
+        assert_eq!(reader.len(), 2);
+        assert_eq!(component.memtable_size_bytes(), 10);
+        component
+            .put(b"new".to_vec(), b"yes".to_vec())
+            .await
+            .unwrap();
+        let result = component.flush_active_memtable().await.unwrap();
+        assert_eq!(result.record_count, 3);
+        assert!(reader.is_empty());
+        assert_eq!(component.memtable_size_bytes(), 0);
+    }
+
+    #[tokio::test]
+    async fn failed_sstable_write_preserves_wal_without_publishing_manifest() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut component = build_write_component(&directory.path().to_path_buf()).await;
+        component
+            .put(b"key".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        tokio::fs::remove_dir(directory.path().join("sstable/level-0"))
+            .await
+            .unwrap();
+        tokio::fs::write(directory.path().join("sstable/level-0"), b"obstruction")
+            .await
+            .unwrap();
+        assert!(component.flush_active_memtable().await.is_err());
+        assert_eq!(component.active_memtable_handle().len(), 1);
+        assert_eq!(component.memtable_size_bytes(), 8);
+        let snapshot = component.manifest_manager.snapshot().await;
+        assert!(snapshot.levels.get(&0).is_none_or(|files| files.is_empty()));
+        assert_eq!(snapshot.active_wal_segment, 0);
+        let records = component.wal_manager.recover_records().await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].value, b"value");
+    }
+
+    #[tokio::test]
     async fn flush_persists_memtable_and_updates_manifest() {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -418,8 +551,10 @@ mod tests {
             level0_files[0].bloom_size > 0,
             "bloom filter should have non-zero size in manifest"
         );
-        // Note: flush() encodes data but doesn't write to disk - only registers metadata in manifest
-        // result.data contains the encoded SSTable bytes
+        assert_eq!(
+            tokio::fs::read(&result.sstable_path).await.unwrap(),
+            result.data
+        );
         assert!(!result.data.is_empty(), "flush should return encoded data");
 
         assert!(snapshot.active_wal_segment > 0);

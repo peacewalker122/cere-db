@@ -6,10 +6,7 @@ use std::{
 };
 
 use crossbeam_skiplist::SkipMap;
-use tokio::{
-    io::AsyncWriteExt,
-    sync::mpsc::{Receiver, Sender},
-};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
@@ -189,13 +186,13 @@ impl KV2 {
             "Checking if flush is needed. Current memtable size: {} bytes",
             self.write_component.memtable_size_bytes()
         );
-        if self.write_component.memtable_size_bytes() < self.config.memtable_size_threshold as usize {
+        if self.write_component.memtable_size_bytes() < self.config.memtable_size_threshold as usize
+        {
             return Ok(());
         }
 
-        let locked_memtable = self.write_component.lock_memtable().await;
+        let flush_result = self.write_component.flush_active_memtable().await?;
         let active_memtable = self.write_component.active_memtable_handle();
-        let flush_result = self.write_component.flush(locked_memtable).await?;
 
         log::debug!(
             "Flushed memtable to SSTable. Flushed size: {} bytes, SSTable path: {}",
@@ -203,11 +200,6 @@ impl KV2 {
             flush_result.sstable_path
         );
         self.read_manager.set_memtable(active_memtable);
-
-        // Write SSTable to disk (file ownership lives in KV2, not WriteComponent)
-        let mut file = tokio::fs::File::create(&flush_result.sstable_path).await?;
-        file.write_all(&flush_result.data).await?;
-        file.sync_all().await?;
 
         // Use shared manifest for snapshot check
         let snapshot = self.manifest.snapshot().await;
@@ -397,7 +389,10 @@ mod tests {
         assert_eq!(results[2].0, b"gamma");
 
         // Scan sub-range
-        let results = kv2.scan(b"beta".to_vec()..=b"gamma".to_vec()).await.unwrap();
+        let results = kv2
+            .scan(b"beta".to_vec()..=b"gamma".to_vec())
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, b"beta");
         assert_eq!(results[1].0, b"gamma");
@@ -415,12 +410,8 @@ mod tests {
 
         let mut kv2 = KV2::open_with_defaults(&temp_dir).await.unwrap();
 
-        kv2.put(b"keep".to_vec(), b"value".to_vec())
-            .await
-            .unwrap();
-        kv2.put(b"remove".to_vec(), b"temp".to_vec())
-            .await
-            .unwrap();
+        kv2.put(b"keep".to_vec(), b"value".to_vec()).await.unwrap();
+        kv2.put(b"remove".to_vec(), b"temp".to_vec()).await.unwrap();
         kv2.delete(b"remove".to_vec()).await.unwrap();
 
         let results = kv2.scan(..).await.unwrap();
@@ -501,9 +492,7 @@ impl RaftKV2 {
         // --- Write component (no WAL needed; Raft log is the WAL) ---
         let wal_dir = base_dir.join("raft-wal");
         tokio::fs::create_dir_all(&wal_dir).await?;
-        let dummy_wal = Arc::new(
-            WALManager::new(wal_dir, config.wal_segment_size).await?,
-        );
+        let dummy_wal = Arc::new(WALManager::new(wal_dir, config.wal_segment_size).await?);
 
         let write_component = WriteComponent::new(
             sstable_dir,
@@ -554,7 +543,11 @@ impl RaftKV2 {
 
     fn build_recovered_memtable(
         commands: Vec<LogCommand>,
-    ) -> (crossbeam_skiplist::SkipMap<(Vec<u8>, u64), MemtableRecord>, u64, usize) {
+    ) -> (
+        crossbeam_skiplist::SkipMap<(Vec<u8>, u64), MemtableRecord>,
+        u64,
+        usize,
+    ) {
         let memtable = crossbeam_skiplist::SkipMap::new();
         let mut max_lsn = 0u64;
         let mut total_size = 0usize;
@@ -607,22 +600,19 @@ impl RaftKV2 {
                 return Ok(());
             }
         }
-        let (new_memtable, result) = {
+        let new_memtable = {
             let mut wc = self.write_handle.write().await;
-            let locked = wc.lock_memtable().await;
-            let new_memtable = wc.active_memtable_handle();
-            let result = wc.flush(locked).await?;
-            (new_memtable, result)
+            wc.flush_active_memtable().await?;
+            wc.active_memtable_handle()
         };
-        let mut file = tokio::fs::File::create(&result.sstable_path).await?;
-        file.write_all(&result.data).await?;
-        file.sync_all().await?;
         self.read_manager.set_memtable(new_memtable);
 
         let snapshot = self._manifest.snapshot().await;
         let l0 = snapshot.levels.get(&0).map_or(0, |f| f.len());
         if l0 >= self.config.max_level0_files {
-            let _ = self.compaction_sender.send(CompactionTrigger::CompactLevel { level: 0 });
+            let _ = self
+                .compaction_sender
+                .send(CompactionTrigger::CompactLevel { level: 0 });
         }
         Ok(())
     }
@@ -661,7 +651,10 @@ impl AsyncKVEngine for RaftKV2 {
         let cmd = LogCommand::new(RecordType::Put, key, value, lsn);
         let data = cmd.serialize();
         self.raft_layer.propose(data).await?;
-        self.write_handle.write().await.apply_replicated_command(cmd);
+        self.write_handle
+            .write()
+            .await
+            .apply_replicated_command(cmd);
         self.maybe_flush().await?;
         Ok(())
     }
@@ -678,7 +671,10 @@ impl AsyncKVEngine for RaftKV2 {
         let cmd = LogCommand::new(RecordType::Delete, key, Vec::new(), lsn);
         let data = cmd.serialize();
         self.raft_layer.propose(data).await?;
-        self.write_handle.write().await.apply_replicated_command(cmd);
+        self.write_handle
+            .write()
+            .await
+            .apply_replicated_command(cmd);
         self.maybe_flush().await?;
         Ok(())
     }
@@ -709,6 +705,78 @@ mod raft_tests {
             http_bind: "127.0.0.1:0".parse().unwrap(),
             raft_dir: dir.path().join("raft"),
         }
+    }
+
+    #[tokio::test]
+    async fn failed_flush_keeps_raft_writer_and_reader_on_the_same_table() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = StorageConfig {
+            memtable_size_threshold: 1,
+            max_level0_files: usize::MAX,
+            ..StorageConfig::default()
+        };
+        let mut kv = RaftKV2::open(directory.path(), config, test_config(1, &directory))
+            .await
+            .unwrap();
+        let level0 = directory.path().join("sstable/level-0");
+        tokio::fs::remove_dir(&level0).await.unwrap();
+        tokio::fs::write(&level0, b"obstruction").await.unwrap();
+        {
+            let writer = kv.write_handle.write().await;
+            writer.apply_replicated_command(LogCommand::new(
+                RecordType::Put,
+                b"old".to_vec(),
+                b"yes".to_vec(),
+                1,
+            ));
+            writer.apply_replicated_command(LogCommand::new(
+                RecordType::Delete,
+                b"gone".to_vec(),
+                Vec::new(),
+                2,
+            ));
+        }
+        assert!(kv.maybe_flush().await.is_err());
+        assert_eq!(
+            kv.read_manager
+                .get(b"old".to_vec(), 2)
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
+            b"yes"
+        );
+        tokio::fs::remove_file(&level0).await.unwrap();
+        kv.write_handle
+            .write()
+            .await
+            .apply_replicated_command(LogCommand::new(
+                RecordType::Put,
+                b"new".to_vec(),
+                b"yes".to_vec(),
+                3,
+            ));
+        kv.maybe_flush().await.unwrap();
+        for key in [b"old", b"new"] {
+            assert_eq!(
+                kv.read_manager
+                    .get(key.to_vec(), 3)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .value,
+                b"yes"
+            );
+        }
+        assert!(
+            kv.read_manager
+                .get(b"gone".to_vec(), 3)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(kv.write_handle.read().await.memtable_size_bytes(), 0);
+        kv.raft_layer.shutdown().await;
     }
 
     #[tokio::test]
