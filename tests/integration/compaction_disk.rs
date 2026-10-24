@@ -6,10 +6,8 @@
 use std::sync::Arc;
 
 use ceredb::storage::{
-    compactionmanager::compaction::compaction,
-    config::StorageConfig,
-    constant::MAXIMUM_LEVEL_FILES,
-    manifest_codec::ManifestManager,
+    compactionmanager::compaction::compaction, config::StorageConfig,
+    constant::MAXIMUM_LEVEL_FILES, manifest_codec::ManifestManager,
 };
 use ceredb::testing::{count_sstable_files, list_sstable_files, total_sstable_files};
 
@@ -38,7 +36,11 @@ async fn compaction_disk_usage_stable_across_repeated_cycles() {
     tokio::fs::create_dir_all(&wal_dir).await.unwrap();
     tokio::fs::create_dir_all(&level0_dir).await.unwrap();
 
-    let manifest = Arc::new(ManifestManager::load_or_create(manifest_path).await.unwrap());
+    let manifest = Arc::new(
+        ManifestManager::load_or_create(manifest_path)
+            .await
+            .unwrap(),
+    );
 
     let cancel = tokio_util::sync::CancellationToken::new();
 
@@ -62,13 +64,25 @@ async fn compaction_disk_usage_stable_across_repeated_cycles() {
         let l1_after = count_sstable_files(&base_dir, 1);
         let total_after = total_sstable_files(&base_dir);
         let all_files = list_sstable_files(&base_dir);
-        eprintln!("Cycle {cycle} AFTER compaction: L0={l0_after}, L1={l1_after}, total={total_after}, files={all_files:?}, result={result:?}");
+        eprintln!(
+            "Cycle {cycle} AFTER compaction: L0={l0_after}, L1={l1_after}, total={total_after}, files={all_files:?}, result={result:?}"
+        );
 
         if let Err(ref e) = result {
             eprintln!("Cycle {cycle} compaction error: {e}");
             let snap = manifest.snapshot().await;
-            eprintln!("  Manifest L0 entries: {:?}", snap.levels.get(&0).map(|f| f.iter().map(|m| &m.path).collect::<Vec<_>>()));
-            eprintln!("  Manifest L1 entries: {:?}", snap.levels.get(&1).map(|f| f.iter().map(|m| &m.path).collect::<Vec<_>>()));
+            eprintln!(
+                "  Manifest L0 entries: {:?}",
+                snap.levels
+                    .get(&0)
+                    .map(|f| f.iter().map(|m| &m.path).collect::<Vec<_>>())
+            );
+            eprintln!(
+                "  Manifest L1 entries: {:?}",
+                snap.levels
+                    .get(&1)
+                    .map(|f| f.iter().map(|m| &m.path).collect::<Vec<_>>())
+            );
         }
 
         // Assert: Compaction succeeded
@@ -82,9 +96,13 @@ async fn compaction_disk_usage_stable_across_repeated_cycles() {
 
         // Assert: L0 files fully cleaned up (0 remaining)
         assert_eq!(
-            l0_after, 0,
+            l0_after,
+            0,
             "Cycle {cycle}: Expected 0 L0 files after compaction, got {l0_after}. Leaked L0 files: {:?}",
-            list_sstable_files(&base_dir).iter().filter(|p| p.to_string_lossy().contains("level-0")).collect::<Vec<_>>()
+            list_sstable_files(&base_dir)
+                .iter()
+                .filter(|p| p.to_string_lossy().contains("level-0"))
+                .collect::<Vec<_>>()
         );
 
         // Assert: L1 has exactly 1 file (merged output replaces any existing L1)
@@ -139,18 +157,16 @@ async fn write_l0_files_until_threshold(
 
         // Register in manifest
         manifest
-            .register_sstable(
-                ceredb::storage::manifest_codec::SSTableMeta {
-                    file_id,
-                    level: 0,
-                    path: file_path.to_string_lossy().to_string(),
-                    record_count: 2,
-                    bloom_offset: 4096,
-                    bloom_size: 1024,
-                    smallest_key: b"a".to_vec(),
-                    largest_key: b"z".to_vec(),
-                },
-            )
+            .register_sstable(ceredb::storage::manifest_codec::SSTableMeta {
+                file_id,
+                level: 0,
+                path: file_path.to_string_lossy().to_string(),
+                record_count: 2,
+                bloom_offset: 4096,
+                bloom_size: 1024,
+                smallest_key: b"a".to_vec(),
+                largest_key: b"z".to_vec(),
+            })
             .await
             .unwrap();
 
@@ -180,10 +196,14 @@ fn build_minimal_sstable(file_id: u64) -> Vec<u8> {
 
     let records = vec![
         MemtableRecord::new(b"val-a".to_vec(), RecordType::Put, file_id).with_key(key_a.clone()),
-        MemtableRecord::new(b"val-b".to_vec(), RecordType::Put, file_id + 1).with_key(key_b.clone()),
+        MemtableRecord::new(b"val-b".to_vec(), RecordType::Put, file_id + 1)
+            .with_key(key_b.clone()),
     ];
 
-    let data_size: u32 = records.iter().map(|r| r.record_length(&r.key)).sum::<usize>() as u32;
+    let data_size: u32 = records
+        .iter()
+        .map(|r| r.record_length(&r.key))
+        .sum::<usize>() as u32;
 
     let block = Block {
         offset: 0,

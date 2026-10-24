@@ -50,6 +50,16 @@ operations per second, logical MiB per second, and amortized microseconds per
 operation. These are batch timings, not individual-request p95/p99 latency.
 One reopen, flush, scan, or compaction counts as one operation when that is the
 public operation being measured; its dataset size is reported separately.
+For batch workloads, `operations` means mutations (individual puts/deletes),
+not calls to `write_batch`; batch call counts are encoded by the scenario's
+configured size and the final partial group. The `app/batch_*` scenarios include
+CLI tokenization, command parsing, dispatch, and the async engine call;
+`app/sequential_set_checkpoint` uses the same parser and executor for individual
+SET commands. These app scenarios use identical textual keys and `value-{index}`
+values, and include parsing plus execution in timing. Fixture construction,
+setup, verification, and cleanup remain outside timing. App payload size is the
+actual UTF-8 textual key/value bytes, distinct from `--value-bytes` (the
+configured binary engine payload).
 
 Durable write scenarios use the normal sync behavior. CPU-only codec/filter
 scenarios stay separate from disk I/O. Warmup runs are discarded. The OS page
@@ -95,6 +105,9 @@ storage harness.
   synthetic public metadata fixtures; referenced SSTables are not read.
 - `manifest/reopen`: one full manifest reopen/replay.
 - `writer/put`: one `WriteComponent::put` per input, including its WAL sync.
+  `writer/batch_{1,16,64,256}` measures the public writer batch API in groups of
+  the named maximum mutation size; each sample's operation count is mutations,
+  while the number of batch calls is determined by the group size.
   `writer/flush` measures one `flush_active_memtable` call, including snapshot
   creation, SSTable persistence, manifest publication, rotation, and cleanup.
 - `compaction/merge_l0`: one public compaction call merging two overlapping L0
@@ -113,6 +126,29 @@ storage harness.
   configured flush threshold. At least one SSTable must be produced. Post-flush
   reads run before reopening and may span SSTables and a remaining memtable.
   This dataset contains puts only; it is distinct from the mutation workload.
+- `e2e/range_scan_after_flush_delete` and
+  `e2e/range_scan_after_flush_reinsert`: load and automatically flush data, delete
+  even key indexes, then optionally reinsert them with new values. Only the final
+  public range scan is timed. Exact live values, tombstone exclusion, point reads,
+  and reinsert/reopen consistency are verified outside timing. These cases were
+  added after the archived 35-scenario baseline to cover mixed disk/memory
+  mutation behavior.
+- `e2e/batch_sequential_checkpoint` is the matched sequential-put baseline for
+  the batch workloads, with the same configured automatic flush threshold and
+  reopen validation. `e2e/batch_put_{1,16,64,256}` and
+  `e2e/batch_mixed_{1,16,64,256}` measure durable KV2 batches of the named
+  maximum mutation count. Mixed batches put, delete, and reinsert selected
+  keys; resulting values are validated before and after reopen, outside timing.
+- `app/sequential_set_checkpoint` and `app/batch_{1,16,64,256}` compare real
+  command-parser and async-executor SETs versus atomic BATCH commands using the
+  same fresh dataset, textual keys and `value-{index}` payloads, and automatic
+  flush threshold. The batch suffix is the maximum mutations per command; the
+  final group may be partial. App timings include tokenization, parsing,
+  dispatch, and async execution. Reported payload bytes are textual UTF-8 bytes,
+  not the configured binary `--value-bytes` engine fixture. Checkpoint production
+  and exact values after reopen are verified outside timing. Compare these app
+  scenarios with each other; `e2e/batch_sequential_checkpoint` and
+  `e2e/batch_put_*` remain a matched binary-payload engine-only comparison.
 
 Public methods allocate their own return values within timing. Preallocated
 result vectors retain outputs where needed for post-timing verification; that
@@ -125,6 +161,20 @@ exports: they are exercised through existing public handles or the engine API.
 A [recorded local baseline](BASELINE.md) shows the first validated release run.
 Raw results are saved under `target/benchmarks/baseline.json` on the machine where
 that run was made; run the command again to produce results on another machine.
+
+After implementation, a focused batch smoke check can use:
+
+```sh
+cargo bench --bench storage -- --run --suite e2e --filter batch \
+  --records 32 --value-bytes 64 --repetitions 1 --warmup-runs 0 \
+  --flush-bytes 512 --output target/benchmarks/batch-smoke.json
+```
+
+The recommended full run is the `cargo bench --bench storage -- --run --suite
+all --records 1000 --value-bytes 256 --repetitions 3 --warmup-runs 1` command
+above, with data and output paths set for the target machine. Existing archived
+scenario results remain historical; these scenarios should be run and archived
+as a separate new result set.
 
 ## Saved results
 

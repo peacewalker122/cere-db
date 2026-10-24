@@ -8,7 +8,10 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use openraft::storage::{RaftSnapshotBuilder, RaftStateMachine};
-use openraft::{EntryPayload, ErrorSubject, ErrorVerb, LogId, OptionalSend, RaftTypeConfig, Snapshot, SnapshotMeta, StorageError, StoredMembership, BasicNode};
+use openraft::{
+    BasicNode, EntryPayload, ErrorSubject, ErrorVerb, LogId, OptionalSend, RaftTypeConfig,
+    Snapshot, SnapshotMeta, StorageError, StoredMembership,
+};
 
 use tokio::sync::{Mutex, RwLock};
 
@@ -79,7 +82,10 @@ impl RaftStateMachine<TypeConfig> for KVStateMachine {
         Ok((inner.last_applied, inner.membership.clone()))
     }
 
-    async fn apply<I>(&mut self, entries: I) -> Result<Vec<<TypeConfig as RaftTypeConfig>::R>, StorageError<u64>>
+    async fn apply<I>(
+        &mut self,
+        entries: I,
+    ) -> Result<Vec<<TypeConfig as RaftTypeConfig>::R>, StorageError<u64>>
     where
         I: IntoIterator<Item = <TypeConfig as RaftTypeConfig>::Entry> + OptionalSend,
         I::IntoIter: OptionalSend,
@@ -119,7 +125,9 @@ impl RaftStateMachine<TypeConfig> for KVStateMachine {
         NoopSnapshotBuilder
     }
 
-    async fn begin_receiving_snapshot(&mut self) -> Result<Box<<TypeConfig as RaftTypeConfig>::SnapshotData>, StorageError<u64>> {
+    async fn begin_receiving_snapshot(
+        &mut self,
+    ) -> Result<Box<<TypeConfig as RaftTypeConfig>::SnapshotData>, StorageError<u64>> {
         Ok(Box::new(Cursor::new(Vec::new())))
     }
 
@@ -132,7 +140,9 @@ impl RaftStateMachine<TypeConfig> for KVStateMachine {
         Ok(())
     }
 
-    async fn get_current_snapshot(&mut self) -> Result<Option<Snapshot<TypeConfig>>, StorageError<u64>> {
+    async fn get_current_snapshot(
+        &mut self,
+    ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<u64>> {
         Ok(None)
     }
 }

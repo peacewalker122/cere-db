@@ -1,7 +1,7 @@
 use std::{hint::black_box, io::Cursor, path::Path, sync::Arc, time::Instant};
 
 use ceredb::{
-    KV2, StorageConfig,
+    BatchOperation, KV2, StorageConfig,
     storage::{
         bloom::BloomFilterWrapper,
         checksum::{calculate_crc32, verify_crc32},
@@ -591,6 +591,67 @@ async fn writer(
     sample: usize,
     measurements: &mut Vec<Measurement>,
 ) -> BenchResult<()> {
+    if ![
+        "writer/put",
+        "writer/flush",
+        "sstable/read_blocks",
+        "writer/batch_",
+    ]
+    .iter()
+    .any(|name| config.includes(name))
+    {
+        return Ok(());
+    }
+    for batch_size in [1u64, 16, 64, 256] {
+        let scenario = match batch_size {
+            1 => "writer/batch_1",
+            16 => "writer/batch_16",
+            64 => "writer/batch_64",
+            _ => "writer/batch_256",
+        };
+        if !config.includes(scenario) {
+            continue;
+        }
+        let batch_dir = config.temporary_directory()?;
+        let (batch_writer, _) = make_writer(batch_dir.path(), storage_config(config)).await?;
+        let started = Instant::now();
+        for start in (0..config.records).step_by(batch_size as usize) {
+            let end = (start + batch_size).min(config.records);
+            let operations = (start..end)
+                .map(|index| BatchOperation::Put {
+                    key: config.key(index),
+                    value: config.value(index),
+                })
+                .collect();
+            batch_writer.write_batch(operations).await?;
+        }
+        let elapsed = started.elapsed();
+        let memtable = batch_writer.active_memtable_handle();
+        require(
+            memtable.len() == config.records as usize,
+            "writer batch memtable length mismatch",
+        )?;
+        for index in 0..config.records {
+            let key = config.key(index);
+            let record = memtable
+                .get(&(key, index + 1))
+                .ok_or("writer batch record missing")?;
+            require(
+                record.value().value == config.value(index),
+                "writer batch value mismatch",
+            )?;
+        }
+        measurements.push(
+            Measurement::new(
+                scenario,
+                sample,
+                config.records,
+                config.logical_bytes(),
+                elapsed,
+            )
+            .with_disk(DiskUsage::inspect(batch_dir.path())?),
+        );
+    }
     if !["writer/put", "writer/flush", "sstable/read_blocks"]
         .iter()
         .any(|name| config.includes(name))

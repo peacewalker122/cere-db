@@ -43,7 +43,6 @@ pub struct Config {
     pub bloom_fp_rate: f64,
 
     // --- Raft consensus mode ---
-
     /// Enable Raft consensus mode (multi-node replication)
     #[arg(long, default_value = "false")]
     pub raft_mode: bool,
@@ -119,7 +118,10 @@ impl Config {
                     let addr = format!("{}:{}", parts[1], parts[2]);
                     Some((id, addr))
                 } else {
-                    eprintln!("WARN: skipping invalid peer spec '{}' (expected id:host:port)", s);
+                    eprintln!(
+                        "WARN: skipping invalid peer spec '{}' (expected id:host:port)",
+                        s
+                    );
                     None
                 }
             })
@@ -233,7 +235,13 @@ mod tests {
         };
         let raft_cfg = config.to_raft_node_config().expect("should return Some");
         assert_eq!(raft_cfg.node_id, 2);
-        assert_eq!(raft_cfg.peers, vec![(3, "127.0.0.1:21002".to_string()), (4, "127.0.0.1:21003".to_string())]);
+        assert_eq!(
+            raft_cfg.peers,
+            vec![
+                (3, "127.0.0.1:21002".to_string()),
+                (4, "127.0.0.1:21003".to_string())
+            ]
+        );
         assert_eq!(raft_cfg.http_bind.port(), 21004);
     }
 }

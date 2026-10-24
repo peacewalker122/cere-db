@@ -132,9 +132,7 @@ impl BloomFilterWrapper {
         Ok(BloomFilterWrapper { filter, seed })
     }
 
-    pub async fn async_decode<R: AsyncRead + Unpin>(
-        async_reader: &mut R,
-    ) -> Result<Self, DBError> {
+    pub async fn async_decode<R: AsyncRead + Unpin>(async_reader: &mut R) -> Result<Self, DBError> {
         let mut seed_buf = [0u8; 16];
         let mut buf = [0u8; 8];
 

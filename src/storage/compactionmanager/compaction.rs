@@ -59,9 +59,7 @@ pub async fn compaction(
 
     let current_level_range = compute_level_range(&current_level_files, &cancel)
         .await?
-        .ok_or_else(|| {
-            DBError::Corrupted(format!("Level {} has no valid key range", level))
-        })?;
+        .ok_or_else(|| DBError::Corrupted(format!("Level {} has no valid key range", level)))?;
 
     let mut overlapping_next_level_files = Vec::new();
     for candidate in next_level_files {
@@ -99,50 +97,68 @@ pub async fn compaction(
         });
     }
 
-    let merged_sstable = merge_files(sstables, &config, &cancel).await?;
+    let mut protected_ranges = Vec::new();
+    for meta in snapshot.levels.values().flatten() {
+        if merge_candidates
+            .iter()
+            .any(|input| input.file_id == meta.file_id)
+        {
+            continue;
+        }
+        let range = compute_meta_range(meta, &cancel)
+            .await?
+            .ok_or_else(|| DBError::Corrupted("SSTable has no key range".to_string()))?;
+        protected_ranges.push(range);
+    }
+    let merged_sstable =
+        merge_files_with_reclamation(sstables, &config, &cancel, Some(&protected_ranges)).await?;
 
     if cancel.is_cancelled() {
         return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
 
     if merged_sstable.blocks.is_empty() {
-        for stale in &current_level_files {
-            delete_manifest_with_file(manifest.clone(), &stale.path, level, stale.file_id)
-                .await
-                .map_err(|e| {
-                    log::error!("Failed to delete file {}: {}", stale.path, e);
-                });
-        }
-        for stale in &overlapping_next_level_files {
-            delete_manifest_with_file(manifest.clone(), &stale.path, level, stale.file_id)
-                .await
-                .map_err(|err| {
-                    log::error!("Failed to delete overlapping file {}: {}", stale.path, err)
-                });
-        }
+        manifest
+            .publish_compaction(&snapshot, &merge_candidates, None)
+            .await?;
+        remove_compacted_files(&manifest, &merge_candidates).await;
 
         return Ok(merged_sstable);
     }
 
-    let merged_range = range_from_blocks(&merged_sstable.blocks).ok_or_else(|| {
-        DBError::Corrupted("compaction output has no key range".to_string())
-    })?;
+    let merged_range = range_from_blocks(&merged_sstable.blocks)
+        .ok_or_else(|| DBError::Corrupted("compaction output has no key range".to_string()))?;
 
-    let file_id = manifest.allocate_file_id().await?;
+    let mut file_id = manifest.allocate_file_id().await?;
     if cancel.is_cancelled() {
         return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
 
-    let output_path =
-        build_compaction_output_path(&current_level_files[0].path, next_level, file_id);
-    if let Some(parent) = output_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
+    let (output_path, mut output_file) = loop {
+        let path = build_compaction_output_path(&current_level_files[0].path, next_level, file_id);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+        {
+            Ok(file) => break (path, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                file_id = manifest.allocate_file_id().await?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
     let (encoded, compaction_footer) = merged_sstable.serialize();
-    let mut output_file = tokio::fs::File::create(&output_path).await?;
     output_file.write_all(&encoded).await?;
     output_file.sync_all().await?;
+    tokio::fs::File::open(output_path.parent().unwrap())
+        .await?
+        .sync_all()
+        .await?;
 
     if cancel.is_cancelled() {
         return Err(DBError::StorageError("compaction cancelled".to_string()));
@@ -155,49 +171,38 @@ pub async fn compaction(
         .sum();
 
     manifest
-        .register_sstable(SSTableMeta {
-            file_id,
-            level: next_level,
-            path: output_path.to_string_lossy().to_string(),
-            record_count: compacted_record_count,
-            bloom_offset: compaction_footer.bloom_block_start,
-            bloom_size: compaction_footer.bloom_block_end - compaction_footer.bloom_block_start,
-            smallest_key: merged_range.0,
-            largest_key: merged_range.1,
-        })
+        .publish_compaction(
+            &snapshot,
+            &merge_candidates,
+            Some(SSTableMeta {
+                file_id,
+                level: next_level,
+                path: output_path.to_string_lossy().to_string(),
+                record_count: compacted_record_count,
+                bloom_offset: compaction_footer.bloom_block_start,
+                bloom_size: compaction_footer.bloom_block_end - compaction_footer.bloom_block_start,
+                smallest_key: merged_range.0,
+                largest_key: merged_range.1,
+            }),
+        )
         .await?;
 
-    for stale in &current_level_files {
-        delete_manifest_with_file(manifest.clone(), &stale.path, level, stale.file_id)
-            .await
-            .map_err(|e| {
-                log::error!("Failed to delete file {}: {}", stale.path, e);
-            });
-    }
-    for stale in &overlapping_next_level_files {
-        delete_manifest_with_file(manifest.clone(), &stale.path, level + 1, stale.file_id)
-            .await
-            .map_err(|err| {
-                log::error!("Failed to delete overlapping file {}: {}", stale.path, err)
-            });
-    }
+    remove_compacted_files(&manifest, &merge_candidates).await;
 
     Ok(merged_sstable)
 }
 
-async fn delete_manifest_with_file(
-    manifest: Arc<ManifestManager>,
-    file_path: &str,
-    level: u32,
-    file_id: u64,
-) -> Result<(), DBError> {
-    let manifest = manifest.clone();
-
-    manifest.remove_sstable(level, file_id).await?;
-
-    tokio::fs::remove_file(build_compaction_output_path(file_path, level, file_id)).await?;
-
-    Ok(())
+async fn remove_compacted_files(manifest: &ManifestManager, inputs: &[SSTableMeta]) {
+    for input in inputs {
+        manifest.evict_file(&input.path).await;
+        if let Err(error) = tokio::fs::remove_file(&input.path).await {
+            log::warn!(
+                "Failed to remove compacted SSTable {}: {}",
+                input.path,
+                error
+            );
+        }
+    }
 }
 
 fn build_compaction_output_path(base_file_path: &str, level: u32, file_id: u64) -> PathBuf {
@@ -265,10 +270,20 @@ async fn compute_level_range(
     Ok(range)
 }
 
+#[cfg(test)]
 async fn merge_files(
     sstables: Vec<SSTableCodec>,
     config: &Arc<StorageConfig>,
     cancel: &tokio_util::sync::CancellationToken,
+) -> Result<SSTableCodec, DBError> {
+    merge_files_with_reclamation(sstables, config, cancel, None).await
+}
+
+async fn merge_files_with_reclamation(
+    sstables: Vec<SSTableCodec>,
+    config: &Arc<StorageConfig>,
+    cancel: &tokio_util::sync::CancellationToken,
+    protected_ranges: Option<&[(Vec<u8>, Vec<u8>)]>,
 ) -> Result<SSTableCodec, DBError> {
     let mut merged_by_key: std::collections::BTreeMap<Vec<u8>, MemtableRecord> =
         std::collections::BTreeMap::new();
@@ -302,6 +317,15 @@ async fn merge_files(
     for winner in merged_by_key.into_values() {
         if cancel.is_cancelled() {
             return Err(DBError::StorageError("compaction cancelled".to_string()));
+        }
+        if winner.record_type == RecordType::Delete
+            && protected_ranges.is_some_and(|ranges| {
+                !ranges
+                    .iter()
+                    .any(|(start, end)| start <= &winner.key && &winner.key <= end)
+            })
+        {
+            continue;
         }
         flush_winner(
             &mut block_builder,
@@ -351,10 +375,6 @@ fn flush_winner(
     bloom_filter: &mut BloomFilterWrapper,
     winner: MemtableRecord,
 ) {
-    if winner.record_type == RecordType::Delete {
-        return;
-    }
-
     bloom_filter.insert(&winner.key);
 
     match block_builder.add_record(&winner.key, &winner) {
@@ -426,7 +446,9 @@ mod tests {
         let sstables = vec![make_sstable(vec![block])];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         // Verify sorted output
         assert_eq!(result.blocks.len(), 1);
@@ -457,7 +479,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         // Verify all 4 keys in sorted order
         assert_eq!(result.blocks.len(), 1);
@@ -483,7 +507,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         // Verify only one record exists (deduplicated by key)
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -515,7 +541,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         // Should have the normal block's record
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -537,7 +565,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         // Verify all 3 records in sorted order
         let block_data = result.blocks[0].data.as_ref().unwrap();
@@ -569,7 +599,9 @@ mod tests {
         let sstables = vec![make_sstable(vec![make_block(sst_records, 0)])];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         // Verify multiple blocks were created due to capacity
         assert!(
@@ -606,7 +638,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         // Verify bloom filter contains all merged keys
         assert!(result.bloom.contains(b"key1"));
@@ -619,7 +653,6 @@ mod tests {
 
     #[tokio::test]
     async fn compaction_with_delete_tombstones() {
-        // Test: Delete tombstone should be dropped from compacted output
         let records = vec![
             make_record(b"key1", b"val1", RecordType::Put, 100),
             make_record(b"key2", b"", RecordType::Delete, 200),
@@ -629,18 +662,20 @@ mod tests {
         let sstables = vec![make_sstable(vec![block])];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
-        // Verify delete tombstone is removed
         let block_data = result.blocks[0].data.as_ref().unwrap();
-        assert_eq!(block_data.len(), 2);
+        assert_eq!(block_data.len(), 3);
         assert_eq!(block_data[0].key, b"key1");
-        assert_eq!(block_data[1].key, b"key3");
+        assert_eq!(block_data[1].key, b"key2");
+        assert_eq!(block_data[1].record_type, RecordType::Delete);
+        assert_eq!(block_data[2].key, b"key3");
     }
 
     #[tokio::test]
     async fn merge_duplicate_keys_equal_lsn_delete_wins() {
-        // Test: Same key with equal LSN where one is Delete -> Delete wins and key is dropped.
         let sst1_records = vec![make_record(b"key1", b"alive", RecordType::Put, 200)];
         let sst2_records = vec![make_record(b"key1", b"", RecordType::Delete, 200)];
 
@@ -650,7 +685,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         let total_records: usize = result
             .blocks
@@ -658,13 +695,16 @@ mod tests {
             .map(|b| b.data.as_ref().map(|d| d.len()).unwrap_or(0))
             .sum();
 
-        assert_eq!(total_records, 0);
-        assert!(!result.bloom.contains(b"key1"));
+        assert_eq!(total_records, 1);
+        assert_eq!(
+            result.blocks[0].data.as_ref().unwrap()[0].record_type,
+            RecordType::Delete
+        );
+        assert!(result.bloom.contains(b"key1"));
     }
 
     #[tokio::test]
-    async fn merge_duplicate_keys_newest_delete_dropped() {
-        // Test: Newest version for a duplicated key is Delete -> key absent in final output.
+    async fn merge_duplicate_keys_newest_delete_retained() {
         let sst1_records = vec![make_record(b"key1", b"older", RecordType::Put, 100)];
         let sst2_records = vec![make_record(b"key1", b"", RecordType::Delete, 300)];
 
@@ -674,7 +714,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         let total_records: usize = result
             .blocks
@@ -682,8 +724,12 @@ mod tests {
             .map(|b| b.data.as_ref().map(|d| d.len()).unwrap_or(0))
             .sum();
 
-        assert_eq!(total_records, 0);
-        assert!(!result.bloom.contains(b"key1"));
+        assert_eq!(total_records, 1);
+        assert_eq!(
+            result.blocks[0].data.as_ref().unwrap()[0].record_type,
+            RecordType::Delete
+        );
+        assert!(result.bloom.contains(b"key1"));
     }
 
     #[tokio::test]
@@ -698,7 +744,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         let total_records: usize = result
             .blocks
@@ -727,7 +775,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         let total_records: usize = result
             .blocks
@@ -761,14 +811,17 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
-        // key1 should be dropped due to newer delete; key2 and key3 should remain.
         let block_data = result.blocks[0].data.as_ref().unwrap();
-        assert_eq!(block_data.len(), 2);
-        assert_eq!(block_data[0].key, b"key2");
-        assert_eq!(block_data[1].key, b"key3");
-        assert!(!result.bloom.contains(b"key1"));
+        assert_eq!(block_data.len(), 3);
+        assert_eq!(block_data[0].key, b"key1");
+        assert_eq!(block_data[0].record_type, RecordType::Delete);
+        assert_eq!(block_data[1].key, b"key2");
+        assert_eq!(block_data[2].key, b"key3");
+        assert!(result.bloom.contains(b"key1"));
         assert!(result.bloom.contains(b"key2"));
         assert!(result.bloom.contains(b"key3"));
     }
@@ -792,7 +845,9 @@ mod tests {
         ];
 
         let cancel = tokio_util::sync::CancellationToken::new();
-        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel).await.unwrap();
+        let result = merge_files(sstables, &Arc::new(StorageConfig::default()), &cancel)
+            .await
+            .unwrap();
 
         // Verify all 4 keys sorted correctly
         let block_data = result.blocks[0].data.as_ref().unwrap();

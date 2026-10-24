@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use openraft::storage::{LogFlushed, RaftLogStorage};
 use openraft::{
-    ErrorSubject, ErrorVerb, Entry, LogId, LogState, OptionalSend, RaftLogReader,
-    RaftTypeConfig, StorageError, StorageIOError, Vote,
+    Entry, ErrorSubject, ErrorVerb, LogId, LogState, OptionalSend, RaftLogReader, RaftTypeConfig,
+    StorageError, StorageIOError, Vote,
 };
 
 use crate::error::DBError;
@@ -117,16 +117,27 @@ fn io_error<E: Into<std::io::Error>>(
     err: E,
 ) -> StorageError<u64> {
     StorageError::IO {
-        source: StorageIOError::new(subject, verb, openraft::anyerror::AnyError::new(&err.into())),
+        source: StorageIOError::new(
+            subject,
+            verb,
+            openraft::anyerror::AnyError::new(&err.into()),
+        ),
     }
 }
 
-fn io_error_msg(subject: ErrorSubject<u64>, verb: ErrorVerb, msg: impl ToString) -> StorageError<u64> {
+fn io_error_msg(
+    subject: ErrorSubject<u64>,
+    verb: ErrorVerb,
+    msg: impl ToString,
+) -> StorageError<u64> {
     StorageError::IO {
         source: StorageIOError::new(
             subject,
             verb,
-            openraft::anyerror::AnyError::new(&std::io::Error::new(std::io::ErrorKind::Other, msg.to_string())),
+            openraft::anyerror::AnyError::new(&std::io::Error::new(
+                std::io::ErrorKind::Other,
+                msg.to_string(),
+            )),
         ),
     }
 }

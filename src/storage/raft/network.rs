@@ -5,13 +5,13 @@
 
 use std::sync::Arc;
 
+use openraft::OptionalSend;
 use openraft::error::{InstallSnapshotError, RPCError, RaftError};
 use openraft::network::{RPCOption, RaftNetwork, RaftNetworkFactory};
 use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
-    InstallSnapshotResponse, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    VoteRequest, VoteResponse,
 };
-use openraft::OptionalSend;
 use tokio::sync::RwLock;
 
 use crate::storage::raft::types::TypeConfig;
@@ -116,8 +116,7 @@ impl RaftNetwork<TypeConfig> for RaftHttpClient {
         &mut self,
         rpc: VoteRequest<u64>,
         _option: RPCOption,
-    ) -> Result<VoteResponse<u64>, RPCError<u64, openraft::impls::BasicNode, RaftError<u64>>>
-    {
+    ) -> Result<VoteResponse<u64>, RPCError<u64, openraft::impls::BasicNode, RaftError<u64>>> {
         let resp = reqwest::Client::new()
             .post(format!("{}/raft/vote", self.target_url))
             .json(&rpc)

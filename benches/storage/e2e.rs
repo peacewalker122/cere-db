@@ -1,6 +1,10 @@
 use std::{hint::black_box, path::Path, time::Instant};
 
-use ceredb::{KV2, StorageConfig, api::api::AsyncKVEngine};
+use ceredb::{
+    KV2, StorageConfig,
+    api::api::{AsyncKVEngine, BatchOperation},
+    command::{execute_command_async, parse_command},
+};
 
 use crate::support::{BenchConfig, BenchResult, DiskUsage, Measurement};
 
@@ -36,6 +40,200 @@ pub async fn run(
         .any(|name| config.includes(name))
     {
         checkpoints(config, sample, measurements).await?;
+    }
+    if [
+        "e2e/range_scan_after_flush_delete",
+        "e2e/range_scan_after_flush_reinsert",
+        "app/sequential_set_checkpoint",
+    ]
+    .iter()
+    .any(|name| config.includes(name))
+    {
+        checkpoint_mutations(config, sample, measurements).await?;
+    }
+    if [1, 16, 64, 256].iter().any(|size| {
+        config.includes(&format!("e2e/batch_put_{size}"))
+            || config.includes(&format!("e2e/batch_mixed_{size}"))
+            || config.includes(&format!("app/batch_{size}"))
+    }) || config.includes("e2e/batch_sequential_checkpoint")
+        || config.includes("app/sequential_set_checkpoint")
+    {
+        batch_workloads(config, sample, measurements).await?;
+    }
+    Ok(())
+}
+
+async fn batch_workloads(
+    config: &BenchConfig,
+    sample: usize,
+    measurements: &mut Vec<Measurement>,
+) -> BenchResult<()> {
+    if config.includes("e2e/batch_sequential_checkpoint") {
+        let directory = config.temporary_directory()?;
+        let settings = storage_config(config, config.flush_bytes);
+        let mut engine = KV2::open(directory.path(), settings.clone()).await?;
+        let expected = entries(config, false);
+        let inputs = expected.clone();
+        let started = Instant::now();
+        for (key, value) in inputs {
+            engine.put(key, value).await?;
+        }
+        let elapsed = started.elapsed();
+        if DiskUsage::inspect(directory.path())?.sstable_bytes == 0 {
+            return Err("sequential batch baseline produced no automatic checkpoint; increase --records or lower --flush-bytes".into());
+        }
+        verify(&engine, &expected, false).await?;
+        drop(engine);
+        let reopened = KV2::open(directory.path(), settings).await?;
+        verify(&reopened, &expected, false).await?;
+        record(
+            config,
+            measurements,
+            Measurement::new(
+                "e2e/batch_sequential_checkpoint",
+                sample,
+                config.records,
+                config.logical_bytes(),
+                elapsed,
+            ),
+            directory.path(),
+        )?;
+    }
+    for batch_size in [1u64, 16, 64, 256] {
+        let app_scenario = match batch_size {
+            1 => "app/batch_1",
+            16 => "app/batch_16",
+            64 => "app/batch_64",
+            _ => "app/batch_256",
+        };
+        if config.includes(app_scenario) {
+            let directory = config.temporary_directory()?;
+            let mut engine =
+                KV2::open(directory.path(), storage_config(config, config.flush_bytes)).await?;
+            let expected: Entries = (0..config.records)
+                .map(|index| {
+                    (
+                        format!("key-{index:016x}").into_bytes(),
+                        format!("value-{index}").into_bytes(),
+                    )
+                })
+                .collect();
+            let lines: Vec<String> = (0..config.records)
+                .step_by(batch_size as usize)
+                .map(|start| {
+                    let end = (start + batch_size).min(config.records);
+                    let mut line = String::from("BATCH");
+                    for index in start..end {
+                        line.push_str(&format!(" SET key-{index:016x} value-{index}"));
+                    }
+                    line
+                })
+                .collect();
+            let started = Instant::now();
+            for line in lines {
+                let command = parse_command(&line).map_err(|error| {
+                    format!("benchmark generated invalid batch command: {error:?}")
+                })?;
+                execute_command_async(&mut engine, command).await?;
+            }
+            let elapsed = started.elapsed();
+            if DiskUsage::inspect(directory.path())?.sstable_bytes == 0 {
+                return Err("batch workload produced no automatic checkpoint; increase --records or lower --flush-bytes".into());
+            }
+            verify(&engine, &expected, false).await?;
+            drop(engine);
+            let reopened =
+                KV2::open(directory.path(), storage_config(config, config.flush_bytes)).await?;
+            verify(&reopened, &expected, false).await?;
+            let logical_bytes = expected
+                .iter()
+                .map(|(key, value)| (key.len() + value.len()) as u64)
+                .sum();
+            record(
+                config,
+                measurements,
+                Measurement::new(app_scenario, sample, config.records, logical_bytes, elapsed),
+                directory.path(),
+            )?;
+        }
+        for mixed in [false, true] {
+            let scenario = if mixed {
+                match batch_size {
+                    1 => "e2e/batch_mixed_1",
+                    16 => "e2e/batch_mixed_16",
+                    64 => "e2e/batch_mixed_64",
+                    _ => "e2e/batch_mixed_256",
+                }
+            } else {
+                match batch_size {
+                    1 => "e2e/batch_put_1",
+                    16 => "e2e/batch_put_16",
+                    64 => "e2e/batch_put_64",
+                    _ => "e2e/batch_put_256",
+                }
+            };
+            if !config.includes(scenario) {
+                continue;
+            }
+            let directory = config.temporary_directory()?;
+            let settings = storage_config(config, config.flush_bytes);
+            let mut engine = KV2::open(directory.path(), settings.clone()).await?;
+            let expected = entries(config, false);
+            let mut operations = Vec::new();
+            for index in 0..config.records {
+                if mixed && index % 2 == 0 {
+                    operations.push(BatchOperation::Put {
+                        key: config.key(index),
+                        value: config.value(index + 1),
+                    });
+                    operations.push(BatchOperation::Delete {
+                        key: config.key(index),
+                    });
+                    operations.push(BatchOperation::Put {
+                        key: config.key(index),
+                        value: config.value(index),
+                    });
+                } else {
+                    operations.push(BatchOperation::Put {
+                        key: config.key(index),
+                        value: config.value(index),
+                    });
+                }
+            }
+            let batches: Vec<Vec<BatchOperation>> = operations
+                .chunks(batch_size as usize)
+                .map(<[BatchOperation]>::to_vec)
+                .collect();
+            let started = Instant::now();
+            for operations in batches {
+                engine.write_batch(operations).await?;
+            }
+            let elapsed = started.elapsed();
+            if DiskUsage::inspect(directory.path())?.sstable_bytes == 0 {
+                return Err("batch workload produced no automatic checkpoint; increase --records or lower --flush-bytes".into());
+            }
+            verify(&engine, &expected, false).await?;
+            drop(engine);
+            let reopened = KV2::open(directory.path(), settings).await?;
+            verify(&reopened, &expected, false).await?;
+            let mutations = if mixed {
+                config.records + 2 * (config.records / 2 + config.records % 2)
+            } else {
+                config.records
+            };
+            let logical_bytes = config.logical_bytes()
+                + if mixed {
+                    (config.records / 2 + config.records % 2) * (40 + config.value_bytes)
+                } else {
+                    0
+                };
+            record(
+                config,
+                measurements,
+                Measurement::new(scenario, sample, mutations, logical_bytes, elapsed),
+                directory.path(),
+            )?;
+        }
     }
     Ok(())
 }
@@ -401,6 +599,150 @@ async fn checkpoints(
             ),
             directory.path(),
         )?;
+    }
+    Ok(())
+}
+
+async fn checkpoint_mutations(
+    config: &BenchConfig,
+    sample: usize,
+    measurements: &mut Vec<Measurement>,
+) -> BenchResult<()> {
+    if config.includes("app/sequential_set_checkpoint") {
+        let directory = config.temporary_directory()?;
+        let settings = storage_config(config, config.flush_bytes);
+        let mut engine = KV2::open(directory.path(), settings.clone()).await?;
+        let expected: Entries = (0..config.records)
+            .map(|index| {
+                (
+                    format!("key-{index:016x}").into_bytes(),
+                    format!("value-{index}").into_bytes(),
+                )
+            })
+            .collect();
+        let commands: Vec<String> = expected
+            .iter()
+            .map(|(key, value)| {
+                format!(
+                    "SET {} {}",
+                    String::from_utf8_lossy(key),
+                    String::from_utf8_lossy(value)
+                )
+            })
+            .collect();
+        let started = Instant::now();
+        for line in commands {
+            let command = parse_command(&line)
+                .map_err(|error| format!("benchmark generated invalid SET command: {error:?}"))?;
+            execute_command_async(&mut engine, command).await?;
+        }
+        let elapsed = started.elapsed();
+        if DiskUsage::inspect(directory.path())?.sstable_bytes == 0 {
+            return Err("app sequential workload produced no automatic checkpoint; increase --records or lower --flush-bytes".into());
+        }
+        verify(&engine, &expected, false).await?;
+        drop(engine);
+        let reopened = KV2::open(directory.path(), settings).await?;
+        verify(&reopened, &expected, false).await?;
+        let logical_bytes = expected
+            .iter()
+            .map(|(key, value)| (key.len() + value.len()) as u64)
+            .sum();
+        record(
+            config,
+            measurements,
+            Measurement::new(
+                "app/sequential_set_checkpoint",
+                sample,
+                config.records,
+                logical_bytes,
+                elapsed,
+            ),
+            directory.path(),
+        )?;
+    }
+    let directory = config.temporary_directory()?;
+    let settings = storage_config(config, config.flush_bytes);
+    let mut engine = KV2::open(directory.path(), settings.clone()).await?;
+    let mut expected = entries(config, false);
+    for (key, value) in expected.clone() {
+        engine.put(key, value).await?;
+    }
+    if DiskUsage::inspect(directory.path())?.sstable_bytes == 0 {
+        return Err(
+            "mutation checkpoint produced no SSTable; increase --records or lower --flush-bytes"
+                .into(),
+        );
+    }
+    for index in (0..expected.len()).step_by(2) {
+        engine.delete(expected[index].0.clone()).await?;
+    }
+    verify(&engine, &expected, true).await?;
+    let surviving: Entries = expected
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| index % 2 != 0)
+        .map(|(_, entry)| entry.clone())
+        .collect();
+    if config.includes("e2e/range_scan_after_flush_delete") {
+        let range = config.key(0)..config.key(config.records);
+        let started = Instant::now();
+        let actual = black_box(engine.scan(range).await?);
+        let elapsed = started.elapsed();
+        if actual != surviving {
+            return Err(
+                "post-flush scan resurrected deleted entries or lost surviving values".into(),
+            );
+        }
+        record(
+            config,
+            measurements,
+            Measurement::new(
+                "e2e/range_scan_after_flush_delete",
+                sample,
+                1,
+                surviving.len() as u64 * (20 + config.value_bytes),
+                elapsed,
+            ),
+            directory.path(),
+        )?;
+    }
+    if config.includes("e2e/range_scan_after_flush_reinsert") {
+        for index in (0..expected.len()).step_by(2) {
+            let value = config.value(index as u64 + 2);
+            engine.put(expected[index].0.clone(), value.clone()).await?;
+            expected[index].1 = value;
+        }
+        verify(&engine, &expected, false).await?;
+        let range = config.key(0)..config.key(config.records);
+        let started = Instant::now();
+        let actual = black_box(engine.scan(range).await?);
+        let elapsed = started.elapsed();
+        if actual != expected {
+            return Err("post-flush scan lost reinserted values or returned older versions".into());
+        }
+        record(
+            config,
+            measurements,
+            Measurement::new(
+                "e2e/range_scan_after_flush_reinsert",
+                sample,
+                1,
+                config.logical_bytes(),
+                elapsed,
+            ),
+            directory.path(),
+        )?;
+        drop(engine);
+        let engine = KV2::open(directory.path(), settings).await?;
+        verify(&engine, &expected, false).await?;
+        if engine
+            .scan(config.key(0)..config.key(config.records))
+            .await?
+            != expected
+        {
+            return Err("reopened mutation workload returned inconsistent scan results".into());
+        }
     }
     Ok(())
 }

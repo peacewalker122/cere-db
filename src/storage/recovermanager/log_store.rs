@@ -37,9 +37,7 @@ impl LogCommand {
             1 => RecordType::Put,
             2 => RecordType::Delete,
             _ => {
-                return Err(DBError::Corrupted(
-                    "Invalid record type".to_string(),
-                ));
+                return Err(DBError::Corrupted("Invalid record type".to_string()));
             }
         };
 

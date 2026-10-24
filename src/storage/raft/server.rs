@@ -12,8 +12,8 @@ use axum::extract::State;
 use axum::routing::get;
 use axum::routing::post;
 use axum::{Json, Router};
-use openraft::raft::{AppendEntriesRequest, InstallSnapshotRequest, VoteRequest, VoteResponse};
 use openraft::Raft;
+use openraft::raft::{AppendEntriesRequest, InstallSnapshotRequest, VoteRequest, VoteResponse};
 
 use crate::storage::raft::types::TypeConfig;
 
@@ -55,9 +55,7 @@ pub async fn start_raft_http_server(
 ///
 /// Used by the monitoring dashboard to display node state, leader info,
 /// replication progress, etc.
-async fn handle_metrics(
-    State(state): State<Arc<RaftServerState>>,
-) -> Json<serde_json::Value> {
+async fn handle_metrics(State(state): State<Arc<RaftServerState>>) -> Json<serde_json::Value> {
     let rx = state.raft.metrics();
     let metrics = rx.borrow().clone();
     Json(serde_json::to_value(&metrics).unwrap_or_default())
@@ -96,15 +94,11 @@ async fn handle_install_snapshot(
     State(state): State<Arc<RaftServerState>>,
     Json(req): Json<InstallSnapshotRequest<TypeConfig>>,
 ) -> Json<openraft::raft::InstallSnapshotResponse<u64>> {
-    let resp = state
-        .raft
-        .install_snapshot(req)
-        .await
-        .unwrap_or_else(|e| {
-            log::error!("install_snapshot handler error: {e}");
-            openraft::raft::InstallSnapshotResponse {
-                vote: Default::default(),
-            }
-        });
+    let resp = state.raft.install_snapshot(req).await.unwrap_or_else(|e| {
+        log::error!("install_snapshot handler error: {e}");
+        openraft::raft::InstallSnapshotResponse {
+            vote: Default::default(),
+        }
+    });
     Json(resp)
 }

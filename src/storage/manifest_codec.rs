@@ -17,6 +17,7 @@ use crate::storage::bloom::BloomFilterWrapper;
 const ENTRY_KIND_ADD: u8 = 1;
 const ENTRY_KIND_REMOVE: u8 = 2;
 const ENTRY_KIND_CHECKPOINT: u8 = 3;
+const ENTRY_KIND_COMPACTION: u8 = 4;
 
 const MANIFEST_VERSION: u32 = 1;
 
@@ -225,6 +226,41 @@ impl ManifestManager {
         Ok(())
     }
 
+    pub(crate) async fn publish_compaction(
+        self: &Arc<Self>,
+        expected: &ManifestSnapshot,
+        inputs: &[SSTableMeta],
+        output: Option<SSTableMeta>,
+    ) -> Result<(), DBError> {
+        let manifest = Arc::clone(self);
+        let expected_levels = expected.levels.clone();
+        let inputs = inputs.to_vec();
+        tokio::spawn(async move {
+            let mut state = manifest.state.lock().await;
+            let levels: HashMap<_, Vec<_>> = state
+                .levels
+                .iter()
+                .map(|(level, files)| (*level, files.values().cloned().collect()))
+                .collect();
+            if levels != expected_levels {
+                return Err(DBError::StorageError(
+                    "manifest changed during compaction".to_string(),
+                ));
+            }
+            let removals: Vec<_> = inputs
+                .iter()
+                .map(|meta| (meta.level, meta.file_id))
+                .collect();
+            let payload = encode_compaction_payload(&removals, output.as_ref())?;
+            let entry = encode_entry(ENTRY_KIND_COMPACTION, &payload)?;
+            append_manifest_entry(&manifest.manifest_path, &entry).await?;
+            apply_compaction(&mut state, &removals, output);
+            Ok(())
+        })
+        .await
+        .map_err(|error| DBError::StorageError(error.to_string()))?
+    }
+
     pub async fn remove_sstable(&self, level: u32, file_id: u64) -> Result<(), DBError> {
         let mut state = self.state.lock().await;
 
@@ -357,6 +393,10 @@ fn replay_manifest(data: &[u8]) -> Result<ManifestState, DBError> {
                     }
                 }
             }
+            ENTRY_KIND_COMPACTION => {
+                let (removals, output) = decode_compaction_payload(payload)?;
+                apply_compaction(&mut state, &removals, output);
+            }
             ENTRY_KIND_CHECKPOINT => {
                 let (checkpoint_lsn, active_wal_segment) = decode_checkpoint_payload(payload)?;
                 state.active_wal_segment = active_wal_segment;
@@ -375,9 +415,8 @@ fn replay_manifest(data: &[u8]) -> Result<ManifestState, DBError> {
 }
 
 fn encode_entry(kind: u8, payload: &[u8]) -> Result<Vec<u8>, DBError> {
-    let payload_len = u32::try_from(payload.len()).map_err(|_| {
-        DBError::StorageError("manifest entry payload too large".to_string())
-    })?;
+    let payload_len = u32::try_from(payload.len())
+        .map_err(|_| DBError::StorageError("manifest entry payload too large".to_string()))?;
 
     let mut bytes = Vec::with_capacity(1 + 4 + payload.len() + 4);
     bytes.push(kind);
@@ -391,9 +430,9 @@ fn encode_entry(kind: u8, payload: &[u8]) -> Result<Vec<u8>, DBError> {
 }
 
 fn decode_entry(data: &[u8], offset: usize) -> Result<(u8, &[u8], usize), DBError> {
-    let header_end = offset.checked_add(5).ok_or_else(|| {
-        DBError::Corrupted("manifest offset overflow".to_string())
-    })?;
+    let header_end = offset
+        .checked_add(5)
+        .ok_or_else(|| DBError::Corrupted("manifest offset overflow".to_string()))?;
     if header_end > data.len() {
         return Err(DBError::Corrupted(
             "truncated manifest entry header".to_string(),
@@ -402,12 +441,12 @@ fn decode_entry(data: &[u8], offset: usize) -> Result<(u8, &[u8], usize), DBErro
 
     let kind = data[offset];
     let len = u32::from_be_bytes(data[offset + 1..offset + 5].try_into().unwrap()) as usize;
-    let payload_end = header_end.checked_add(len).ok_or_else(|| {
-        DBError::Corrupted("manifest payload overflow".to_string())
-    })?;
-    let checksum_end = payload_end.checked_add(4).ok_or_else(|| {
-        DBError::Corrupted("manifest checksum overflow".to_string())
-    })?;
+    let payload_end = header_end
+        .checked_add(len)
+        .ok_or_else(|| DBError::Corrupted("manifest payload overflow".to_string()))?;
+    let checksum_end = payload_end
+        .checked_add(4)
+        .ok_or_else(|| DBError::Corrupted("manifest checksum overflow".to_string()))?;
 
     if checksum_end > data.len() {
         return Err(DBError::Corrupted(
@@ -471,12 +510,73 @@ fn decode_add_payload(payload: &[u8]) -> Result<SSTableMeta, DBError> {
         path,
         smallest_key,
         largest_key,
-        record_count: usize::try_from(record_count).map_err(|_| {
-            DBError::Corrupted("record count does not fit usize".to_string())
-        })?,
+        record_count: usize::try_from(record_count)
+            .map_err(|_| DBError::Corrupted("record count does not fit usize".to_string()))?,
         bloom_offset,
         bloom_size,
     })
+}
+
+fn encode_compaction_payload(
+    removals: &[(u32, u64)],
+    output: Option<&SSTableMeta>,
+) -> Result<Vec<u8>, DBError> {
+    let count = u32::try_from(removals.len())
+        .map_err(|_| DBError::StorageError("too many compaction inputs".to_string()))?;
+    let mut payload = count.to_be_bytes().to_vec();
+    for (level, file_id) in removals {
+        payload.extend_from_slice(&encode_remove_payload(*level, *file_id));
+    }
+    if let Some(meta) = output {
+        payload.extend_from_slice(&encode_add_payload(meta)?);
+    }
+    Ok(payload)
+}
+
+fn decode_compaction_payload(
+    payload: &[u8],
+) -> Result<(Vec<(u32, u64)>, Option<SSTableMeta>), DBError> {
+    let mut cursor = Cursor::new(payload);
+    let count = read_u32(&mut cursor)? as usize;
+    if count > payload.len().saturating_sub(4) / 12 {
+        return Err(DBError::Corrupted(
+            "invalid compaction input count".to_string(),
+        ));
+    }
+    let mut removals = Vec::with_capacity(count);
+    for _ in 0..count {
+        removals.push((read_u32(&mut cursor)?, read_u64(&mut cursor)?));
+    }
+    let remaining = &payload[cursor.position() as usize..];
+    let output = if remaining.is_empty() {
+        None
+    } else {
+        Some(decode_add_payload(remaining)?)
+    };
+    Ok((removals, output))
+}
+
+fn apply_compaction(
+    state: &mut ManifestState,
+    removals: &[(u32, u64)],
+    output: Option<SSTableMeta>,
+) {
+    for (level, file_id) in removals {
+        if let Some(files) = state.levels.get_mut(level) {
+            files.remove(file_id);
+            if files.is_empty() {
+                state.levels.remove(level);
+            }
+        }
+    }
+    if let Some(meta) = output {
+        state.next_file_id = state.next_file_id.max(meta.file_id + 1);
+        state
+            .levels
+            .entry(meta.level)
+            .or_default()
+            .insert(meta.file_id, meta);
+    }
 }
 
 fn encode_remove_payload(level: u32, file_id: u64) -> Vec<u8> {
@@ -518,9 +618,8 @@ fn decode_checkpoint_payload(payload: &[u8]) -> Result<(u64, u64), DBError> {
 }
 
 fn push_bytes(buf: &mut Vec<u8>, value: &[u8]) -> Result<(), DBError> {
-    let len = u32::try_from(value.len()).map_err(|_| {
-        DBError::StorageError("field length exceeds u32".to_string())
-    })?;
+    let len = u32::try_from(value.len())
+        .map_err(|_| DBError::StorageError("field length exceeds u32".to_string()))?;
     buf.extend_from_slice(&len.to_be_bytes());
     buf.extend_from_slice(value);
     Ok(())
@@ -535,9 +634,8 @@ fn read_vec(cursor: &mut Cursor<&[u8]>) -> Result<Vec<u8>, DBError> {
 
 fn read_string(cursor: &mut Cursor<&[u8]>) -> Result<String, DBError> {
     let bytes = read_vec(cursor)?;
-    String::from_utf8(bytes).map_err(|err| {
-        DBError::Corrupted(format!("invalid UTF-8 in manifest path: {err}"))
-    })
+    String::from_utf8(bytes)
+        .map_err(|err| DBError::Corrupted(format!("invalid UTF-8 in manifest path: {err}")))
 }
 
 fn read_u32(cursor: &mut Cursor<&[u8]>) -> Result<u32, DBError> {
@@ -845,5 +943,78 @@ mod tests {
         assert_eq!(manager.file_cache_len().await, 0);
 
         std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+    #[tokio::test]
+    async fn compaction_publication_rejects_stale_manifest_without_appending() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("MANIFEST");
+        let manager = Arc::new(ManifestManager::load_or_create(path.clone()).await.unwrap());
+        let expected = manager.snapshot().await;
+        let meta = SSTableMeta {
+            file_id: 1,
+            level: 0,
+            path: "input".to_string(),
+            record_count: 1,
+            smallest_key: b"a".to_vec(),
+            largest_key: b"z".to_vec(),
+            bloom_offset: 0,
+            bloom_size: 0,
+        };
+        manager.register_sstable(meta.clone()).await.unwrap();
+        let before = tokio::fs::read(&path).await.unwrap();
+        assert!(
+            manager
+                .publish_compaction(&expected, &[], None)
+                .await
+                .is_err()
+        );
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), before);
+        let expected = manager.snapshot().await;
+        manager
+            .publish_compaction(&expected, &[meta], None)
+            .await
+            .unwrap();
+        assert!(manager.snapshot().await.levels.is_empty());
+        assert!(
+            ManifestManager::load_or_create(path)
+                .await
+                .unwrap()
+                .snapshot()
+                .await
+                .levels
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn compaction_manifest_entry_never_replays_a_partial_replacement() {
+        let meta = SSTableMeta {
+            file_id: 1,
+            level: 0,
+            path: "input".to_string(),
+            record_count: 1,
+            smallest_key: b"a".to_vec(),
+            largest_key: b"z".to_vec(),
+            bloom_offset: 0,
+            bloom_size: 0,
+        };
+        let original = encode_entry(ENTRY_KIND_ADD, &encode_add_payload(&meta).unwrap()).unwrap();
+        let replacement = encode_entry(
+            ENTRY_KIND_COMPACTION,
+            &encode_compaction_payload(&[(0, 1)], None).unwrap(),
+        )
+        .unwrap();
+        for length in 1..replacement.len() {
+            let mut interrupted = original.clone();
+            interrupted.extend_from_slice(&replacement[..length]);
+            assert!(replay_manifest(&interrupted).is_err());
+        }
+        let mut complete = original;
+        complete.extend_from_slice(&replacement);
+        assert!(replay_manifest(&complete).unwrap().levels.is_empty());
+        let mut corrupt = complete;
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 1;
+        assert!(replay_manifest(&corrupt).is_err());
     }
 }

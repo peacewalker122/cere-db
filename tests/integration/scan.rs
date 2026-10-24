@@ -7,9 +7,9 @@
 //! (to avoid requiring large data sets for flush triggers). The SSTable
 //! scan path is tested through ReadManager unit tests.
 
+use ceredb::KV2;
 use ceredb::api::api::AsyncKVEngine;
 use ceredb::storage::config::StorageConfig;
-use ceredb::KV2;
 
 /// Helper: create a KV2 instance.
 async fn create_kv2(label: &str) -> (KV2, tempfile::TempDir) {
@@ -36,18 +36,12 @@ async fn create_kv2(label: &str) -> (KV2, tempfile::TempDir) {
 async fn scan_returns_all_keys_sorted() {
     let (mut kv2, _temp_dir) = create_kv2("sorted").await;
 
-    kv2.put(b"delta".to_vec(), b"val_d".to_vec())
-        .await
-        .unwrap();
-    kv2.put(b"alpha".to_vec(), b"val_a".to_vec())
-        .await
-        .unwrap();
+    kv2.put(b"delta".to_vec(), b"val_d".to_vec()).await.unwrap();
+    kv2.put(b"alpha".to_vec(), b"val_a".to_vec()).await.unwrap();
     kv2.put(b"charlie".to_vec(), b"val_c".to_vec())
         .await
         .unwrap();
-    kv2.put(b"beta".to_vec(), b"val_b".to_vec())
-        .await
-        .unwrap();
+    kv2.put(b"beta".to_vec(), b"val_b".to_vec()).await.unwrap();
 
     let results = kv2.scan(..).await.unwrap();
     assert_eq!(results.len(), 4);
@@ -67,21 +61,16 @@ async fn scan_returns_all_keys_sorted() {
 async fn scan_sub_range() {
     let (mut kv2, _temp_dir) = create_kv2("subrange").await;
 
-    kv2.put(b"apple".to_vec(), b"v1".to_vec())
-        .await
-        .unwrap();
-    kv2.put(b"banana".to_vec(), b"v2".to_vec())
-        .await
-        .unwrap();
-    kv2.put(b"cherry".to_vec(), b"v3".to_vec())
-        .await
-        .unwrap();
-    kv2.put(b"date".to_vec(), b"v4".to_vec())
-        .await
-        .unwrap();
+    kv2.put(b"apple".to_vec(), b"v1".to_vec()).await.unwrap();
+    kv2.put(b"banana".to_vec(), b"v2".to_vec()).await.unwrap();
+    kv2.put(b"cherry".to_vec(), b"v3".to_vec()).await.unwrap();
+    kv2.put(b"date".to_vec(), b"v4".to_vec()).await.unwrap();
 
     // Inclusive range
-    let results = kv2.scan(b"banana".to_vec()..=b"cherry".to_vec()).await.unwrap();
+    let results = kv2
+        .scan(b"banana".to_vec()..=b"cherry".to_vec())
+        .await
+        .unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].0, b"banana");
     assert_eq!(results[1].0, b"cherry");
@@ -104,12 +93,8 @@ async fn scan_sub_range() {
 async fn scan_filters_tombstones() {
     let (mut kv2, _temp_dir) = create_kv2("filter").await;
 
-    kv2.put(b"keep".to_vec(), b"value".to_vec())
-        .await
-        .unwrap();
-    kv2.put(b"remove".to_vec(), b"temp".to_vec())
-        .await
-        .unwrap();
+    kv2.put(b"keep".to_vec(), b"value".to_vec()).await.unwrap();
+    kv2.put(b"remove".to_vec(), b"temp".to_vec()).await.unwrap();
     kv2.delete(b"remove".to_vec()).await.unwrap();
 
     let results = kv2.scan(..).await.unwrap();
@@ -127,4 +112,31 @@ async fn scan_overwritten_key_returns_latest() {
     let results = kv2.scan(..).await.unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].1, b"new");
+}
+
+#[tokio::test]
+async fn scan_prefers_memtable_tombstone_over_older_sstable_put() {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let config = StorageConfig {
+        memtable_size_threshold: 64,
+        max_level0_files: usize::MAX,
+        ..StorageConfig::default()
+    };
+    let mut database = KV2::open(temp_dir.path(), config).await.unwrap();
+
+    database
+        .put(b"posting".to_vec(), vec![1; 64])
+        .await
+        .unwrap();
+    assert!(database.delete(b"posting".to_vec()).await.is_ok());
+
+    assert!(database.get(b"posting").await.unwrap().is_none());
+    assert!(
+        database
+            .scan(b"posting".to_vec()..=b"posting".to_vec())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

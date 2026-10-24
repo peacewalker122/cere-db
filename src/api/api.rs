@@ -2,16 +2,32 @@ use crate::error::DBError;
 use std::borrow::Cow;
 use std::ops::RangeBounds;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchOperation {
+    Put { key: Vec<u8>, value: Vec<u8> },
+    Delete { key: Vec<u8> },
+}
+
+fn unsupported_batch() -> DBError {
+    DBError::StorageError("atomic batches are unsupported by this engine".into())
+}
+
 pub trait KVEngine {
     fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
     fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
     fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
+    fn write_batch(&mut self, _operations: Vec<BatchOperation>) -> Result<(), DBError> {
+        Err(unsupported_batch())
+    }
 }
 
 pub trait AsyncKVEngine {
     async fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
     async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
     async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
+    async fn write_batch(&mut self, _operations: Vec<BatchOperation>) -> Result<(), DBError> {
+        Err(unsupported_batch())
+    }
 
     /// Scan keys in the given range and return all matching key-value pairs.
     ///
@@ -34,5 +50,8 @@ pub trait AsyncKVEngine {
     /// // Scan all keys in the store
     /// let results = engine.scan(..).await?;
     /// ```
-    async fn scan(&self, range: impl RangeBounds<Vec<u8>> + Send) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError>;
+    async fn scan(
+        &self,
+        range: impl RangeBounds<Vec<u8>> + Send,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError>;
 }

@@ -1,14 +1,13 @@
 use crate::{
-    api::api::{AsyncKVEngine, KVEngine},
+    api::api::{AsyncKVEngine, BatchOperation, KVEngine},
     error::DBError,
 };
-use std::ops::RangeBounds;
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Set { key: String, value: String },
     Get { key: String },
     Delete { key: String },
+    Batch { operations: Vec<BatchOperation> },
     Exit,
 }
 
@@ -73,6 +72,52 @@ pub fn parse_command(input: &str) -> Result<Command, ParseError> {
                 key: tokens[1].clone(),
             })
         }
+        "BATCH" => {
+            if tokens.len() < 3 {
+                return Err(ParseError::InvalidArity {
+                    command: "BATCH".to_string(),
+                    expected: "BATCH SET <key> <value> [DELETE <key> ...]",
+                });
+            }
+            let mut operations = Vec::new();
+            let mut index = 1;
+            while index < tokens.len() {
+                match tokens[index].to_uppercase().as_str() {
+                    "SET" if index + 2 < tokens.len() => {
+                        operations.push(BatchOperation::Put {
+                            key: tokens[index + 1].as_bytes().to_vec(),
+                            value: tokens[index + 2].as_bytes().to_vec(),
+                        });
+                        index += 3;
+                    }
+                    "DELETE" if index + 1 < tokens.len() => {
+                        operations.push(BatchOperation::Delete {
+                            key: tokens[index + 1].as_bytes().to_vec(),
+                        });
+                        index += 2;
+                    }
+                    "SET" | "DELETE" => {
+                        return Err(ParseError::InvalidArity {
+                            command: "BATCH".to_string(),
+                            expected: "BATCH SET <key> <value> [DELETE <key> ...]",
+                        });
+                    }
+                    _ => {
+                        return Err(ParseError::InvalidArity {
+                            command: "BATCH".to_string(),
+                            expected: "BATCH SET <key> <value> [DELETE <key> ...]",
+                        });
+                    }
+                }
+            }
+            if operations.is_empty() {
+                return Err(ParseError::InvalidArity {
+                    command: "BATCH".to_string(),
+                    expected: "BATCH SET <key> <value> [DELETE <key> ...]",
+                });
+            }
+            Ok(Command::Batch { operations })
+        }
         "EXIT" | "QUIT" => Ok(Command::Exit),
         _ => Err(ParseError::UnknownCommand(tokens[0].clone())),
     }
@@ -90,6 +135,10 @@ pub fn execute_command<E: KVEngine>(engine: &mut E, command: Command) -> Result<
         },
         Command::Delete { key } => {
             engine.delete(key.into_bytes())?;
+            Ok(Response::Ok)
+        }
+        Command::Batch { operations } => {
+            engine.write_batch(operations)?;
             Ok(Response::Ok)
         }
         Command::Exit => Ok(Response::Bye),
@@ -111,6 +160,10 @@ pub async fn execute_command_async<E: AsyncKVEngine>(
         },
         Command::Delete { key } => {
             engine.delete(key.into_bytes()).await?;
+            Ok(Response::Ok)
+        }
+        Command::Batch { operations } => {
+            engine.write_batch(operations).await?;
             Ok(Response::Ok)
         }
         Command::Exit => Ok(Response::Bye),
@@ -179,11 +232,15 @@ fn tokenize(input: &str) -> Result<Vec<String>, ParseError> {
 mod tests {
     use super::*;
     use crate::error::DBError;
-    use std::{borrow::Cow, collections::HashMap};
+    use std::{borrow::Cow, collections::HashMap, ops::RangeBounds};
 
     #[derive(Default)]
     struct MockKV {
         data: HashMap<Vec<u8>, Vec<u8>>,
+        puts: usize,
+        deletes: usize,
+        batches: Vec<Vec<BatchOperation>>,
+        fail_batch: bool,
     }
 
     impl KVEngine for MockKV {
@@ -192,12 +249,22 @@ mod tests {
         }
 
         fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError> {
+            self.puts += 1;
             self.data.insert(key, value);
             Ok(())
         }
 
         fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
+            self.deletes += 1;
             self.data.remove(&key);
+            Ok(())
+        }
+
+        fn write_batch(&mut self, operations: Vec<BatchOperation>) -> Result<(), DBError> {
+            if self.fail_batch {
+                return Err(DBError::StorageError("batch failed".into()));
+            }
+            self.batches.push(operations);
             Ok(())
         }
     }
@@ -208,12 +275,22 @@ mod tests {
         }
 
         async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError> {
+            self.puts += 1;
             self.data.insert(key, value);
             Ok(())
         }
 
         async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
+            self.deletes += 1;
             self.data.remove(&key);
+            Ok(())
+        }
+
+        async fn write_batch(&mut self, operations: Vec<BatchOperation>) -> Result<(), DBError> {
+            if self.fail_batch {
+                return Err(DBError::StorageError("batch failed".into()));
+            }
+            self.batches.push(operations);
             Ok(())
         }
 
@@ -239,6 +316,43 @@ mod tests {
             }
             results.sort_by(|a, b| a.0.cmp(&b.0));
             Ok(results)
+        }
+    }
+
+    struct DefaultBatchKV;
+
+    impl KVEngine for DefaultBatchKV {
+        fn get(&self, _key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError> {
+            Ok(None)
+        }
+
+        fn put(&mut self, _key: Vec<u8>, _value: Vec<u8>) -> Result<(), DBError> {
+            Ok(())
+        }
+
+        fn delete(&mut self, _key: Vec<u8>) -> Result<(), DBError> {
+            Ok(())
+        }
+    }
+
+    impl AsyncKVEngine for DefaultBatchKV {
+        async fn get(&self, _key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError> {
+            Ok(None)
+        }
+
+        async fn put(&mut self, _key: Vec<u8>, _value: Vec<u8>) -> Result<(), DBError> {
+            Ok(())
+        }
+
+        async fn delete(&mut self, _key: Vec<u8>) -> Result<(), DBError> {
+            Ok(())
+        }
+
+        async fn scan(
+            &self,
+            _range: impl RangeBounds<Vec<u8>> + Send,
+        ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
+            Ok(Vec::new())
         }
     }
 
@@ -326,6 +440,58 @@ mod tests {
             parsed,
             Ok(Command::Delete {
                 key: "key".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_batch_preserves_order_and_quotes() {
+        assert_eq!(
+            parse_command("BATCH SET \"key one\" \"value one\" DELETE old SET x y"),
+            Ok(Command::Batch {
+                operations: vec![
+                    BatchOperation::Put {
+                        key: b"key one".to_vec(),
+                        value: b"value one".to_vec()
+                    },
+                    BatchOperation::Delete {
+                        key: b"old".to_vec()
+                    },
+                    BatchOperation::Put {
+                        key: b"x".to_vec(),
+                        value: b"y".to_vec()
+                    },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn parse_batch_rejects_malformed_tail() {
+        assert!(matches!(
+            parse_command("BATCH SET valid value DELETE"),
+            Err(ParseError::InvalidArity { command, .. }) if command == "BATCH"
+        ));
+    }
+
+    #[test]
+    fn malformed_batch_tail_is_rejected_before_dispatch() {
+        let kv = MockKV::default();
+        let parsed = parse_command("BATCH SET valid value DELETE");
+        assert!(parsed.is_err());
+        assert!(kv.batches.is_empty());
+        assert!(kv.data.is_empty());
+        assert_eq!((kv.puts, kv.deletes), (0, 0));
+    }
+
+    #[test]
+    fn parse_batch_accepts_single_delete() {
+        assert_eq!(
+            parse_command("BATCH DELETE old"),
+            Ok(Command::Batch {
+                operations: vec![BatchOperation::Delete {
+                    key: b"old".to_vec(),
+                }],
             })
         );
     }
@@ -456,5 +622,101 @@ mod tests {
         )
         .await;
         assert!(matches!(missing, Ok(Response::Nil)));
+    }
+
+    #[test]
+    fn execute_batch_dispatches_once_in_order_and_propagates_error() {
+        let operations = vec![
+            BatchOperation::Put {
+                key: b"a".to_vec(),
+                value: b"1".to_vec(),
+            },
+            BatchOperation::Delete { key: b"b".to_vec() },
+            BatchOperation::Put {
+                key: b"a".to_vec(),
+                value: b"2".to_vec(),
+            },
+        ];
+        let mut kv = MockKV::default();
+        assert!(matches!(
+            execute_command(
+                &mut kv,
+                Command::Batch {
+                    operations: operations.clone()
+                }
+            ),
+            Ok(Response::Ok)
+        ));
+        assert_eq!(kv.batches, vec![operations]);
+        assert_eq!((kv.puts, kv.deletes), (0, 0));
+
+        kv.fail_batch = true;
+        assert!(matches!(
+            execute_command(&mut kv, Command::Batch { operations: vec![] }),
+            Err(DBError::StorageError(message)) if message == "batch failed"
+        ));
+    }
+
+    #[test]
+    fn batch_default_is_explicitly_unsupported() {
+        let mut engine = DefaultBatchKV;
+        assert!(matches!(
+            execute_command(
+                &mut engine,
+                Command::Batch {
+                    operations: vec![BatchOperation::Delete { key: b"key".to_vec() }]
+                }
+            ),
+            Err(DBError::StorageError(message)) if message == "atomic batches are unsupported by this engine"
+        ));
+    }
+
+    #[tokio::test]
+    async fn async_batch_default_is_explicitly_unsupported() {
+        let mut engine = DefaultBatchKV;
+        assert!(matches!(
+            execute_command_async(
+                &mut engine,
+                Command::Batch {
+                    operations: vec![BatchOperation::Delete { key: b"key".to_vec() }]
+                }
+            )
+            .await,
+            Err(DBError::StorageError(message)) if message == "atomic batches are unsupported by this engine"
+        ));
+    }
+
+    #[tokio::test]
+    async fn execute_batch_dispatches_once_in_order_and_propagates_error_async() {
+        let operations = vec![
+            BatchOperation::Put {
+                key: b"a".to_vec(),
+                value: b"1".to_vec(),
+            },
+            BatchOperation::Delete { key: b"b".to_vec() },
+            BatchOperation::Put {
+                key: b"a".to_vec(),
+                value: b"2".to_vec(),
+            },
+        ];
+        let mut kv = MockKV::default();
+        assert!(matches!(
+            execute_command_async(
+                &mut kv,
+                Command::Batch {
+                    operations: operations.clone()
+                }
+            )
+            .await,
+            Ok(Response::Ok)
+        ));
+        assert_eq!(kv.batches, vec![operations]);
+        assert_eq!((kv.puts, kv.deletes), (0, 0));
+
+        kv.fail_batch = true;
+        assert!(matches!(
+            execute_command_async(&mut kv, Command::Batch { operations: vec![] }).await,
+            Err(DBError::StorageError(message)) if message == "batch failed"
+        ));
     }
 }

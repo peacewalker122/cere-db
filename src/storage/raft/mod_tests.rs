@@ -267,7 +267,11 @@ mod tests {
         for l in &layers {
             let rx = l.raft.metrics();
             let m = rx.borrow().clone();
-            assert!(m.last_applied.is_some(), "node {} has no applied entry", l.id());
+            assert!(
+                m.last_applied.is_some(),
+                "node {} has no applied entry",
+                l.id()
+            );
         }
 
         for l in &layers {
@@ -368,8 +372,11 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
 
-        assert_ne!(new_leader_id, leader_id,
-            "new leader {} must differ from crashed leader {}", new_leader_id, leader_id);
+        assert_ne!(
+            new_leader_id, leader_id,
+            "new leader {} must differ from crashed leader {}",
+            new_leader_id, leader_id
+        );
 
         let new_leader = remaining.iter().find(|l| l.id() == new_leader_id).unwrap();
         new_leader.propose(b"after-crash".to_vec()).await.unwrap();

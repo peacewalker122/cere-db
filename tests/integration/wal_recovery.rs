@@ -104,13 +104,11 @@ async fn failed_flush_keeps_values_and_tombstones_visible_through_retry_and_rest
         .put(b"old".to_vec(), b"yes".to_vec())
         .await
         .unwrap();
-    assert!(
-        database
-            .put(b"trigger".to_vec(), vec![1; 40])
-            .await
-            .is_err()
-    );
-    assert!(database.delete(b"deleted".to_vec()).await.is_err());
+    database
+        .put(b"trigger".to_vec(), vec![1; 40])
+        .await
+        .unwrap();
+    database.delete(b"deleted".to_vec()).await.unwrap();
     assert_eq!(
         database.get(b"old").await.unwrap().unwrap().as_ref(),
         b"yes"

@@ -21,7 +21,7 @@ pub fn run_repl<E: KVEngine>(engine: &mut E) -> io::Result<()> {
 
     writeln!(
         stdout,
-        "wasm-kv CLI REPL (SET/GET/DELETE). Type EXIT to quit."
+        "wasm-kv CLI REPL (SET/GET/DELETE/BATCH). Type EXIT to quit."
     )?;
 
     loop {
@@ -69,7 +69,7 @@ pub async fn run_repl_async<E: AsyncKVEngine>(engine: &mut E) -> io::Result<()> 
 
     writeln!(
         stdout,
-        "wasm-kv CLI REPL (SET/GET/DELETE). Type EXIT to quit."
+        "wasm-kv CLI REPL (SET/GET/DELETE/BATCH). Type EXIT to quit."
     )?;
 
     loop {

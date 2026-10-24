@@ -250,9 +250,7 @@ impl SSTableCodec {
 
 fn decode_sparse_index(index_block: &[u8]) -> Result<Vec<SparseIndexEntry>, DBError> {
     if index_block.len() < 8 {
-        return Err(DBError::Corrupted(
-            "Index block too small".to_string(),
-        ));
+        return Err(DBError::Corrupted("Index block too small".to_string()));
     }
 
     let mut cursor = Cursor::new(index_block);

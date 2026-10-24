@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 use crate::{
-    api::api::AsyncKVEngine,
+    api::api::{AsyncKVEngine, BatchOperation},
     error::DBError,
     storage::{
         compactionmanager::compaction::compaction,
@@ -215,6 +215,12 @@ impl KV2 {
         Ok(())
     }
 
+    async fn maintain_after_commit(&mut self) {
+        if let Err(error) = self.maybe_flush_and_compact().await {
+            log::error!("Post-commit flush or compaction maintenance failed: {error}");
+        }
+    }
+
     /// Rayon worker that processes compaction triggers received via mpsc channel.
     /// Runs in a dedicated thread, using rayon for parallel compaction work.
     async fn run_compaction_worker(
@@ -267,15 +273,24 @@ impl AsyncKVEngine for KV2 {
 
     async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError> {
         self.write_component.put(key, value).await?;
-        self.maybe_flush_and_compact().await?;
+        self.maintain_after_commit().await;
 
         Ok(())
     }
 
     async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError> {
         self.write_component.delete(key).await?;
-        self.maybe_flush_and_compact().await?;
+        self.maintain_after_commit().await;
 
+        Ok(())
+    }
+
+    async fn write_batch(&mut self, operations: Vec<BatchOperation>) -> Result<(), DBError> {
+        if operations.is_empty() {
+            return Ok(());
+        }
+        self.write_component.write_batch(operations).await?;
+        self.maintain_after_commit().await;
         Ok(())
     }
 
@@ -438,6 +453,60 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1, b"new_value");
 
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn scans_on_shared_memtable_observe_complete_batch_generations() {
+        use crate::api::api::BatchOperation;
+        use std::sync::Arc;
+        use tokio::sync::Barrier;
+
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let mut kv2 = KV2::open_with_defaults(&temp_dir).await.unwrap();
+        let keys = 32;
+        let operations = move |generation: usize| {
+            (0..keys)
+                .map(|index| BatchOperation::Put {
+                    key: format!("key-{index:02}").into_bytes(),
+                    value: generation.to_string().into_bytes(),
+                })
+                .collect::<Vec<_>>()
+        };
+        kv2.write_component
+            .write_batch(operations(0))
+            .await
+            .unwrap();
+
+        let writer = kv2.write_component.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let writer_barrier = Arc::clone(&barrier);
+        let writer_task = tokio::spawn(async move {
+            let mut sequences = Vec::new();
+            for generation in 1..=16 {
+                writer_barrier.wait().await;
+                writer.write_batch(operations(generation)).await.unwrap();
+                sequences.push(writer.current_sequence_number());
+                writer_barrier.wait().await;
+            }
+            sequences
+        });
+
+        for _ in 1..=16 {
+            let watermark = kv2.write_component.current_sequence_number();
+            barrier.wait().await;
+            barrier.wait().await;
+            let scanned = kv2.read_manager.scan_range(.., watermark).await.unwrap();
+            assert_eq!(scanned.len(), keys);
+            let expected_generation = (watermark / keys as u64) - 1;
+            assert!(scanned
+                .iter()
+                .all(|(_, value)| { value == expected_generation.to_string().as_bytes() }));
+        }
+
+        let sequences = writer_task.await.unwrap();
+        assert!(sequences.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(sequences.last().copied(), Some((keys * 17) as u64));
         std::fs::remove_dir_all(temp_dir).unwrap();
     }
 }
@@ -654,7 +723,8 @@ impl AsyncKVEngine for RaftKV2 {
         self.write_handle
             .write()
             .await
-            .apply_replicated_command(cmd);
+            .apply_replicated_command(cmd)
+            .await;
         self.maybe_flush().await?;
         Ok(())
     }
@@ -674,9 +744,16 @@ impl AsyncKVEngine for RaftKV2 {
         self.write_handle
             .write()
             .await
-            .apply_replicated_command(cmd);
+            .apply_replicated_command(cmd)
+            .await;
         self.maybe_flush().await?;
         Ok(())
+    }
+
+    async fn write_batch(&mut self, _operations: Vec<BatchOperation>) -> Result<(), DBError> {
+        Err(DBError::StorageError(
+            "atomic batches are unsupported by RaftKV2 without multi-command proposals".into(),
+        ))
     }
 
     async fn scan(
@@ -723,18 +800,22 @@ mod raft_tests {
         tokio::fs::write(&level0, b"obstruction").await.unwrap();
         {
             let writer = kv.write_handle.write().await;
-            writer.apply_replicated_command(LogCommand::new(
-                RecordType::Put,
-                b"old".to_vec(),
-                b"yes".to_vec(),
-                1,
-            ));
-            writer.apply_replicated_command(LogCommand::new(
-                RecordType::Delete,
-                b"gone".to_vec(),
-                Vec::new(),
-                2,
-            ));
+            writer
+                .apply_replicated_command(LogCommand::new(
+                    RecordType::Put,
+                    b"old".to_vec(),
+                    b"yes".to_vec(),
+                    1,
+                ))
+                .await;
+            writer
+                .apply_replicated_command(LogCommand::new(
+                    RecordType::Delete,
+                    b"gone".to_vec(),
+                    Vec::new(),
+                    2,
+                ))
+                .await;
         }
         assert!(kv.maybe_flush().await.is_err());
         assert_eq!(
@@ -755,7 +836,8 @@ mod raft_tests {
                 b"new".to_vec(),
                 b"yes".to_vec(),
                 3,
-            ));
+            ))
+            .await;
         kv.maybe_flush().await.unwrap();
         for key in [b"old", b"new"] {
             assert_eq!(
@@ -768,13 +850,12 @@ mod raft_tests {
                 b"yes"
             );
         }
-        assert!(
-            kv.read_manager
-                .get(b"gone".to_vec(), 3)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(kv
+            .read_manager
+            .get(b"gone".to_vec(), 3)
+            .await
+            .unwrap()
+            .is_none());
         assert_eq!(kv.write_handle.read().await.memtable_size_bytes(), 0);
         kv.raft_layer.shutdown().await;
     }

@@ -22,8 +22,18 @@ Enter commands at the prompt:
 SET greeting "hello world"
 GET greeting
 DELETE greeting
+BATCH SET greeting "hello again" SET visits 1 DELETE obsolete
 EXIT
 ```
+
+`BATCH` accepts a sequence of `SET <key> <value>` and `DELETE <key>` operations
+on one line. Quote keys or values containing whitespace. The full line is
+validated before execution, then submitted as one engine batch; it is not
+implemented as sequential CLI writes. KV2 applies batches atomically and
+durably, preserving operation order (the final operation for a repeated key
+wins). Backends without batch support, including the current Raft backend,
+return an explicit unsupported-operation error rather than falling back to
+individual writes.
 
 Raft mode is available with `--raft-mode`. See `cargo run -- --help` for CLI options. Raft support is experimental and not production-hardened.
 
@@ -38,3 +48,11 @@ cargo bench --bench storage -- --run
 See [benchmark workloads and measurement boundaries](benches/storage/README.md)
 for filtering, filesystem selection, checkpoint/recovery comparisons, and JSON
 results.
+
+## Tombstone reclamation
+
+Compaction removes a winning delete record when its key falls outside every SSTable range excluded from that merge. Overlapping ranges retain the tombstone, even if the other table might not contain that exact key. Reclamation runs during the existing compaction process; a lone source file does not trigger compaction.
+
+The output is synced before one checksummed manifest entry replaces all inputs together. A changed manifest aborts publication so concurrent flushes or compactions cannot invalidate the range check. Obsolete input files are deleted after publication. Interrupted cleanup can leave unregistered files; output creation skips occupied filenames.
+
+This reclaims SSTable tombstones, not retained WAL history. The public database API has no retained historical snapshots. Manifest entries interrupted during append still fail closed on reopen; automatic manifest tail repair is not implemented. Databases written with the new compaction entry require a reader that supports that entry.

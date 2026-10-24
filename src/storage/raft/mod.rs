@@ -3,17 +3,17 @@
 //! This module wraps `openraft::Raft` and provides a clean interface for
 //! the KV engine.
 
-pub mod types;
 pub mod log_store;
-pub mod state_machine;
 pub mod network;
 pub mod server;
+pub mod state_machine;
+pub mod types;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use openraft::impls::BasicNode;
 use openraft::Raft;
+use openraft::impls::BasicNode;
 
 use tokio::sync::RwLock;
 

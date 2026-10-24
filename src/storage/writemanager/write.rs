@@ -10,6 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 use crossbeam_skiplist::SkipMap;
 use tokio::io::AsyncWriteExt;
 
+use crate::api::api::BatchOperation;
 use crate::error::DBError;
 use crate::storage::{
     bloom::BloomFilterWrapper,
@@ -58,6 +59,7 @@ pub struct WriteComponent {
     /// Memtable size tracking (shared via Arc for Clone support).
     memtable_size: Arc<std::sync::atomic::AtomicUsize>,
     sequence_number: Arc<std::sync::atomic::AtomicU64>,
+    writer_lock: Arc<tokio::sync::Mutex<()>>,
 
     sstable_dir: PathBuf,
     wal_manager: Arc<WALManager>,
@@ -71,6 +73,7 @@ impl Clone for WriteComponent {
             memtable: Arc::clone(&self.memtable),
             memtable_size: Arc::clone(&self.memtable_size),
             sequence_number: Arc::clone(&self.sequence_number),
+            writer_lock: Arc::clone(&self.writer_lock),
             sstable_dir: self.sstable_dir.clone(),
             wal_manager: Arc::clone(&self.wal_manager),
             manifest_manager: Arc::clone(&self.manifest_manager),
@@ -115,6 +118,7 @@ impl WriteComponent {
             memtable: Arc::new(SkipMap::new()),
             memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(sequence_number)),
+            writer_lock: Arc::new(tokio::sync::Mutex::new(())),
             sstable_dir,
             wal_manager,
             manifest_manager,
@@ -132,6 +136,7 @@ impl WriteComponent {
             memtable: Arc::new(SkipMap::new()),
             memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            writer_lock: Arc::new(tokio::sync::Mutex::new(())),
             sstable_dir: PathBuf::from("data"),
             wal_manager,
             manifest_manager,
@@ -140,30 +145,58 @@ impl WriteComponent {
     }
 
     pub async fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError> {
-        let lsn = self
-            .sequence_number
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        self.wal_manager
-            .write_log(&key, &value, lsn, RecordType::Put)
-            .await?;
-
-        self.append_to_memtable(key, value, RecordType::Put, lsn);
-
-        Ok(())
+        self.write_batch(vec![BatchOperation::Put { key, value }])
+            .await
     }
 
     pub async fn delete(&self, key: Vec<u8>) -> Result<(), DBError> {
-        let lsn = self
-            .sequence_number
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        self.wal_manager
-            .write_log(&key, &Vec::new(), lsn, RecordType::Delete)
-            .await?;
+        self.write_batch(vec![BatchOperation::Delete { key }]).await
+    }
 
-        self.append_to_memtable(key, Vec::new(), RecordType::Delete, lsn);
+    pub async fn write_batch(&self, operations: Vec<BatchOperation>) -> Result<(), DBError> {
+        if operations.is_empty() {
+            return Ok(());
+        }
+        let writer = Arc::clone(&self.writer_lock).lock_owned().await;
+        let component = self.clone();
+        tokio::spawn(async move { component.write_batch_committed(operations, writer).await })
+            .await
+            .map_err(|error| DBError::StorageError(format!("batch writer task failed: {error}")))?
+    }
 
+    async fn write_batch_committed(
+        &self,
+        operations: Vec<BatchOperation>,
+        _writer: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<(), DBError> {
+        if operations.is_empty() {
+            return Ok(());
+        }
+        let current = self.current_sequence_number();
+        let count = u64::try_from(operations.len())
+            .map_err(|_| DBError::StorageError("batch sequence exhausted".into()))?;
+        let final_sequence = current
+            .checked_add(count)
+            .ok_or_else(|| DBError::StorageError("batch sequence exhausted".into()))?;
+        let mut commands = Vec::with_capacity(operations.len());
+        for (offset, operation) in operations.iter().enumerate() {
+            let lsn = current + offset as u64 + 1;
+            let command = match operation {
+                BatchOperation::Put { key, value } => {
+                    LogCommand::new(RecordType::Put, key.clone(), value.clone(), lsn)
+                }
+                BatchOperation::Delete { key } => {
+                    LogCommand::new(RecordType::Delete, key.clone(), Vec::new(), lsn)
+                }
+            };
+            commands.push(command);
+        }
+        self.wal_manager.write_transaction(commands.clone()).await?;
+        for command in commands {
+            self.append_to_memtable(command.key, command.value, command.record_type, command.lsn);
+        }
+        self.sequence_number
+            .store(final_sequence, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
@@ -171,7 +204,8 @@ impl WriteComponent {
     ///
     /// This path intentionally does not write to WAL, because the entry is
     /// already durable via raft/WAL replication flow.
-    pub fn apply_replicated_command(&self, cmd: LogCommand) {
+    pub async fn apply_replicated_command(&self, cmd: LogCommand) {
+        let _writer = self.writer_lock.lock().await;
         let normalized_value = if cmd.record_type == RecordType::Delete {
             Vec::new()
         } else {
@@ -196,6 +230,8 @@ impl WriteComponent {
     }
 
     pub async fn flush_active_memtable(&mut self) -> Result<CheckpointResult, DBError> {
+        let writer_lock = Arc::clone(&self.writer_lock);
+        let _writer = writer_lock.lock().await;
         let snapshot = Arc::new(SkipMap::new());
         for entry in self.memtable.iter() {
             snapshot.insert(entry.key().clone(), entry.value().clone());
@@ -432,27 +468,25 @@ mod tests {
     async fn active_flush_preserves_cloned_writes_and_shared_accounting() {
         let directory = tempfile::tempdir().unwrap();
         let mut component = build_write_component(directory.path()).await;
-        component.apply_replicated_command(LogCommand::new(
-            RecordType::Put,
-            b"old".to_vec(),
-            b"yes".to_vec(),
-            1,
-        ));
+        component
+            .apply_replicated_command(LogCommand::new(
+                RecordType::Put,
+                b"old".to_vec(),
+                b"yes".to_vec(),
+                1,
+            ))
+            .await;
         let clone = component.clone();
         let reader = component.active_memtable_handle();
-        let mut flush = Box::pin(component.flush_active_memtable());
-        std::future::poll_fn(|context| {
-            assert!(std::future::Future::poll(flush.as_mut(), context).is_pending());
-            std::task::Poll::Ready(())
-        })
-        .await;
-        clone.apply_replicated_command(LogCommand::new(
-            RecordType::Delete,
-            b"new".to_vec(),
-            Vec::new(),
-            2,
-        ));
-        flush.await.unwrap();
+        component.flush_active_memtable().await.unwrap();
+        clone
+            .apply_replicated_command(LogCommand::new(
+                RecordType::Delete,
+                b"new".to_vec(),
+                Vec::new(),
+                2,
+            ))
+            .await;
         assert!(Arc::ptr_eq(&reader, &component.active_memtable_handle()));
         assert_eq!(reader.len(), 1);
         assert_eq!(
@@ -749,7 +783,7 @@ mod tests {
             b"rep-value".to_vec(),
             7,
         );
-        write_component.apply_replicated_command(cmd);
+        write_component.apply_replicated_command(cmd).await;
 
         assert_eq!(write_component.memtable.len(), 1);
         let entry = write_component.memtable.iter().next().unwrap();
@@ -760,5 +794,47 @@ mod tests {
         assert_eq!(write_component.current_sequence_number(), 7);
 
         std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_batch_waiting_for_writer_lock_is_not_admitted() {
+        let directory = tempfile::tempdir().unwrap();
+        let component = build_write_component(directory.path()).await;
+        let held = Arc::clone(&component.writer_lock).lock_owned().await;
+        let writer = component.clone();
+        let task = tokio::spawn(async move {
+            writer
+                .write_batch(vec![BatchOperation::Put {
+                    key: b"cancelled".to_vec(),
+                    value: b"value".to_vec(),
+                }])
+                .await
+        });
+        tokio::task::yield_now().await;
+        task.abort();
+        drop(held);
+        tokio::task::yield_now().await;
+        assert_eq!(component.current_sequence_number(), 0);
+        assert!(component.active_memtable_handle().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelled_admitted_batch_finishes_publication() {
+        let directory = tempfile::tempdir().unwrap();
+        let component = build_write_component(directory.path()).await;
+        let writer = component.clone();
+        let task = tokio::spawn(async move {
+            writer
+                .write_batch(vec![BatchOperation::Put {
+                    key: b"committed".to_vec(),
+                    value: b"value".to_vec(),
+                }])
+                .await
+        });
+        tokio::task::yield_now().await;
+        task.abort();
+        let _guard = Arc::clone(&component.writer_lock).lock_owned().await;
+        assert_eq!(component.current_sequence_number(), 1);
+        assert_eq!(component.active_memtable_handle().len(), 1);
     }
 }

@@ -170,16 +170,16 @@ pub fn decode_record_from_file(
     offset += 1;
 
     // Read key length
-    let mut len_buf: [u8; 8] = reader[offset..offset + 8].try_into().map_err(|e| {
-        DBError::StorageError(format!("Failed to read key length: {:?}", e))
-    })?;
+    let mut len_buf: [u8; 8] = reader[offset..offset + 8]
+        .try_into()
+        .map_err(|e| DBError::StorageError(format!("Failed to read key length: {:?}", e)))?;
     let key_len = u64::from_be_bytes(len_buf) as usize;
     offset += 8;
 
     // Read value length
-    len_buf = reader[offset..offset + 8].try_into().map_err(|e| {
-        DBError::StorageError(format!("Failed to read value length: {:?}", e))
-    })?;
+    len_buf = reader[offset..offset + 8]
+        .try_into()
+        .map_err(|e| DBError::StorageError(format!("Failed to read value length: {:?}", e)))?;
     let value_len = u64::from_be_bytes(len_buf) as usize;
     offset += 8;
 
@@ -193,7 +193,10 @@ pub fn decode_record_from_file(
 
     // Read and verify checksum
     let checksum_buf: [u8; 4] = reader[offset..offset + 4].try_into().or_else(|e| {
-        Err(DBError::StorageError(format!("Failed to read checksum: {:?}", e)))
+        Err(DBError::StorageError(format!(
+            "Failed to read checksum: {:?}",
+            e
+        )))
     })?;
     let checksum = u32::from_be_bytes(checksum_buf);
 

@@ -40,7 +40,7 @@ impl ReadManager {
         sequence_number: u64,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
         // Collect entries from memtable
-        let mut merged: HashMap<Vec<u8>, (Vec<u8>, u64)> = HashMap::new();
+        let mut merged: HashMap<Vec<u8>, MemtableRecord> = HashMap::new();
 
         // 1. Scan memtable
         // SkipMap::range() returns entries in key order. We iterate the range
@@ -51,18 +51,13 @@ impl ReadManager {
             if *lsn > sequence_number {
                 continue;
             }
-            // Only track Put (non-tombstone) entries
-            if record.record_type != RecordType::Delete {
-                let is_newer = merged
-                    .get(key)
-                    .map(|(_, existing_lsn)| *lsn > *existing_lsn)
-                    .unwrap_or(true);
-                if is_newer {
-                    merged.insert(key.clone(), (record.value.clone(), *lsn));
-                }
-            } else {
-                // Tombstone: remove any existing entry
-                merged.remove(key);
+            let candidate = record.clone();
+            let is_newer = merged
+                .get(key)
+                .map(|current| is_newer_record(&candidate, current))
+                .unwrap_or(true);
+            if is_newer {
+                merged.insert(key.clone(), candidate);
             }
         }
 
@@ -74,7 +69,8 @@ impl ReadManager {
         // 3. Produce sorted output
         let mut results: Vec<(Vec<u8>, Vec<u8>)> = merged
             .into_iter()
-            .map(|(key, (value, _))| (key, value))
+            .filter(|(_, record)| record.record_type != RecordType::Delete)
+            .map(|(key, record)| (key, record.value))
             .collect();
         results.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(results)
@@ -85,10 +81,9 @@ impl ReadManager {
         manifest_snapshot: &ManifestSnapshot,
         range: &impl RangeBounds<Vec<u8>>,
         sequence_number: u64,
-        merged: &mut HashMap<Vec<u8>, (Vec<u8>, u64)>,
+        merged: &mut HashMap<Vec<u8>, MemtableRecord>,
     ) -> Result<(), DBError> {
-        let mut levels: Vec<(&u32, &Vec<SSTableMeta>)> =
-            manifest_snapshot.levels.iter().collect();
+        let mut levels: Vec<(&u32, &Vec<SSTableMeta>)> = manifest_snapshot.levels.iter().collect();
         levels.sort_by_key(|(level, _)| **level);
 
         for (_level, files) in levels.into_iter() {
@@ -105,7 +100,7 @@ impl ReadManager {
         sstable: &SSTableMeta,
         range: &impl RangeBounds<Vec<u8>>,
         sequence_number: u64,
-        merged: &mut HashMap<Vec<u8>, (Vec<u8>, u64)>,
+        merged: &mut HashMap<Vec<u8>, MemtableRecord>,
     ) -> Result<(), DBError> {
         // Quick range check: skip SSTable if its key range doesn't overlap scan range
         if !ranges_overlap(range, &sstable.smallest_key, &sstable.largest_key) {
@@ -116,8 +111,7 @@ impl ReadManager {
         let file = template.try_clone().await?;
         let mut reader = tokio::io::BufReader::new(file);
 
-        let (footer, index, _bloom) =
-            SSTableCodec::deserialize_sections(&mut reader).await?;
+        let (footer, index, _bloom) = SSTableCodec::deserialize_sections(&mut reader).await?;
 
         // Iterate through blocks that overlap the scan range
         for index_entry in index.iter() {
@@ -139,17 +133,13 @@ impl ReadManager {
                     if !key_in_range(&record.key, range) {
                         continue;
                     }
-                    if record.record_type != RecordType::Delete {
-                        let key = record.key.clone();
-                        let is_newer = merged
-                            .get(&key)
-                            .map(|(_, existing_lsn)| record.lsn > *existing_lsn)
-                            .unwrap_or(true);
-                        if is_newer {
-                            merged.insert(key, (record.value, record.lsn));
-                        }
-                    } else {
-                        merged.remove(&record.key);
+                    let key = record.key.clone();
+                    let is_newer = merged
+                        .get(&key)
+                        .map(|current| is_newer_record(&record, current))
+                        .unwrap_or(true);
+                    if is_newer {
+                        merged.insert(key, record);
                     }
                 }
             }
@@ -298,6 +288,13 @@ impl ReadManager {
     }
 }
 
+fn is_newer_record(candidate: &MemtableRecord, current: &MemtableRecord) -> bool {
+    candidate.lsn > current.lsn
+        || (candidate.lsn == current.lsn
+            && candidate.record_type == RecordType::Delete
+            && current.record_type != RecordType::Delete)
+}
+
 // ── Helper functions for range scan ──────────────────────────────
 
 /// Convert a `RangeBounds<Vec<u8>>` to `(Bound<(Vec<u8>, u64)>, Bound<(Vec<u8>, u64)>)` for SkipMap.
@@ -305,7 +302,10 @@ impl ReadManager {
 /// capture all LSN versions of each key in the range.
 fn collect_range_bounds(
     range: &impl RangeBounds<Vec<u8>>,
-) -> (std::ops::Bound<(Vec<u8>, u64)>, std::ops::Bound<(Vec<u8>, u64)>) {
+) -> (
+    std::ops::Bound<(Vec<u8>, u64)>,
+    std::ops::Bound<(Vec<u8>, u64)>,
+) {
     use std::ops::Bound;
 
     let start: Bound<(Vec<u8>, u64)> = match range.start_bound() {
@@ -461,7 +461,9 @@ mod tests {
             .unwrap();
 
         // Write SSTable to disk (caller owns file I/O, not WriteComponent)
-        let mut file = tokio::fs::File::create(&flush_result.sstable_path).await.unwrap();
+        let mut file = tokio::fs::File::create(&flush_result.sstable_path)
+            .await
+            .unwrap();
         tokio::io::AsyncWriteExt::write_all(&mut file, &flush_result.data)
             .await
             .unwrap();
@@ -539,7 +541,10 @@ mod tests {
         let manager = ReadManager::new(active_memtable, manifest);
 
         let record = manager.get(key.clone(), 10).await.unwrap();
-        assert!(record.is_some(), "Should find the key in overlapping L0 files");
+        assert!(
+            record.is_some(),
+            "Should find the key in overlapping L0 files"
+        );
         let record = record.unwrap();
         assert_eq!(
             record.value, b"new-value",
