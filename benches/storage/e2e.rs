@@ -1,7 +1,7 @@
 use std::{hint::black_box, path::Path, time::Instant};
 
 use ceredb::{
-    DocumentId, FtsIndex, FtsQuery, KV2, StorageConfig,
+    Bm25Config, DocumentId, FtsIndex, FtsQuery, KV2, StorageConfig,
     api::api::{AsyncKVEngine, BatchOperation},
     command::{Response, execute_command_async, parse_command},
     storage::manifest_codec::ManifestManager,
@@ -62,6 +62,12 @@ pub async fn run(
         "e2e/fts_search_missing",
         "e2e/fts_search_and",
         "e2e/fts_search_or",
+        "e2e/fts_search_ranked_common",
+        "e2e/fts_search_ranked_rare",
+        "e2e/fts_search_ranked_missing",
+        "e2e/fts_search_ranked_and",
+        "e2e/fts_search_ranked_or",
+        "e2e/fts_ranked_after_flush",
     ]
     .iter()
     .any(|name| config.includes(name))
@@ -72,6 +78,8 @@ pub async fn run(
         "app/doc_put_documents",
         "app/fts_and_search",
         "app/fts_or_search",
+        "app/fts_ranked_and_search",
+        "app/fts_ranked_or_search",
     ]
     .iter()
     .any(|name| config.includes(name))
@@ -205,6 +213,7 @@ async fn fts_lifecycle(
 
     if config.includes("e2e/fts_reopen_after_flush")
         || config.includes("e2e/fts_search_after_flush")
+        || config.includes("e2e/fts_ranked_after_flush")
     {
         let mut checkpoint_settings = storage_config(config, config.flush_bytes);
         checkpoint_settings.max_level0_files = 1;
@@ -262,6 +271,34 @@ async fn fts_lifecycle(
                 config,
                 measurements,
                 Measurement::new("e2e/fts_search_after_flush", sample, 1, 0, elapsed)
+                    .with_registered_sstable_count(registered_sstable_count),
+                directory.path(),
+            )?;
+        }
+        if config.includes("e2e/fts_ranked_after_flush") {
+            let started = Instant::now();
+            let hits = index
+                .search_ranked(
+                    FtsQuery::Or(vec!["common".into(), "rareterm".into()]),
+                    100,
+                    Bm25Config::default(),
+                )
+                .await?;
+            let elapsed = started.elapsed();
+            if hits.len() != live_documents.len().min(100)
+                || hits
+                    .first()
+                    .is_none_or(|hit| hit.id.as_str() != "doc-0000000000000000")
+                || hits
+                    .iter()
+                    .any(|hit| !hit.score.is_finite() || hit.score <= 0.0)
+            {
+                return Err("ranked FTS search after flush returned incorrect results".into());
+            }
+            record(
+                config,
+                measurements,
+                Measurement::new("e2e/fts_ranked_after_flush", sample, 1, 0, elapsed)
                     .with_registered_sstable_count(registered_sstable_count),
                 directory.path(),
             )?;
@@ -378,6 +415,59 @@ async fn app_fts_workloads(
             || hits.first().map(|hit| hit.id.as_str()) != expected_id
         {
             return Err(format!("{scenario} returned incorrect results").into());
+        }
+        measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
+    }
+    for (scenario, command_text, expected_count) in [
+        (
+            "app/fts_ranked_and_search",
+            "FTS RANK AND \"common rareterm\"",
+            1,
+        ),
+        (
+            "app/fts_ranked_or_search",
+            "FTS RANK OR \"common rareterm\"",
+            (config.records as usize).min(100),
+        ),
+    ] {
+        if !config.includes(scenario) {
+            continue;
+        }
+        if !config.includes("app/doc_put_documents") {
+            for (id, document) in &documents {
+                index.put_document(id.clone(), document.clone()).await?;
+            }
+        }
+        let started = Instant::now();
+        let command = parse_command(command_text).map_err(|error| {
+            format!("benchmark generated invalid ranked FTS command: {error:?}")
+        })?;
+        let response = execute_command_async(&mut index, command).await?;
+        let elapsed = started.elapsed();
+        let Response::RankedSearchResults(hits) = response else {
+            return Err(format!("{scenario} returned a non-ranked-search response").into());
+        };
+        if hits.len() != expected_count
+            || hits
+                .iter()
+                .any(|hit| !hit.score.is_finite() || hit.score <= 0.0)
+            || hits.windows(2).any(|pair| {
+                pair[0].score < pair[1].score
+                    || (pair[0].score == pair[1].score
+                        && pair[0].id.as_str() >= pair[1].id.as_str())
+            })
+        {
+            return Err(format!("{scenario} returned incorrect ranked results").into());
+        }
+        let repeat_command = parse_command(command_text).map_err(|error| {
+            format!("benchmark generated invalid ranked FTS command: {error:?}")
+        })?;
+        let repeat_response = execute_command_async(&mut index, repeat_command).await?;
+        let Response::RankedSearchResults(repeated) = repeat_response else {
+            return Err(format!("{scenario} repeat returned a non-ranked response").into());
+        };
+        if hits != repeated {
+            return Err(format!("{scenario} returned nondeterministic ranked results").into());
         }
         measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
     }
@@ -520,6 +610,55 @@ async fn bench_fts_queries<E: AsyncKVEngine>(
                 .is_some_and(|hit| hit.id.as_str() != "doc-0000000000000000")
         {
             return Err(format!("{scenario} returned incorrect hit count or ordering").into());
+        }
+        measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
+    }
+    for (scenario, query, expected_count) in [
+        (
+            "e2e/fts_search_ranked_common",
+            FtsQuery::And(vec!["common".into()]),
+            limit,
+        ),
+        (
+            "e2e/fts_search_ranked_rare",
+            FtsQuery::And(vec!["rareterm".into()]),
+            1,
+        ),
+        (
+            "e2e/fts_search_ranked_missing",
+            FtsQuery::And(vec!["notindexed".into()]),
+            0,
+        ),
+        (
+            "e2e/fts_search_ranked_and",
+            FtsQuery::And(vec!["common".into(), "rareterm".into()]),
+            1,
+        ),
+        (
+            "e2e/fts_search_ranked_or",
+            FtsQuery::Or(vec!["common".into(), "rareterm".into()]),
+            limit,
+        ),
+    ] {
+        if !config.includes(scenario) {
+            continue;
+        }
+        let started = Instant::now();
+        let hits = index
+            .search_ranked(query, limit.max(1), Bm25Config::default())
+            .await?;
+        let elapsed = started.elapsed();
+        if hits.len() != expected_count
+            || hits.windows(2).any(|pair| {
+                pair[0].score < pair[1].score
+                    || (pair[0].score == pair[1].score
+                        && pair[0].id.as_str() >= pair[1].id.as_str())
+            })
+            || hits
+                .iter()
+                .any(|hit| !hit.score.is_finite() || hit.score <= 0.0)
+        {
+            return Err(format!("{scenario} returned incorrect ranked results").into());
         }
         measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
     }

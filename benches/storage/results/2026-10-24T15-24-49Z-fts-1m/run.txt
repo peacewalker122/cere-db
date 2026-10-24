@@ -1,0 +1,7 @@
+pid=1891074
+command=flock -n target/scale/2026-10-24T15-24-49Z-fts-1m/.lock /usr/bin/time -v target/release/examples/fts_scale target/scale/2026-10-24T15-24-49Z-fts-1m
+started_utc=2026-10-24T15:26:34Z
+target=1000000
+latest_ack=6000
+latest_progress={"acknowledged_seed_writes":6000,"elapsed_seconds":20.443507562,"window_docs_per_second":297.2988208653681,"window_input_bytes":53500,"window_seconds":3.363619126}
+disk_free=/dev/nvme0n1p3  475G  166G  307G  36% /home

@@ -46,13 +46,20 @@ DOC PUT article-1 "Rust stores text as UTF-8 bytes"
 DOC GET article-1
 FTS AND "rust text"
 FTS OR "utf-8 bytes"
+FTS RANK AND "rust text"
+FTS RANK OR "utf-8 bytes"
 DOC DELETE article-1
 ```
 
 Document IDs are non-empty. Text is tokenized into Unicode alphanumeric terms,
-lowercased, and deduplicated; search uses exact AND or OR term matching, orders
-results by document ID, and returns at most 100 documents per command. Documents
-must contain valid UTF-8 for indexing. `SET`, `GET`, `DELETE`, and `BATCH` remain
+lowercased, and deduplicated; Boolean search uses exact AND or OR term matching,
+orders results by document ID, and returns at most 100 documents per command.
+Ranked search uses the same query normalization and AND/OR matching, with
+positive BM25 IDF and defaults `k1=1.2`, `b=0.75`. It materializes and scores
+all matching candidates, sorts by descending score with ascending document ID
+ties, then applies the 100-result CLI limit; it does not use WAND or top-k
+pruning and makes no performance promises. Documents must contain valid UTF-8
+for indexing. `SET`, `GET`, `DELETE`, and `BATCH` remain
 raw key-value operations and do not update the search index automatically.
 
 The search index and documents persist in a reserved, versioned key namespace
@@ -62,11 +69,20 @@ not use that reserved namespace for raw keys. The index is managed by one open
 are not coordinated. The current CLI's Raft backend supports raw key-value
 commands but reports document and search commands as unsupported.
 
+`AsyncKVEngine::await_pending_writes` is the completion barrier used by FTS
+before loading or querying persisted index state. Implementations must wait for
+all writes admitted before the barrier to finish publishing their running
+state, or return an error when they cannot guarantee that. The default is
+unsupported, so custom engines used with `FtsIndex` must implement the barrier;
+it does not prevent writes admitted after the barrier from racing.
+
 This is exact-term retrieval, not phrase search or a full GIN-compatible
-implementation: it has no ranking, stemming, stop-word processing, or
-compatibility with PostgreSQL GIN. The library API allows search limits up to
-1000; as the current storage scan API materializes each posting list, a limit
-does not bound the work of scanning large matching lists.
+implementation: it has no stemming, stop-word processing, or compatibility
+with PostgreSQL GIN. Corpus statistics are updated in the same atomic batch as
+document/index records. The FTS format change requires rebuilding existing
+indexes before opening them; there is no automatic migration or data deletion.
+The library API allows search limits up to 1000; posting scans and ranked
+candidate materialization are not bounded by the result limit.
 
 ## Benchmark
 

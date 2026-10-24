@@ -13,7 +13,7 @@ fn format_response(response: &Response) -> &'static str {
         Response::Nil => "(nil)",
         Response::Bye => "bye",
         Response::Value(_) => "",
-        Response::Document(_) | Response::SearchResults(_) => "",
+        Response::Document(_) | Response::SearchResults(_) | Response::RankedSearchResults(_) => "",
     }
 }
 
@@ -103,6 +103,21 @@ pub async fn run_repl_async<E: FtsCommandEngine>(engine: &mut E) -> io::Result<(
                             writeln!(
                                 stdout,
                                 "{}\t{}",
+                                hit.id.as_str().escape_default(),
+                                String::from_utf8_lossy(&hit.document).escape_default()
+                            )?;
+                        }
+                    }
+                }
+                Ok(Response::RankedSearchResults(hits)) => {
+                    if hits.is_empty() {
+                        writeln!(stdout, "(no results)")?;
+                    } else {
+                        for hit in hits {
+                            writeln!(
+                                stdout,
+                                "{:.6}\t{}\t{}",
+                                hit.score,
                                 hit.id.as_str().escape_default(),
                                 String::from_utf8_lossy(&hit.document).escape_default()
                             )?;

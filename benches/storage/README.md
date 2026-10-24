@@ -17,7 +17,7 @@ cargo bench --bench storage -- --run --suite all \
 ```
 
 Use `--suite modules` or `--suite e2e` to select a layer. `--filter TEXT` selects
-scenario names containing `TEXT`; a full scenario name selects only that result,
+scenario names containing `TEXT`; a slash-qualified scenario name selects only that result,
 while its required fixture setup still runs. A smoke run:
 
 ```sh
@@ -70,10 +70,38 @@ creation and correctness checks are outside timed sections. `e2e/fts_*` covers
 indexing through `KV2`, reopen/recovery before automatic flush, then a configured
 checkpoint and reopen with searches revalidated. It exercises the storage API
 and is supplemented by app command workloads below. There is no public
-tokenizer API, so no tokenizer-only benchmark is added. `app/doc_put_documents` and
-`app/fts_{and,or}_search` include command parsing plus async dispatch in their
-timed regions. DOC document text is quoted UTF-8 fixture content. Setup and
-response validation remain outside timing.
+tokenizer API, so no tokenizer-only benchmark is added. `app/doc_put_documents`,
+`app/fts_{and,or}_search`, and `app/fts_ranked_{and,or}_search` include command
+parsing plus async dispatch in their timed regions. DOC document text is quoted
+UTF-8 fixture content. Ranked app cases use the same corpus and AND/OR queries
+as their unranked counterparts, exercise `FTS RANK` through the command parser
+and executor, and retain the CLI's fixed 100-result limit. Setup, score/order,
+tie-determinism, full-result, and response-variant validation remain outside
+timing. The ranked app command timer starts immediately before command parsing
+and ends when execution returns, so it includes parsing and execution but not
+response validation or the repeated-command determinism check. The archived
+2026-10-24T14-43-09Z app-ranked run predates this boundary correction; its
+timings are historical and should not be compared with newly measured values.
+
+`fts/search_ranked_{common,rare,missing,and,or}` and corresponding
+`e2e/fts_search_ranked_*` scenarios use the public BM25 search API. The ranked
+fixture contains common and rare terms, checks finite positive scores for hits,
+and validates descending score order with ascending document-ID ties. The
+`fts/search_ranked_limit_{1,10,100}` scenarios issue the same OR query at each
+limit; scoring and result ordering are verified before the measurement is
+recorded. The `e2e/fts_ranked_after_flush` scenario searches the reopened,
+checkpointed index. Search timings are one query each, not one operation per
+document. Query normalization and corpus indexing are part of the existing
+FTS index behavior; there is no standalone tokenizer measurement. FTS documents
+are UTF-8 corpus bytes rather than `--value-bytes` payloads. The naive ranked
+implementation materializes and scores all matching candidates before applying
+the result limit; these timings do not imply top-k pruning or a performance
+guarantee. Compare only matched workloads and do not interpret timing as a
+change in result quality. The `fts/*` module scenarios use the configured
+disk-backed storage API, not an in-memory mock; expensive fixture/index startup
+is excluded from query timing. Their results should not be presented as a
+direct speed comparison with warm `e2e/*` query calls, which have a different
+storage lifecycle and placement.
 
 Durable write scenarios use the normal sync behavior. CPU-only codec/filter
 scenarios stay separate from disk I/O. Warmup runs are discarded. The OS page
@@ -182,11 +210,16 @@ storage harness.
 - `e2e/fts_search_after_flush` measures an OR query on the reopened index after
   the configured checkpoint; the expected hit count and ascending ID order are
   validated immediately after the query timing ends.
-- `app/doc_put_documents`, `app/fts_and_search`, and `app/fts_or_search` use
+- `app/doc_put_documents`, `app/fts_and_search`, `app/fts_or_search`,
+  `app/fts_ranked_and_search`, and `app/fts_ranked_or_search` use
   the public command parser and async command executor with an `FtsIndex`.
   Timings include parsing, dispatch, and document/query execution. Document
   fixture setup for searches and response verification are outside timing;
   operation counts mean document mutations for DOC PUT and one query for FTS.
+  Ranked AND/OR queries match the unranked app scenarios; the app command limit
+  is 100. Ranked results are checked for the expected complete result count,
+  finite positive scores, score-descending / ID-ascending tie order, and exact
+  repeatability before recording the timed parser-plus-executor call.
 
 Public methods allocate their own return values within timing. Preallocated
 result vectors retain outputs where needed for post-timing verification; that
@@ -208,6 +241,15 @@ cargo bench --bench storage -- --run --suite e2e --filter batch \
   --flush-bytes 512 --output target/benchmarks/batch-smoke.json
 ```
 
+For a bounded ranked-search release smoke run (the slash-qualified filter emits
+only the requested measurement while still performing its fixture setup):
+
+```sh
+cargo bench --bench storage --release -- --run --suite modules \
+  --filter fts/search_ranked_common --records 32 --value-bytes 64 \
+  --repetitions 1 --warmup-runs 0 --flush-bytes 512
+```
+
 The recommended full run is the `cargo bench --bench storage -- --run --suite
 all --records 1000 --value-bytes 256 --repetitions 3 --warmup-runs 1` command
 above, with data and output paths set for the target machine. Existing archived
@@ -220,3 +262,10 @@ The [2026-10-24T02-59-23Z baseline](results/2026-10-24T02-59-23Z/summary.md) is 
 [raw JSON](results/2026-10-24T02-59-23Z/baseline.json) and
 [readable HTML](results/2026-10-24T02-59-23Z/results.html). These files are outside
 `target` and survive build cleanup and later benchmark runs.
+
+The app-level BM25 ranked command cases have a focused
+[2026-10-24T14-43-09Z result](results/2026-10-24T14-43-09Z-bm25-app-ranked/summary.md)
+with [raw JSON](results/2026-10-24T14-43-09Z-bm25-app-ranked/raw.json). The
+concurrent full-suite run is separately archived at
+[2026-10-24T14-35-00Z](results/2026-10-24T14-35-00Z-bm25-naive/raw.json); it
+was not modified as part of the app-ranked follow-up.

@@ -1,0 +1,1 @@
+/home/peacewalker/.cargo/bin/cargo run --release --example fts_scale -- target/scale/2026-10-24T15-24-49Z-fts-1m

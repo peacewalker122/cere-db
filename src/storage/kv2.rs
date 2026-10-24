@@ -334,6 +334,11 @@ impl AsyncKVEngine for KV2 {
         Ok(())
     }
 
+    async fn await_pending_writes(&self) -> Result<(), DBError> {
+        self.write_component.await_pending_writes().await;
+        Ok(())
+    }
+
     async fn scan(
         &self,
         range: impl RangeBounds<Vec<u8>> + Send,
@@ -853,6 +858,12 @@ impl AsyncKVEngine for RaftKV2 {
     async fn write_batch(&mut self, _operations: Vec<BatchOperation>) -> Result<(), DBError> {
         Err(DBError::StorageError(
             "atomic batches are unsupported by RaftKV2 without multi-command proposals".into(),
+        ))
+    }
+
+    async fn await_pending_writes(&self) -> Result<(), DBError> {
+        Err(DBError::StorageError(
+            "pending-write barriers are unsupported by RaftKV2".into(),
         ))
     }
 

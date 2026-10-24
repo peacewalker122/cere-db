@@ -1,0 +1,8 @@
+{
+  "db": "target/scale/2026-10-24T15-52-04Z-fts-available/db",
+  "memtable_size_threshold_bytes": 16777216,
+  "open_elapsed_seconds": 2.271740432,
+  "shutdown": "clean",
+  "stage": "open",
+  "status": "OPENED"
+}

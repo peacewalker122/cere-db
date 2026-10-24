@@ -164,6 +164,10 @@ impl WriteComponent {
             .map_err(|error| DBError::StorageError(format!("batch writer task failed: {error}")))?
     }
 
+    pub async fn await_pending_writes(&self) {
+        let _writer = Arc::clone(&self.writer_lock).lock_owned().await;
+    }
+
     async fn write_batch_committed(
         &self,
         operations: Vec<BatchOperation>,

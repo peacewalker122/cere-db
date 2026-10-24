@@ -9,6 +9,6 @@ pub mod testing;
 
 pub use api::api::BatchOperation;
 pub use config::Config;
-pub use fts::{DocumentId, FtsIndex, FtsQuery, SearchHit};
+pub use fts::{Bm25Config, DocumentId, FtsIndex, FtsQuery, RankedSearchHit, SearchHit};
 pub use storage::config::StorageConfig;
 pub use storage::kv2::KV2;

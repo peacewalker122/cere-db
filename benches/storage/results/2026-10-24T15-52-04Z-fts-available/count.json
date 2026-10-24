@@ -1,0 +1,34 @@
+{
+  "boundary_samples": [
+    {
+      "id": "doc0000000",
+      "present": true
+    },
+    {
+      "id": "doc0000001",
+      "present": true
+    },
+    {
+      "id": "doc0048706",
+      "present": true
+    },
+    {
+      "id": "doc0097411",
+      "present": true
+    },
+    {
+      "id": "doc0097412",
+      "present": true
+    },
+    {
+      "id": "doc0097413",
+      "present": false
+    }
+  ],
+  "contiguous_id_count": 97413,
+  "db": "target/scale/2026-10-24T15-52-04Z-fts-available/db",
+  "memtable_size_threshold_bytes": 16777216,
+  "open_elapsed_seconds": 3.078659628,
+  "stage": "count",
+  "status": "COUNTED"
+}

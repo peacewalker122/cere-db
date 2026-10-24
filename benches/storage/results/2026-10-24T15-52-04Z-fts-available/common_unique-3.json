@@ -1,0 +1,25 @@
+{
+  "db": "target/scale/2026-10-24T15-52-04Z-fts-available/db",
+  "memtable_size_threshold_bytes": 16777216,
+  "open_elapsed_seconds": 2.538737779,
+  "query": {
+    "boolean_elapsed_seconds": 1.3801780670000001,
+    "boolean_returned": 1,
+    "count_matches_expectation": true,
+    "elapsed_seconds": 1.772310346,
+    "expected_returned_count": 1,
+    "finite_scores": true,
+    "limit": 10,
+    "name": "common_and_unique",
+    "ranked_descending": true,
+    "ranking": "public search_ranked with Bm25Config::default",
+    "returned": 1,
+    "sampled_ids": [
+      "doc0000000"
+    ],
+    "unique_ids": true
+  },
+  "shutdown": "clean",
+  "stage": "common_unique",
+  "status": "COMPLETE"
+}

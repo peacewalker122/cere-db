@@ -1,7 +1,7 @@
 use std::{hint::black_box, io::Cursor, path::Path, sync::Arc, time::Instant};
 
 use ceredb::{
-    BatchOperation, DocumentId, FtsIndex, FtsQuery, KV2, StorageConfig,
+    BatchOperation, Bm25Config, DocumentId, FtsIndex, FtsQuery, KV2, StorageConfig,
     storage::{
         bloom::BloomFilterWrapper,
         checksum::{calculate_crc32, verify_crc32},
@@ -44,6 +44,14 @@ async fn fts(
         "fts/search_missing",
         "fts/search_and",
         "fts/search_or",
+        "fts/search_ranked_common",
+        "fts/search_ranked_rare",
+        "fts/search_ranked_missing",
+        "fts/search_ranked_and",
+        "fts/search_ranked_or",
+        "fts/search_ranked_limit_1",
+        "fts/search_ranked_limit_10",
+        "fts/search_ranked_limit_100",
     ];
     if !scenarios.iter().any(|name| config.includes(name)) {
         return Ok(());
@@ -174,6 +182,92 @@ async fn fts(
             hits.first()
                 .is_none_or(|hit| hit.id.as_str() == "doc-0000000000000000"),
             "FTS results do not begin with the expected document ID",
+        )?;
+        measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
+    }
+    for (scenario, query, expected_count) in [
+        (
+            "fts/search_ranked_common",
+            FtsQuery::And(vec!["common".into()]),
+            live_documents.len().min(1000),
+        ),
+        (
+            "fts/search_ranked_rare",
+            FtsQuery::And(vec!["rareterm".into()]),
+            1,
+        ),
+        (
+            "fts/search_ranked_missing",
+            FtsQuery::And(vec!["notindexed".into()]),
+            0,
+        ),
+        (
+            "fts/search_ranked_and",
+            FtsQuery::And(vec!["common".into(), "rareterm".into()]),
+            1,
+        ),
+        (
+            "fts/search_ranked_or",
+            FtsQuery::Or(vec!["common".into(), "rareterm".into()]),
+            live_documents.len().min(1000),
+        ),
+    ] {
+        if !config.includes(scenario) {
+            continue;
+        }
+        let started = Instant::now();
+        let hits = black_box(
+            index
+                .search_ranked(query, 1000, Bm25Config::default())
+                .await?,
+        );
+        let elapsed = started.elapsed();
+        require(
+            hits.len() == expected_count,
+            "ranked FTS query returned unexpected hit count",
+        )?;
+        require(
+            hits.iter()
+                .all(|hit| hit.score.is_finite() && hit.score > 0.0),
+            "ranked FTS query returned an invalid score",
+        )?;
+        require(
+            hits.windows(2).all(|pair| {
+                pair[0].score > pair[1].score
+                    || (pair[0].score == pair[1].score && pair[0].id.as_str() < pair[1].id.as_str())
+            }),
+            "ranked FTS results are not ordered by score and ID",
+        )?;
+        measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
+    }
+    for limit in [1, 10, 100] {
+        let scenario = match limit {
+            1 => "fts/search_ranked_limit_1",
+            10 => "fts/search_ranked_limit_10",
+            _ => "fts/search_ranked_limit_100",
+        };
+        if !config.includes(scenario) {
+            continue;
+        }
+        let started = Instant::now();
+        let hits = black_box(
+            index
+                .search_ranked(
+                    FtsQuery::Or(vec!["common".into(), "rareterm".into()]),
+                    limit,
+                    Bm25Config::default(),
+                )
+                .await?,
+        );
+        let elapsed = started.elapsed();
+        require(
+            hits.len() == live_documents.len().min(limit),
+            "ranked FTS limit was not applied after scoring",
+        )?;
+        require(
+            hits.first()
+                .is_none_or(|hit| hit.id.as_str() == "doc-0000000000000000"),
+            "ranked FTS limit omitted the expected top result",
         )?;
         measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
     }

@@ -1,0 +1,1473 @@
+{
+  "benchmark_title": "Available-seed FTS assessment \u2014 97,413 documents (not 1 million)",
+  "capture_utc": "2026-10-24T15:52:05Z",
+  "snapshot_type": "brief crash/recovery filesystem snapshot; not an application checkpoint",
+  "source_pause_ms": 458,
+  "source_seed_pid": 1891078,
+  "source_process_after_snapshot": "Rl         30:13 296836 target/release/examples/fts_scale target/scale/2026-10-24T15-24-49Z-fts-1m",
+  "source_ack_at_capture_start": 97000,
+  "source_progress_at_report": {
+    "acknowledged_seed_writes": 103000,
+    "elapsed_seconds": 1741.95192769,
+    "window_docs_per_second": 32.814092926250304,
+    "window_input_bytes": 53500,
+    "window_seconds": 30.474711041
+  },
+  "snapshot_contiguous_id_count": 97413,
+  "count_method": "public FtsIndex::get_document binary search over deterministic doc0000000..doc0999999 IDs; count is contiguous prefix length",
+  "boundary_samples": [
+    {
+      "id": "doc0000000",
+      "present": true
+    },
+    {
+      "id": "doc0000001",
+      "present": true
+    },
+    {
+      "id": "doc0048706",
+      "present": true
+    },
+    {
+      "id": "doc0097411",
+      "present": true
+    },
+    {
+      "id": "doc0097412",
+      "present": true
+    },
+    {
+      "id": "doc0097413",
+      "present": false
+    }
+  ],
+  "sample_scope": "6 point/boundary lookups: IDs 0, 1, midpoint, count-2, count-1, count; this is not a whole-corpus audit",
+  "source_head": "51d2c8b33383df65c053a600df78d33662f2c483",
+  "source_dirty_status_sha256": "598c7d60b27032dfd8c9678179738f33feec994a6947c9c6f7c31a704b40f085",
+  "source_tracked_diff_sha256": "017132a3712d7eeb4010fc472a5621a1f004710c3c067b56450e76a87dbced3d",
+  "source_dirty_paths": [
+    " M README.md",
+    " M benches/storage/README.md",
+    " M benches/storage/e2e.rs",
+    " M benches/storage/modules.rs",
+    " M benches/storage/support.rs",
+    " M src/api/api.rs",
+    " M src/command.rs",
+    " M src/fts/mod.rs",
+    " M src/lib.rs",
+    " M src/repl.rs",
+    " M src/storage/kv2.rs",
+    " M src/storage/writemanager/write.rs",
+    " M tests/integration/batches.rs",
+    " M tests/integration/fts.rs",
+    " M tests/integration/mod.rs",
+    "?? .claude/skills/gitnexus/gitnexus-cli/SKILL.md",
+    "?? .claude/skills/gitnexus/gitnexus-debugging/SKILL.md",
+    "?? .claude/skills/gitnexus/gitnexus-exploring/SKILL.md",
+    "?? .claude/skills/gitnexus/gitnexus-guide/SKILL.md",
+    "?? .claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md",
+    "?? .claude/skills/gitnexus/gitnexus-refactoring/SKILL.md",
+    "?? .envrc",
+    "?? .opencode",
+    "?? .tmp/bm25-naive/full-end-utc.txt",
+    "?? .tmp/bm25-naive/full-exit-code.txt",
+    "?? .tmp/bm25-naive/full-start-utc.txt",
+    "?? .tmp/bm25-naive/full.stderr",
+    "?? .tmp/bm25-naive/full.stdout",
+    "?? .tmp/bm25-naive/smoke.json",
+    "?? .tmp/bm25-naive/smoke.stderr",
+    "?? .tmp/bm25-naive/smoke.stdout",
+    "?? .tmp/bm25-naive/start-utc.txt",
+    "?? .tmp/external-context/.manifest.json",
+    "?? .tmp/external-context/rust-raft/follower-apply-flow-commit-gating.md",
+    "?? .tmp/ranked-and-smoke.json",
+    "?? .tmp/ranked-combined.json",
+    "?? .tmp/ranked-focused-and.json",
+    "?? .tmp/ranked-focused-or.json",
+    "?? .tmp/ranked-or-smoke.json",
+    "?? .tmp/sessions/2026-05-17-delete-dead-code/context.md",
+    "?? .tmp/sessions/2026-05-17-unify-error-types/context.md",
+    "?? .tmp/sessions/2026-05-18-config-system-issue-16/COMPLETION_SUMMARY.md",
+    "?? .tmp/sessions/2026-05-18-config-system-issue-16/context.md",
+    "?? .tmp/sessions/2026-05-30-p2-features/BATCH_1_COMPLETION.md",
+    "?? .tmp/sessions/2026-05-30-p2-features/DELIVERABLES_CHECKLIST.md",
+    "?? .tmp/sessions/2026-05-30-p2-features/EXECUTION_SUMMARY.md",
+    "?? .tmp/sessions/2026-05-30-p2-features/ISSUE_13_GUIDE.md",
+    "?? .tmp/sessions/2026-05-30-p2-features/context.md",
+    "?? .tmp/tasks/compaction-disk-test/subtask_01.json",
+    "?? .tmp/tasks/compaction-disk-test/subtask_02.json",
+    "?? .tmp/tasks/compaction-disk-test/subtask_03.json",
+    "?? .tmp/tasks/compaction-disk-test/task.json",
+    "?? .tmp/tasks/p2-features/BREAKDOWN.md",
+    "?? .tmp/tasks/p2-features/DEPENDENCY_GRAPH.md",
+    "?? .tmp/tasks/p2-features/EXECUTIVE_SUMMARY.md",
+    "?? .tmp/tasks/p2-features/INDEX.md",
+    "?? .tmp/tasks/p2-features/QUICK_START.md",
+    "?? .tmp/tasks/p2-features/README.txt",
+    "?? .tmp/tasks/p2-features/subtask_01.json",
+    "?? .tmp/tasks/p2-features/subtask_02.json",
+    "?? .tmp/tasks/p2-features/subtask_03.json",
+    "?? .tmp/tasks/p2-features/subtask_04.json",
+    "?? .tmp/tasks/p2-features/subtask_05.json",
+    "?? .tmp/tasks/p2-features/subtask_06.json",
+    "?? .tmp/tasks/p2-features/subtask_07.json",
+    "?? .tmp/tasks/p2-features/subtask_08.json",
+    "?? .tmp/tasks/p2-features/subtask_09.json",
+    "?? .tmp/tasks/p2-features/subtask_10.json",
+    "?? .tmp/tasks/p2-features/subtask_11.json",
+    "?? .tmp/tasks/p2-features/subtask_12.json",
+    "?? .tmp/tasks/p2-features/subtask_13.json",
+    "?? .tmp/tasks/p2-features/subtask_14.json",
+    "?? .tmp/tasks/p2-features/task.json",
+    "?? .tmp/tasks/unify-error-types/task.json",
+    "?? AGENTS.md",
+    "?? ARCHITECTURE_REVIEW.md",
+    "?? BENCHMARK_RESEARCH.md",
+    "?? COMPACTION_PLAN.md",
+    "?? \"ChatGPT Image Jul 29, 2026, 09_16_35 PM.png\"",
+    "?? \"ChatGPT Image Jul 29, 2026, 09_45_22 PM.png\"",
+    "?? Gemini_Generated_Image_zba2oazba2oazba2.png",
+    "?? benches/storage/results/2026-10-24T12-55-56Z-fts-final/raw.json",
+    "?? benches/storage/results/2026-10-24T14-35-00Z-bm25-naive/raw.json",
+    "?? benches/storage/results/2026-10-24T14-35-00Z-bm25-naive/summary.md",
+    "?? benches/storage/results/2026-10-24T14-43-09Z-bm25-app-ranked/raw.json",
+    "?? benches/storage/results/2026-10-24T14-43-09Z-bm25-app-ranked/summary.md",
+    "?? benches/storage/results/2026-10-24T14-59-43Z-bm25-final/raw.json",
+    "?? benches/storage/results/2026-10-24T14-59-43Z-bm25-final/summary.md",
+    "?? benches/storage/results/2026-10-24T15-24-49Z-fts-1m/command.txt",
+    "?? benches/storage/results/2026-10-24T15-24-49Z-fts-1m/pilot.txt",
+    "?? benches/storage/results/2026-10-24T15-24-49Z-fts-1m/run.txt",
+    "?? benches/storage/results/2026-10-24T15-24-49Z-fts-1m/source.txt",
+    "?? benches/storage/results/2026-10-24T15-24-49Z-fts-1m/summary.md",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/capture.txt",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-1.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-1.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-1.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-1.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-1.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-2.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-2.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-2.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-2.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-2.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-3.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-3.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-3.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-3.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-3.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-4.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-4.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-4.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-4.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common10-4.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-1.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-1.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-1.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-1.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-1.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-2.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-2.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-2.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-2.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-2.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-3.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-3.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-3.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-3.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-3.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-4.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-4.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-4.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-4.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/common_unique-4.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/count.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/count.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/count.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-1.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-1.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-1.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-1.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-1.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-2.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-2.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-2.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-2.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-2.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-3.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-3.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-3.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-3.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-3.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-4.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-4.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-4.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-4.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/group-4.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/open.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/open.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/open.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/open.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/open.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-1.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-1.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-1.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-1.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-1.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-2.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-2.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-2.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-2.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-2.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-3.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-3.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-3.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-3.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-3.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-4.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-4.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-4.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-4.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/or_groups-4.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/source_progress_at_capture_start.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/source_seed_command.txt",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-1.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-1.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-1.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-1.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-1.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-2.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-2.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-2.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-2.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-2.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-3.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-3.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-3.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-3.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-3.time",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-4.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-4.status.json",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-4.stderr",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-4.stdout",
+    "?? benches/storage/results/2026-10-24T15-52-04Z-fts-available/unique-4.time",
+    "?? docs/adr/0001-shared-memtable-read-write.md",
+    "?? docs/adr/0002-versioned-memtable-composite-key.md",
+    "?? docs/adr/0003-async-compaction-trigger.md",
+    "?? docs/adr/0004-page-cache.md",
+    "?? docs/architecture/impact-wal-to-raft-log.md",
+    "?? docs/btree-page.md",
+    "?? docs/development-changes.md",
+    "?? docs/handling-large-data-in-btree.md",
+    "?? docs/paged-btree-implementation-guide.md",
+    "?? examples/fts_scale.rs",
+    "?? examples/fts_scale_assess.rs",
+    "?? m0-faWRipfiHbSgrEwixkjPPslCh8z0GHPR3t3uRwDq/config.json",
+    "?? tests/integration/bm25.rs",
+    "?? tools/fts_scale_assess.sh"
+  ],
+  "generator_source_sha256": "e9e02cb03306fb8e61dc64a6bb5bb8897c5337c24feb6776024f4f1fdc481195",
+  "assessor_source_sha256": "48fa36562c4586e9bbc4533ea1b3e5b70a735f2f680a9e1c94f5309b70c80d3e",
+  "seed_binary_sha256": "9db30b566175bc650e5b675ff0da8942281b9a471cb6e3d55a41e4b26de26e37",
+  "config": {
+    "memtable_size_threshold_bytes": 16777216,
+    "bm25": "Bm25Config::default()"
+  },
+  "resource_bounds": {
+    "per_assessment_process_address_space_bytes": 4294967296,
+    "open_timeout_seconds": 180,
+    "query_timeout_seconds": 60
+  },
+  "open_reopen": {
+    "db": "target/scale/2026-10-24T15-52-04Z-fts-available/db",
+    "memtable_size_threshold_bytes": 16777216,
+    "open_elapsed_seconds": 2.271740432,
+    "shutdown": "clean",
+    "stage": "open",
+    "status": "OPENED",
+    "peak_rss_kib": 311092,
+    "timeout_seconds": 180
+  },
+  "disk": {
+    "logical_bytes": 180780399,
+    "allocated_bytes": 180867072,
+    "files": 128,
+    "by_category": {
+      "WAL": {
+        "files": 125,
+        "logical_bytes": 128248912,
+        "allocated_bytes": 128327680
+      },
+      "SSTable": {
+        "files": 2,
+        "logical_bytes": 52530680,
+        "allocated_bytes": 52535296
+      },
+      "MANIFEST": {
+        "files": 1,
+        "logical_bytes": 807,
+        "allocated_bytes": 4096
+      }
+    },
+    "file_inventory": [
+      {
+        "path": "MANIFEST",
+        "category": "MANIFEST",
+        "logical_bytes": 807,
+        "allocated_bytes": 4096
+      },
+      {
+        "path": "wal/00000000000000000000.log",
+        "category": "WAL",
+        "logical_bytes": 1048181,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000001.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000002.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000003.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000004.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000005.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000006.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000007.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000008.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000009.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000010.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000011.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000012.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000013.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000014.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000015.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000016.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000017.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000018.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000019.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000020.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000021.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000022.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000023.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000024.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000025.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000026.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000027.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000028.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000029.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000030.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000031.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000032.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000033.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000034.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000035.log",
+        "category": "WAL",
+        "logical_bytes": 288336,
+        "allocated_bytes": 290816
+      },
+      {
+        "path": "wal/00000000000000000036.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000037.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000038.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000039.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000040.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000041.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000042.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000043.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000044.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000045.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000046.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000047.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000048.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000049.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000050.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000051.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000052.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000053.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000054.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000055.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000056.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000057.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000058.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000059.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000060.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000061.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000062.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000063.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000064.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000065.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000066.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000067.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000068.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000069.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000070.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000071.log",
+        "category": "WAL",
+        "logical_bytes": 289666,
+        "allocated_bytes": 290816
+      },
+      {
+        "path": "wal/00000000000000000072.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000073.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000074.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000075.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000076.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000077.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000078.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000079.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000080.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000081.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000082.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000083.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000084.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000085.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000086.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000087.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000088.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000089.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000090.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000091.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000092.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000093.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000094.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000095.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000096.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000097.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000098.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000099.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000100.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000101.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000102.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000103.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000104.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000105.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000106.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000107.log",
+        "category": "WAL",
+        "logical_bytes": 289666,
+        "allocated_bytes": 290816
+      },
+      {
+        "path": "wal/00000000000000000108.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000109.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000110.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000111.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000112.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000113.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000114.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000115.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000116.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000117.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000118.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000119.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000120.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000121.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000122.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000123.log",
+        "category": "WAL",
+        "logical_bytes": 1047970,
+        "allocated_bytes": 1048576
+      },
+      {
+        "path": "wal/00000000000000000124.log",
+        "category": "WAL",
+        "logical_bytes": 576663,
+        "allocated_bytes": 577536
+      },
+      {
+        "path": "sstable/level-0/sstable-4.dat",
+        "category": "SSTable",
+        "logical_bytes": 17287607,
+        "allocated_bytes": 17289216
+      },
+      {
+        "path": "sstable/level-1/sstable-3.dat",
+        "category": "SSTable",
+        "logical_bytes": 35243073,
+        "allocated_bytes": 35246080
+      }
+    ]
+  },
+  "fast_stages": {
+    "unique": {
+      "samples": [
+        {
+          "sample": 1,
+          "kind": "warmup",
+          "open_seconds": 2.378843001,
+          "ranked_query_seconds": 0.026419742,
+          "boolean_query_seconds": 0.02119704,
+          "returned": 1,
+          "expected": 1,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311580
+        },
+        {
+          "sample": 2,
+          "kind": "measured",
+          "open_seconds": 2.135425733,
+          "ranked_query_seconds": 0.014303642,
+          "boolean_query_seconds": 0.012740334,
+          "returned": 1,
+          "expected": 1,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311724
+        },
+        {
+          "sample": 3,
+          "kind": "measured",
+          "open_seconds": 2.201688467,
+          "ranked_query_seconds": 0.016935368,
+          "boolean_query_seconds": 0.014612396,
+          "returned": 1,
+          "expected": 1,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311604
+        },
+        {
+          "sample": 4,
+          "kind": "measured",
+          "open_seconds": 2.108580467,
+          "ranked_query_seconds": 0.015466851,
+          "boolean_query_seconds": 0.014920957,
+          "returned": 1,
+          "expected": 1,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311432
+        }
+      ],
+      "median_ranked_seconds": 0.015466851,
+      "median_boolean_seconds": 0.014612396,
+      "measured_peak_rss_kib_max": 311724
+    },
+    "group": {
+      "samples": [
+        {
+          "sample": 1,
+          "kind": "warmup",
+          "open_seconds": 2.170401361,
+          "ranked_query_seconds": 0.040325996,
+          "boolean_query_seconds": 0.024857573,
+          "returned": 98,
+          "expected": 98,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311400
+        },
+        {
+          "sample": 2,
+          "kind": "measured",
+          "open_seconds": 2.216299614,
+          "ranked_query_seconds": 0.023076494,
+          "boolean_query_seconds": 0.016057601,
+          "returned": 98,
+          "expected": 98,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311132
+        },
+        {
+          "sample": 3,
+          "kind": "measured",
+          "open_seconds": 2.2067527670000002,
+          "ranked_query_seconds": 0.018665537,
+          "boolean_query_seconds": 0.015333828,
+          "returned": 98,
+          "expected": 98,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311560
+        },
+        {
+          "sample": 4,
+          "kind": "measured",
+          "open_seconds": 2.255563154,
+          "ranked_query_seconds": 0.019405517,
+          "boolean_query_seconds": 0.017121344,
+          "returned": 98,
+          "expected": 98,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 313600
+        }
+      ],
+      "median_ranked_seconds": 0.019405517,
+      "median_boolean_seconds": 0.016057601,
+      "measured_peak_rss_kib_max": 313600
+    },
+    "common_unique": {
+      "samples": [
+        {
+          "sample": 1,
+          "kind": "warmup",
+          "open_seconds": 2.2330782989999998,
+          "ranked_query_seconds": 1.69711659,
+          "boolean_query_seconds": 1.3705105419999999,
+          "returned": 1,
+          "expected": 1,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311392
+        },
+        {
+          "sample": 2,
+          "kind": "measured",
+          "open_seconds": 2.1272699,
+          "ranked_query_seconds": 1.545421505,
+          "boolean_query_seconds": 1.479680992,
+          "returned": 1,
+          "expected": 1,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311508
+        },
+        {
+          "sample": 3,
+          "kind": "measured",
+          "open_seconds": 2.538737779,
+          "ranked_query_seconds": 1.772310346,
+          "boolean_query_seconds": 1.3801780670000001,
+          "returned": 1,
+          "expected": 1,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 312680
+        },
+        {
+          "sample": 4,
+          "kind": "measured",
+          "open_seconds": 2.159368052,
+          "ranked_query_seconds": 1.566950893,
+          "boolean_query_seconds": 1.578185503,
+          "returned": 1,
+          "expected": 1,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311704
+        }
+      ],
+      "median_ranked_seconds": 1.566950893,
+      "median_boolean_seconds": 1.479680992,
+      "measured_peak_rss_kib_max": 312680
+    },
+    "or_groups": {
+      "samples": [
+        {
+          "sample": 1,
+          "kind": "warmup",
+          "open_seconds": 2.19753272,
+          "ranked_query_seconds": 0.041069113,
+          "boolean_query_seconds": 0.037467923,
+          "returned": 196,
+          "expected": 196,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311676
+        },
+        {
+          "sample": 2,
+          "kind": "measured",
+          "open_seconds": 2.287344728,
+          "ranked_query_seconds": 0.033978994,
+          "boolean_query_seconds": 0.040274181,
+          "returned": 196,
+          "expected": 196,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311424
+        },
+        {
+          "sample": 3,
+          "kind": "measured",
+          "open_seconds": 2.129815257,
+          "ranked_query_seconds": 0.033609615,
+          "boolean_query_seconds": 0.034804336,
+          "returned": 196,
+          "expected": 196,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311328
+        },
+        {
+          "sample": 4,
+          "kind": "measured",
+          "open_seconds": 2.109301636,
+          "ranked_query_seconds": 0.044001579,
+          "boolean_query_seconds": 0.028751468,
+          "returned": 196,
+          "expected": 196,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311452
+        }
+      ],
+      "median_ranked_seconds": 0.033978994,
+      "median_boolean_seconds": 0.034804336,
+      "measured_peak_rss_kib_max": 311676
+    },
+    "common10": {
+      "samples": [
+        {
+          "sample": 1,
+          "kind": "warmup",
+          "open_seconds": 2.195019302,
+          "ranked_query_seconds": 3.177493848,
+          "boolean_query_seconds": 1.3687270599999999,
+          "returned": 10,
+          "expected": 10,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311452
+        },
+        {
+          "sample": 2,
+          "kind": "measured",
+          "open_seconds": 2.22913498,
+          "ranked_query_seconds": 3.229051669,
+          "boolean_query_seconds": 2.03211799,
+          "returned": 10,
+          "expected": 10,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 311672
+        },
+        {
+          "sample": 3,
+          "kind": "measured",
+          "open_seconds": 2.586180706,
+          "ranked_query_seconds": 2.654626756,
+          "boolean_query_seconds": 1.37384806,
+          "returned": 10,
+          "expected": 10,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 312648
+        },
+        {
+          "sample": 4,
+          "kind": "measured",
+          "open_seconds": 2.100671115,
+          "ranked_query_seconds": 2.600149727,
+          "boolean_query_seconds": 1.41743461,
+          "returned": 10,
+          "expected": 10,
+          "validation": {
+            "count": true,
+            "unique_ids": true,
+            "finite_scores": true,
+            "ranked_descending": true
+          },
+          "peak_rss_kib": 312708
+        }
+      ],
+      "median_ranked_seconds": 2.654626756,
+      "median_boolean_seconds": 1.41743461,
+      "measured_peak_rss_kib_max": 312708
+    }
+  },
+  "common_broad_probe": {
+    "open_seconds": 2.077548792,
+    "ranked_query_seconds": 2.479945444,
+    "boolean_query_seconds": 1.530656192,
+    "returned": 100,
+    "expected": 100,
+    "validation": {
+      "count": true,
+      "unique_ids": true,
+      "finite_scores": true,
+      "ranked_descending": true
+    },
+    "peak_rss_kib": 311388,
+    "timeout_seconds": 60
+  },
+  "failures": [],
+  "raw_outputs": "same directory; JSON and per-process time/stdout/stderr/status files",
+  "source_ack_at_report": 105000,
+  "result_status": "COMPLETE",
+  "stage_timeouts": 0,
+  "stage_failures": 0,
+  "source_progress_at_final_check": {
+    "acknowledged_seed_writes": 105000,
+    "elapsed_seconds": 1802.086437109,
+    "window_docs_per_second": 34.7376516003053,
+    "window_input_bytes": 53500,
+    "window_seconds": 28.787207941
+  },
+  "destination_free_space_at_capture_bytes": 329423650816
+}

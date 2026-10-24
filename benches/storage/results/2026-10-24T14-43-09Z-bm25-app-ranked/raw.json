@@ -1,0 +1,167 @@
+{
+  "configuration": {
+    "filter": "app/fts_ranked_{and,or}_search",
+    "flush_bytes": 512,
+    "key_bytes": 20,
+    "records": 128,
+    "repetitions": 3,
+    "suite": "e2e",
+    "value_bytes": 256,
+    "wal_segment_bytes": 1048576,
+    "warmup_runs": 1
+  },
+  "metadata": {
+    "architecture": "x86_64",
+    "arguments": [
+      [
+        "/tmp/wasm-kv-ranked-target/release/deps/storage-0df15882e746aa06",
+        "--run",
+        "--suite",
+        "e2e",
+        "--filter",
+        "app/fts_ranked_and_search",
+        "--records",
+        "128",
+        "--value-bytes",
+        "256",
+        "--flush-bytes",
+        "512",
+        "--repetitions",
+        "3",
+        "--warmup-runs",
+        "1",
+        "--data-dir",
+        ".tmp/ranked-focused-data",
+        "--output",
+        ".tmp/ranked-focused-and.json",
+        "--bench"
+      ],
+      [
+        "/tmp/wasm-kv-ranked-target/release/deps/storage-0df15882e746aa06",
+        "--run",
+        "--suite",
+        "e2e",
+        "--filter",
+        "app/fts_ranked_or_search",
+        "--records",
+        "128",
+        "--value-bytes",
+        "256",
+        "--flush-bytes",
+        "512",
+        "--repetitions",
+        "3",
+        "--warmup-runs",
+        "1",
+        "--data-dir",
+        ".tmp/ranked-focused-data",
+        "--output",
+        ".tmp/ranked-focused-or.json",
+        "--bench"
+      ]
+    ],
+    "available_parallelism": 8,
+    "cache_policy": "OS page cache is retained; no cold-cache claim",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "data_directory": "/home/peacewalker/project/learn/wasm-kv/.tmp/ranked-focused-data",
+    "debug_assertions": false,
+    "filesystem_type": "btrfs",
+    "git_revision": "51d2c8b33383df65c053a600df78d33662f2c483",
+    "latency_policy": "run timings and amortized costs; no request latency percentiles",
+    "os": "linux",
+    "runtime_workers": 2,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_qualification": "HEAD plus dirty worktree; the reported revision alone does not identify the complete build input",
+    "total_wall_seconds_including_setup_and_warmup": 3.482955113,
+    "tracked_changes": "M README.md\n M benches/storage/README.md\n M benches/storage/e2e.rs\n M benches/storage/modules.rs\n M benches/storage/support.rs\n M src/command.rs\n M src/fts/mod.rs\n M src/lib.rs\n M src/repl.rs\n M src/storage/kv2.rs\n M tests/integration/batches.rs\n M tests/integration/fts.rs\n M tests/integration/mod.rs",
+    "unix_time_seconds": 1792852975,
+    "combined_scenarios": [
+      "app/fts_ranked_and_search",
+      "app/fts_ranked_or_search"
+    ],
+    "elapsed_time_note": "Two separate focused runs; wall time is recorded per scenario in the source raw files and omitted here.",
+    "scenario_run_wall_seconds_including_setup_and_warmup": {
+      "app/fts_ranked_and_search": 1.741702842,
+      "app/fts_ranked_or_search": 1.741252271
+    }
+  },
+  "samples": [
+    {
+      "disk": null,
+      "elapsed_ns": 1064071,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/fts_ranked_and_search"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 817146,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/fts_ranked_and_search"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 879095,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/fts_ranked_and_search"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1339284,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/fts_ranked_or_search"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2241226,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/fts_ranked_or_search"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1769011,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/fts_ranked_or_search"
+    }
+  ],
+  "schema_version": 1,
+  "summaries": [
+    {
+      "amortized_us_per_operation": 920.1039999999999,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 1.064071,
+      "median_run_ms": 0.879095,
+      "min_run_ms": 0.817146,
+      "operations_per_second": 1086.833662281655,
+      "samples": 3,
+      "scenario": "app/fts_ranked_and_search"
+    },
+    {
+      "amortized_us_per_operation": 1783.1736666666666,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 2.2412259999999997,
+      "median_run_ms": 1.7690110000000001,
+      "min_run_ms": 1.3392840000000001,
+      "operations_per_second": 560.7978733049184,
+      "samples": 3,
+      "scenario": "app/fts_ranked_or_search"
+    }
+  ]
+}

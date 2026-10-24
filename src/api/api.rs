@@ -29,6 +29,12 @@ pub trait AsyncKVEngine {
         Err(unsupported_batch())
     }
 
+    async fn await_pending_writes(&self) -> Result<(), DBError> {
+        Err(DBError::StorageError(
+            "pending-write barriers are unsupported by this engine".into(),
+        ))
+    }
+
     /// Scan keys in the given range and return all matching key-value pairs.
     ///
     /// Supports inclusive/exclusive boundaries. Returns results sorted by key,

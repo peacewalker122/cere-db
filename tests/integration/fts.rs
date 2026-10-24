@@ -494,12 +494,138 @@ impl AsyncKVEngine for CommittedBatchGate {
         }
         Ok(())
     }
+    async fn await_pending_writes(&self) -> Result<(), DBError> {
+        self.engine.await_pending_writes().await
+    }
     async fn scan(
         &self,
         range: impl RangeBounds<Vec<u8>> + Send,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
         self.engine.scan(range).await
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn canceled_admitted_insert_is_settled_before_followup_reads_and_writes() {
+    use std::future::poll_fn;
+    use std::task::Poll;
+
+    let directory = tempfile::tempdir().unwrap();
+    let engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+    let mut index = FtsIndex::open(engine).await.unwrap();
+    let mut canceled = Box::pin(index.put_document(id("a"), b"common".to_vec()));
+    poll_fn(|cx| {
+        assert!(matches!(canceled.as_mut().poll(cx), Poll::Pending));
+        Poll::Ready(())
+    })
+    .await;
+    drop(canceled);
+
+    index
+        .put_document(id("b"), b"common".to_vec())
+        .await
+        .unwrap();
+    let hits = index
+        .search_ranked(
+            FtsQuery::Or(vec!["common".into()]),
+            10,
+            ceredb::Bm25Config::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.iter().map(|hit| hit.id.as_str()).collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+    let expected = 3.0_f64.ln() - 2.5_f64.ln();
+    assert!(hits.iter().all(|hit| (hit.score - expected).abs() < 1e-12));
+    assert_eq!(
+        index.get_document(&id("a")).await.unwrap(),
+        Some(b"common".to_vec())
+    );
+
+    let engine = index.into_inner();
+    let index = FtsIndex::open(engine).await.unwrap();
+    let reopened = index
+        .search_ranked(
+            FtsQuery::Or(vec!["common".into()]),
+            10,
+            ceredb::Bm25Config::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reopened.len(), 2);
+    assert!(
+        reopened
+            .iter()
+            .all(|hit| (hit.score - expected).abs() < 1e-12)
+    );
+
+    let mut index = index;
+    let deleted_id = id("a");
+    let mut canceled_delete = Box::pin(index.delete_document(&deleted_id));
+    poll_fn(|cx| {
+        assert!(matches!(canceled_delete.as_mut().poll(cx), Poll::Pending));
+        Poll::Ready(())
+    })
+    .await;
+    drop(canceled_delete);
+    index
+        .put_document(id("c"), b"common".to_vec())
+        .await
+        .unwrap();
+    let after_delete = index
+        .search_ranked(
+            FtsQuery::Or(vec!["common".into()]),
+            10,
+            ceredb::Bm25Config::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        after_delete
+            .iter()
+            .map(|hit| hit.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["b", "c"]
+    );
+    assert!(
+        after_delete
+            .iter()
+            .all(|hit| (hit.score - expected).abs() < 1e-12)
+    );
+
+    let mut canceled_query_write = Box::pin(index.put_document(id("d"), b"common".to_vec()));
+    poll_fn(|cx| {
+        assert!(matches!(
+            canceled_query_write.as_mut().poll(cx),
+            Poll::Pending
+        ));
+        Poll::Ready(())
+    })
+    .await;
+    drop(canceled_query_write);
+    let after_query = index
+        .search_ranked(
+            FtsQuery::Or(vec!["common".into()]),
+            10,
+            ceredb::Bm25Config::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        after_query
+            .iter()
+            .map(|hit| hit.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["b", "c", "d"]
+    );
+    let expected_after_query = 4.0_f64.ln() - 3.5_f64.ln();
+    assert!(
+        after_query
+            .iter()
+            .all(|hit| (hit.score - expected_after_query).abs() < 1e-12)
+    );
 }
 
 #[tokio::test]
@@ -540,6 +666,18 @@ async fn cancellation_after_real_batch_commit_leaves_coherent_state_for_followup
             .len(),
         1
     );
+    assert_eq!(
+        index
+            .search_ranked(
+                FtsQuery::And(vec!["coherentword".into(), "originalword".into()]),
+                10,
+                ceredb::Bm25Config::default(),
+            )
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     index
         .put_document(id("cancelled"), b"nextword".to_vec())
         .await
@@ -565,6 +703,17 @@ async fn cancellation_after_real_batch_commit_leaves_coherent_state_for_followup
     assert!(
         index
             .search(FtsQuery::Or(vec!["nextword".into()]), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        index
+            .search_ranked(
+                FtsQuery::Or(vec!["nextword".into()]),
+                10,
+                ceredb::Bm25Config::default(),
+            )
             .await
             .unwrap()
             .is_empty()

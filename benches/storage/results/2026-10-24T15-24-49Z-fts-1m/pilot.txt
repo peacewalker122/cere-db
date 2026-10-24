@@ -1,0 +1,8 @@
+pilot_path=target/scale/2026-10-24T15-24-49Z-fts-1m-pilot2
+pilot_acknowledged=100
+pilot_elapsed_seconds=0.324121417
+pilot_average_docs_per_second=308.53
+pilot_searches=common:100,group0000:1,unique0000000:1
+pilot_get=doc0000000 exact bytes
+pilot_shutdown=clean
+fresh_run_rejection=verified on prior pilot DB

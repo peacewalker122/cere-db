@@ -1,7 +1,7 @@
 use crate::{
     api::api::{AsyncKVEngine, BatchOperation, KVEngine},
     error::DBError,
-    fts::{DocumentId, FtsIndex, FtsQuery, SearchHit},
+    fts::{Bm25Config, DocumentId, FtsIndex, FtsQuery, RankedSearchHit, SearchHit},
 };
 
 pub trait FtsCommandEngine: AsyncKVEngine {
@@ -18,6 +18,15 @@ pub trait FtsCommandEngine: AsyncKVEngine {
     }
 
     async fn search(&self, _query: FtsQuery, _limit: usize) -> Result<Vec<SearchHit>, DBError> {
+        Err(unsupported_fts())
+    }
+
+    async fn search_ranked(
+        &self,
+        _query: FtsQuery,
+        _limit: usize,
+        _config: Bm25Config,
+    ) -> Result<Vec<RankedSearchHit>, DBError> {
         Err(unsupported_fts())
     }
 }
@@ -37,6 +46,15 @@ impl<E: AsyncKVEngine> FtsCommandEngine for FtsIndex<E> {
 
     async fn search(&self, query: FtsQuery, limit: usize) -> Result<Vec<SearchHit>, DBError> {
         FtsIndex::search(self, query, limit).await
+    }
+
+    async fn search_ranked(
+        &self,
+        query: FtsQuery,
+        limit: usize,
+        config: Bm25Config,
+    ) -> Result<Vec<RankedSearchHit>, DBError> {
+        FtsIndex::search_ranked(self, query, limit, config).await
     }
 }
 
@@ -59,16 +77,18 @@ pub enum Command {
     DocumentGet { id: String },
     DocumentDelete { id: String },
     Search { query: FtsQuery },
+    RankedSearch { query: FtsQuery },
     Exit,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Response {
     Ok,
     Value(String),
     Nil,
     Document(Option<Vec<u8>>),
     SearchResults(Vec<SearchHit>),
+    RankedSearchResults(Vec<RankedSearchHit>),
     Bye,
 }
 
@@ -201,6 +221,25 @@ pub fn parse_command(input: &str) -> Result<Command, ParseError> {
         },
         "FTS" => {
             let query_kind = tokens.get(1).map(|token| token.to_uppercase());
+            if query_kind.as_deref() == Some("RANK") {
+                if tokens.len() != 4 {
+                    return Err(ParseError::InvalidArity {
+                        command: "FTS RANK".into(),
+                        expected: "FTS RANK AND <query> or FTS RANK OR <query>",
+                    });
+                }
+                let query = match tokens[2].to_uppercase().as_str() {
+                    "AND" => FtsQuery::And(vec![tokens[3].clone()]),
+                    "OR" => FtsQuery::Or(vec![tokens[3].clone()]),
+                    _ => {
+                        return Err(ParseError::InvalidArity {
+                            command: "FTS RANK".into(),
+                            expected: "FTS RANK AND <query> or FTS RANK OR <query>",
+                        });
+                    }
+                };
+                return Ok(Command::RankedSearch { query });
+            }
             if tokens.len() < 3 {
                 return Err(ParseError::InvalidArity {
                     command: "FTS".into(),
@@ -247,7 +286,8 @@ pub fn execute_command<E: KVEngine>(engine: &mut E, command: Command) -> Result<
         Command::DocumentPut { .. }
         | Command::DocumentGet { .. }
         | Command::DocumentDelete { .. }
-        | Command::Search { .. } => Err(unsupported_fts()),
+        | Command::Search { .. }
+        | Command::RankedSearch { .. } => Err(unsupported_fts()),
         Command::Exit => Ok(Response::Bye),
     }
 }
@@ -287,6 +327,11 @@ pub async fn execute_command_async<E: FtsCommandEngine>(
             Ok(Response::Ok)
         }
         Command::Search { query } => Ok(Response::SearchResults(engine.search(query, 100).await?)),
+        Command::RankedSearch { query } => Ok(Response::RankedSearchResults(
+            engine
+                .search_ranked(query, 100, Bm25Config::default())
+                .await?,
+        )),
         Command::Exit => Ok(Response::Bye),
     }
 }
@@ -353,7 +398,7 @@ fn tokenize(input: &str) -> Result<Vec<String>, ParseError> {
 mod tests {
     use super::*;
     use crate::error::DBError;
-    use std::{borrow::Cow, collections::HashMap, ops::RangeBounds};
+    use std::{borrow::Cow, cell::RefCell, collections::HashMap, ops::RangeBounds};
 
     #[derive(Default)]
     struct MockKV {
@@ -361,6 +406,7 @@ mod tests {
         puts: usize,
         deletes: usize,
         batches: Vec<Vec<BatchOperation>>,
+        ranked_searches: RefCell<Vec<(FtsQuery, usize, Bm25Config)>>,
         fail_batch: bool,
     }
 
@@ -440,7 +486,19 @@ mod tests {
         }
     }
 
-    impl FtsCommandEngine for MockKV {}
+    impl FtsCommandEngine for MockKV {
+        async fn search_ranked(
+            &self,
+            query: FtsQuery,
+            limit: usize,
+            config: Bm25Config,
+        ) -> Result<Vec<RankedSearchHit>, DBError> {
+            self.ranked_searches
+                .borrow_mut()
+                .push((query, limit, config));
+            Ok(Vec::new())
+        }
+    }
 
     struct DefaultBatchKV;
 
@@ -671,6 +729,28 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn parse_ranked_search_with_quoted_unicode_and_boolean_modes() {
+        assert_eq!(
+            parse_command("FTS RANK AND \"café 東京\""),
+            Ok(Command::RankedSearch {
+                query: FtsQuery::And(vec!["café 東京".into()])
+            })
+        );
+        assert_eq!(
+            parse_command("FTS RANK OR \"café 東京\""),
+            Ok(Command::RankedSearch {
+                query: FtsQuery::Or(vec!["café 東京".into()])
+            })
+        );
+        for malformed in ["FTS RANK", "FTS RANK XOR x", "FTS RANK AND"] {
+            assert!(matches!(
+                parse_command(malformed),
+                Err(ParseError::InvalidArity { .. })
+            ));
+        }
+    }
+
     #[tokio::test]
     async fn unsupported_fts_command_does_not_mutate_raw_engine() {
         let mut kv = MockKV::default();
@@ -688,6 +768,25 @@ mod tests {
         assert!(kv.data.is_empty());
         assert_eq!((kv.puts, kv.deletes), (0, 0));
         assert!(kv.batches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ranked_command_uses_default_config_and_cli_limit_once() {
+        let mut kv = MockKV::default();
+        let query = FtsQuery::Or(vec!["rust text".into()]);
+        let response = execute_command_async(
+            &mut kv,
+            Command::RankedSearch {
+                query: query.clone(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(response, Response::RankedSearchResults(Vec::new()));
+        assert_eq!(
+            kv.ranked_searches.borrow().as_slice(),
+            &[(query, 100, Bm25Config::default())]
+        );
     }
 
     #[test]

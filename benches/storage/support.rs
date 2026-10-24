@@ -47,9 +47,13 @@ pub struct BenchConfig {
 
 impl BenchConfig {
     pub fn includes(&self, name: &str) -> bool {
-        self.filter
-            .as_ref()
-            .is_none_or(|filter| name.contains(filter))
+        self.filter.as_ref().is_none_or(|filter| {
+            if filter.contains('/') {
+                name == filter
+            } else {
+                name.contains(filter)
+            }
+        })
     }
 
     pub fn temporary_directory(&self) -> BenchResult<tempfile::TempDir> {
