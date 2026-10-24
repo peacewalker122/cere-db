@@ -26,3 +26,15 @@ EXIT
 ```
 
 Raft mode is available with `--raft-mode`. See `cargo run -- --help` for CLI options. Raft support is experimental and not production-hardened.
+
+## Benchmark
+
+Run the public storage-module and end-to-end benchmarks with:
+
+```bash
+cargo bench --bench storage -- --run
+```
+
+See [benchmark workloads and measurement boundaries](benches/storage/README.md)
+for filtering, filesystem selection, checkpoint/recovery comparisons, and JSON
+results.

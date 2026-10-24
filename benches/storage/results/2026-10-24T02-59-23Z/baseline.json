@@ -1,0 +1,1475 @@
+{
+  "configuration": {
+    "filter": null,
+    "flush_bytes": 16384,
+    "key_bytes": 20,
+    "records": 256,
+    "repetitions": 3,
+    "suite": "all",
+    "value_bytes": 256,
+    "wal_segment_bytes": 1048576,
+    "warmup_runs": 1
+  },
+  "metadata": {
+    "architecture": "x86_64",
+    "available_parallelism": 8,
+    "cache_policy": "OS page cache is retained; no cold-cache claim",
+    "data_directory": "/home/peacewalker/project/learn/wasm-kv/target/benchmark-data",
+    "debug_assertions": false,
+    "git_revision": "ee4a093331061da1f3eaf9d561407d785582aa11",
+    "latency_policy": "run timings and amortized costs; no request latency percentiles",
+    "os": "linux",
+    "runtime_workers": 2,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "total_wall_seconds_including_setup_and_warmup": 37.967867392,
+    "tracked_changes": "M Cargo.toml",
+    "unix_time_seconds": 1792810763
+  },
+  "samples": [
+    {
+      "disk": null,
+      "elapsed_ns": 15096,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "record/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 22285,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "record/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 6468,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "bloom/insert"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 6459,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "bloom/contains"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 35735,
+      "logical_bytes": 10240,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "index/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 15819,
+      "logical_bytes": 10240,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "index/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 119621,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "block/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 105408,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "block/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 4740,
+      "logical_bytes": 65536,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "checksum/calculate"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 5017,
+      "logical_bytes": 65536,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "checksum/verify"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 209044,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "sstable/serialize"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 26937,
+      "logical_bytes": 17828,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "sstable/deserialize_metadata"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 32934,
+      "logical_bytes": 16384,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "footer/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 34219,
+      "logical_bytes": 16384,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "footer/decode"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 753033661,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "wal/durable_append"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 408113,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "wal/scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 105252
+      },
+      "elapsed_ns": 1544372931,
+      "logical_bytes": 0,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "wal/rotate"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 53652,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 774745187,
+      "logical_bytes": 0,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "manifest/register"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 53652,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 130832,
+      "logical_bytes": 0,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "manifest/reopen"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 773121930,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "writer/put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 77996,
+        "wal_bytes": 96072
+      },
+      "elapsed_ns": 17929722,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "writer/flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 77996,
+        "wal_bytes": 96072
+      },
+      "elapsed_ns": 267004,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "sstable/read_blocks"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 716,
+        "sstable_bytes": 1275812,
+        "wal_bytes": 192108
+      },
+      "elapsed_ns": 15102682,
+      "logical_bytes": 141312,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "compaction/merge_l0"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 36
+      },
+      "elapsed_ns": 5927671,
+      "logical_bytes": 0,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "e2e/open_empty"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 764936135,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "e2e/put_sequential_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 507945,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "e2e/reopen_before_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 46950,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "e2e/get_present_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 38793,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "e2e/get_missing_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 192036
+      },
+      "elapsed_ns": 763810617,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "e2e/overwrite_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 207268
+      },
+      "elapsed_ns": 378240309,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "sample": 0,
+      "scenario": "e2e/delete_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 207268
+      },
+      "elapsed_ns": 55524,
+      "logical_bytes": 17664,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "e2e/range_scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 857616070,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "e2e/put_automatic_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 38212576,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 0,
+      "scenario": "e2e/get_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 466127,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "e2e/range_scan_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 585313,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 0,
+      "scenario": "e2e/reopen_after_flush"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 17329,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "record/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 23160,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "record/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 5918,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "bloom/insert"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 5825,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "bloom/contains"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 30085,
+      "logical_bytes": 10240,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "index/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 14240,
+      "logical_bytes": 10240,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "index/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 117191,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "block/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 95639,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "block/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 4267,
+      "logical_bytes": 65536,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "checksum/calculate"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 4491,
+      "logical_bytes": 65536,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "checksum/verify"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 206326,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "sstable/serialize"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 20991,
+      "logical_bytes": 17828,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "sstable/deserialize_metadata"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 30112,
+      "logical_bytes": 16384,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "footer/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 30544,
+      "logical_bytes": 16384,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "footer/decode"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 754385995,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "wal/durable_append"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 307424,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "wal/scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 105252
+      },
+      "elapsed_ns": 1570145213,
+      "logical_bytes": 0,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "wal/rotate"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 53652,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 773355912,
+      "logical_bytes": 0,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "manifest/register"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 53652,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 130888,
+      "logical_bytes": 0,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "manifest/reopen"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 782684314,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "writer/put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 77996,
+        "wal_bytes": 96072
+      },
+      "elapsed_ns": 18556492,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "writer/flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 77996,
+        "wal_bytes": 96072
+      },
+      "elapsed_ns": 270862,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "sstable/read_blocks"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 716,
+        "sstable_bytes": 1275812,
+        "wal_bytes": 192108
+      },
+      "elapsed_ns": 15590310,
+      "logical_bytes": 141312,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "compaction/merge_l0"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 36
+      },
+      "elapsed_ns": 5975837,
+      "logical_bytes": 0,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "e2e/open_empty"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 770468750,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "e2e/put_sequential_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 592507,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "e2e/reopen_before_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 47368,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "e2e/get_present_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 38498,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "e2e/get_missing_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 192036
+      },
+      "elapsed_ns": 773140162,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "e2e/overwrite_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 207268
+      },
+      "elapsed_ns": 400720241,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "sample": 1,
+      "scenario": "e2e/delete_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 207268
+      },
+      "elapsed_ns": 56419,
+      "logical_bytes": 17664,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "e2e/range_scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 836895633,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "e2e/put_automatic_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 40035408,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 1,
+      "scenario": "e2e/get_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 517870,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "e2e/range_scan_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 621918,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 1,
+      "scenario": "e2e/reopen_after_flush"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 14934,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "record/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 22992,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "record/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 6510,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "bloom/insert"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 6367,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "bloom/contains"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 38727,
+      "logical_bytes": 10240,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "index/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 15795,
+      "logical_bytes": 10240,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "index/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 114401,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "block/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 113238,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "block/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 4632,
+      "logical_bytes": 65536,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "checksum/calculate"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 4950,
+      "logical_bytes": 65536,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "checksum/verify"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 207734,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "sstable/serialize"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 23119,
+      "logical_bytes": 17828,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "sstable/deserialize_metadata"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 34074,
+      "logical_bytes": 16384,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "footer/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 33982,
+      "logical_bytes": 16384,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "footer/decode"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 755550469,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "wal/durable_append"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 250219,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "wal/scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 105252
+      },
+      "elapsed_ns": 1572591828,
+      "logical_bytes": 0,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "wal/rotate"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 53652,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 807161274,
+      "logical_bytes": 0,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "manifest/register"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 53652,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 194401,
+      "logical_bytes": 0,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "manifest/reopen"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 757546623,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "writer/put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 77996,
+        "wal_bytes": 96072
+      },
+      "elapsed_ns": 18998429,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "writer/flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 77996,
+        "wal_bytes": 96072
+      },
+      "elapsed_ns": 261272,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "sstable/read_blocks"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 716,
+        "sstable_bytes": 1275812,
+        "wal_bytes": 192108
+      },
+      "elapsed_ns": 30687953,
+      "logical_bytes": 141312,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "compaction/merge_l0"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 36
+      },
+      "elapsed_ns": 12495162,
+      "logical_bytes": 0,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "e2e/open_empty"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 1701257839,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "e2e/put_sequential_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 618858,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "e2e/reopen_before_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 48382,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "e2e/get_present_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 39177,
+      "logical_bytes": 5120,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "e2e/get_missing_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 192036
+      },
+      "elapsed_ns": 1564687439,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "e2e/overwrite_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 207268
+      },
+      "elapsed_ns": 749802595,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "sample": 2,
+      "scenario": "e2e/delete_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 207268
+      },
+      "elapsed_ns": 57200,
+      "logical_bytes": 17664,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "e2e/range_scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 1721703817,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "e2e/put_automatic_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 34821223,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "sample": 2,
+      "scenario": "e2e/get_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 468385,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "e2e/range_scan_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 73664,
+        "wal_bytes": 96180
+      },
+      "elapsed_ns": 600691,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "sample": 2,
+      "scenario": "e2e/reopen_after_flush"
+    }
+  ],
+  "schema_version": 1,
+  "summaries": [
+    {
+      "amortized_us_per_operation": 0.4092252604166666,
+      "logical_mib_per_second": 643.2010356841721,
+      "max_run_ms": 0.113238,
+      "median_run_ms": 0.105408,
+      "min_run_ms": 0.095639,
+      "operations_per_second": 2443641.9173679943,
+      "samples": 3,
+      "scenario": "block/decode"
+    },
+    {
+      "amortized_us_per_operation": 0.45730859374999994,
+      "logical_mib_per_second": 575.5721955052917,
+      "max_run_ms": 0.119621,
+      "median_run_ms": 0.11719099999999999,
+      "min_run_ms": 0.114401,
+      "operations_per_second": 2186707.211862887,
+      "samples": 3,
+      "scenario": "block/encode"
+    },
+    {
+      "amortized_us_per_operation": 0.02428515625,
+      "logical_mib_per_second": 785.3968956088145,
+      "max_run_ms": 0.006459,
+      "median_run_ms": 0.006367,
+      "min_run_ms": 0.005825,
+      "operations_per_second": 41177416.76049541,
+      "samples": 3,
+      "scenario": "bloom/contains"
+    },
+    {
+      "amortized_us_per_operation": 0.024604166666666667,
+      "logical_mib_per_second": 775.2136695596952,
+      "max_run_ms": 0.00651,
+      "median_run_ms": 0.006468,
+      "min_run_ms": 0.005918,
+      "operations_per_second": 40643522.43861134,
+      "samples": 3,
+      "scenario": "bloom/insert"
+    },
+    {
+      "amortized_us_per_operation": 0.017759114583333332,
+      "logical_mib_per_second": 13747.342180511769,
+      "max_run_ms": 0.00474,
+      "median_run_ms": 0.004632,
+      "min_run_ms": 0.004267,
+      "operations_per_second": 56309113.571376204,
+      "samples": 3,
+      "scenario": "checksum/calculate"
+    },
+    {
+      "amortized_us_per_operation": 0.018825520833333335,
+      "logical_mib_per_second": 12968.598699681836,
+      "max_run_ms": 0.005017000000000001,
+      "median_run_ms": 0.00495,
+      "min_run_ms": 0.004491,
+      "operations_per_second": 53119380.2738968,
+      "samples": 3,
+      "scenario": "checksum/verify"
+    },
+    {
+      "amortized_us_per_operation": 20460.315,
+      "logical_mib_per_second": 6.586683782727685,
+      "max_run_ms": 30.687953,
+      "median_run_ms": 15.590309999999999,
+      "min_run_ms": 15.102682,
+      "operations_per_second": 48.87510285154456,
+      "samples": 3,
+      "scenario": "compaction/merge_l0"
+    },
+    {
+      "amortized_us_per_operation": 3981.1540234375,
+      "logical_mib_per_second": 0.0047909440870253315,
+      "max_run_ms": 749.802595,
+      "median_run_ms": 400.720241,
+      "min_run_ms": 378.240309,
+      "operations_per_second": 251.1834493498337,
+      "samples": 3,
+      "scenario": "e2e/delete_durable"
+    },
+    {
+      "amortized_us_per_operation": 147.22552994791667,
+      "logical_mib_per_second": 1.7878292672557614,
+      "max_run_ms": 40.035408000000004,
+      "median_run_ms": 38.212576,
+      "min_run_ms": 34.821222999999996,
+      "operations_per_second": 6792.300223702817,
+      "samples": 3,
+      "scenario": "e2e/get_after_flush"
+    },
+    {
+      "amortized_us_per_operation": 0.15165104166666668,
+      "logical_mib_per_second": 125.77220781673937,
+      "max_run_ms": 0.039177000000000003,
+      "median_run_ms": 0.038793,
+      "min_run_ms": 0.038498000000000004,
+      "operations_per_second": 6594085.929182265,
+      "samples": 3,
+      "scenario": "e2e/get_missing_single_pass"
+    },
+    {
+      "amortized_us_per_operation": 0.18580729166666665,
+      "logical_mib_per_second": 1416.5973195515066,
+      "max_run_ms": 0.048382,
+      "median_run_ms": 0.047368,
+      "min_run_ms": 0.046950000000000006,
+      "operations_per_second": 5381920.112123336,
+      "samples": 3,
+      "scenario": "e2e/get_present_single_pass"
+    },
+    {
+      "amortized_us_per_operation": 8132.89,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 12.495162,
+      "median_run_ms": 5.975837,
+      "min_run_ms": 5.927671,
+      "operations_per_second": 122.95752186492132,
+      "samples": 3,
+      "scenario": "e2e/open_empty"
+    },
+    {
+      "amortized_us_per_operation": 4038.5914296875003,
+      "logical_mib_per_second": 0.06517473131677796,
+      "max_run_ms": 1564.687439,
+      "median_run_ms": 773.140162,
+      "min_run_ms": 763.810617,
+      "operations_per_second": 247.61108356964408,
+      "samples": 3,
+      "scenario": "e2e/overwrite_durable"
+    },
+    {
+      "amortized_us_per_operation": 4448.197291666666,
+      "logical_mib_per_second": 0.05917320974526807,
+      "max_run_ms": 1721.7038169999998,
+      "median_run_ms": 857.6160699999999,
+      "min_run_ms": 836.895633,
+      "operations_per_second": 224.8101723980225,
+      "samples": 3,
+      "scenario": "e2e/put_automatic_checkpoint"
+    },
+    {
+      "amortized_us_per_operation": 4214.404588541667,
+      "logical_mib_per_second": 0.062455824019308596,
+      "max_run_ms": 1701.257839,
+      "median_run_ms": 770.46875,
+      "min_run_ms": 764.936135,
+      "operations_per_second": 237.28144248866133,
+      "samples": 3,
+      "scenario": "e2e/put_sequential_durable"
+    },
+    {
+      "amortized_us_per_operation": 56.38100000000001,
+      "logical_mib_per_second": 298.7833334811372,
+      "max_run_ms": 0.0572,
+      "median_run_ms": 0.056419000000000004,
+      "min_run_ms": 0.055524,
+      "operations_per_second": 17736.471506358524,
+      "samples": 3,
+      "scenario": "e2e/range_scan"
+    },
+    {
+      "amortized_us_per_operation": 484.1273333333333,
+      "logical_mib_per_second": 139.18406968690056,
+      "max_run_ms": 0.51787,
+      "median_run_ms": 0.468385,
+      "min_run_ms": 0.466127,
+      "operations_per_second": 2065.572280570814,
+      "samples": 3,
+      "scenario": "e2e/range_scan_after_flush"
+    },
+    {
+      "amortized_us_per_operation": 602.6406666666667,
+      "logical_mib_per_second": 111.81258787713186,
+      "max_run_ms": 0.621918,
+      "median_run_ms": 0.600691,
+      "min_run_ms": 0.585313,
+      "operations_per_second": 1659.36362298816,
+      "samples": 3,
+      "scenario": "e2e/reopen_after_flush"
+    },
+    {
+      "amortized_us_per_operation": 573.1033333333334,
+      "logical_mib_per_second": 117.57532818398079,
+      "max_run_ms": 0.618858,
+      "median_run_ms": 0.592507,
+      "min_run_ms": 0.507945,
+      "operations_per_second": 1744.8860298608163,
+      "samples": 3,
+      "scenario": "e2e/reopen_before_flush"
+    },
+    {
+      "amortized_us_per_operation": 0.12857421875,
+      "logical_mib_per_second": 474.7075801306396,
+      "max_run_ms": 0.034219,
+      "median_run_ms": 0.033982,
+      "min_run_ms": 0.030543999999999998,
+      "operations_per_second": 7777608.992860399,
+      "samples": 3,
+      "scenario": "footer/decode"
+    },
+    {
+      "amortized_us_per_operation": 0.12645833333333334,
+      "logical_mib_per_second": 482.65032948929155,
+      "max_run_ms": 0.034074,
+      "median_run_ms": 0.032934,
+      "min_run_ms": 0.030112,
+      "operations_per_second": 7907742.998352553,
+      "samples": 3,
+      "scenario": "footer/encode"
+    },
+    {
+      "amortized_us_per_operation": 0.059705729166666666,
+      "logical_mib_per_second": 638.9164522179091,
+      "max_run_ms": 0.015819,
+      "median_run_ms": 0.015795,
+      "min_run_ms": 0.01424,
+      "operations_per_second": 16748811.445021154,
+      "samples": 3,
+      "scenario": "index/decode"
+    },
+    {
+      "amortized_us_per_operation": 0.13612890625,
+      "logical_mib_per_second": 280.2268357772102,
+      "max_run_ms": 0.038727,
+      "median_run_ms": 0.035735,
+      "min_run_ms": 0.030085,
+      "operations_per_second": 7345978.3637981005,
+      "samples": 3,
+      "scenario": "index/encode"
+    },
+    {
+      "amortized_us_per_operation": 3066.747881510417,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 807.161274,
+      "median_run_ms": 774.745187,
+      "min_run_ms": 773.355912,
+      "operations_per_second": 326.0783209565587,
+      "samples": 3,
+      "scenario": "manifest/register"
+    },
+    {
+      "amortized_us_per_operation": 152.04033333333334,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.194401,
+      "median_run_ms": 0.130888,
+      "min_run_ms": 0.130832,
+      "operations_per_second": 6577.202102073792,
+      "samples": 3,
+      "scenario": "manifest/reopen"
+    },
+    {
+      "amortized_us_per_operation": 0.08911067708333333,
+      "logical_mib_per_second": 2953.7887034791124,
+      "max_run_ms": 0.02316,
+      "median_run_ms": 0.022992,
+      "min_run_ms": 0.022285,
+      "operations_per_second": 11221999.795432296,
+      "samples": 3,
+      "scenario": "record/decode"
+    },
+    {
+      "amortized_us_per_operation": 0.06166536458333333,
+      "logical_mib_per_second": 4268.427067716801,
+      "max_run_ms": 0.017329,
+      "median_run_ms": 0.015096,
+      "min_run_ms": 0.014934,
+      "operations_per_second": 16216558.626660189,
+      "samples": 3,
+      "scenario": "record/encode"
+    },
+    {
+      "amortized_us_per_operation": 23.682333333333332,
+      "logical_mib_per_second": 717.9235877471515,
+      "max_run_ms": 0.026937,
+      "median_run_ms": 0.023119,
+      "min_run_ms": 0.020991,
+      "operations_per_second": 42225.56898954213,
+      "samples": 3,
+      "scenario": "sstable/deserialize_metadata"
+    },
+    {
+      "amortized_us_per_operation": 266.37933333333336,
+      "logical_mib_per_second": 252.9581092377036,
+      "max_run_ms": 0.27086200000000005,
+      "median_run_ms": 0.267004,
+      "min_run_ms": 0.261272,
+      "operations_per_second": 3754.0449834696883,
+      "samples": 3,
+      "scenario": "sstable/read_blocks"
+    },
+    {
+      "amortized_us_per_operation": 207.7013333333333,
+      "logical_mib_per_second": 324.42166556465696,
+      "max_run_ms": 0.209044,
+      "median_run_ms": 0.207734,
+      "min_run_ms": 0.206326,
+      "operations_per_second": 4814.605587510271,
+      "samples": 3,
+      "scenario": "sstable/serialize"
+    },
+    {
+      "amortized_us_per_operation": 2946.5756835937505,
+      "logical_mib_per_second": 0.0893288140514007,
+      "max_run_ms": 755.550469,
+      "median_run_ms": 754.385995,
+      "min_run_ms": 753.033661,
+      "operations_per_second": 339.37699464768673,
+      "samples": 3,
+      "scenario": "wal/durable_append"
+    },
+    {
+      "amortized_us_per_operation": 6103.007776041667,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 1572.591828,
+      "median_run_ms": 1570.145213,
+      "min_run_ms": 1544.3729309999999,
+      "operations_per_second": 163.85363360106797,
+      "samples": 3,
+      "scenario": "wal/rotate"
+    },
+    {
+      "amortized_us_per_operation": 321.91866666666664,
+      "logical_mib_per_second": 209.31626363180763,
+      "max_run_ms": 0.408113,
+      "median_run_ms": 0.307424,
+      "min_run_ms": 0.25021899999999997,
+      "operations_per_second": 3106.3746950575505,
+      "samples": 3,
+      "scenario": "wal/scan"
+    },
+    {
+      "amortized_us_per_operation": 18494.881,
+      "logical_mib_per_second": 3.6433223063181646,
+      "max_run_ms": 18.998429,
+      "median_run_ms": 18.556492000000002,
+      "min_run_ms": 17.929721999999998,
+      "operations_per_second": 54.069015096663776,
+      "samples": 3,
+      "scenario": "writer/flush"
+    },
+    {
+      "amortized_us_per_operation": 3012.1782122395834,
+      "logical_mib_per_second": 0.08738331293234566,
+      "max_run_ms": 782.6843140000001,
+      "median_run_ms": 773.1219299999999,
+      "min_run_ms": 757.546623,
+      "operations_per_second": 331.98566935270753,
+      "samples": 3,
+      "scenario": "writer/put"
+    }
+  ]
+}
