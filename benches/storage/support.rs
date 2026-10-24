@@ -123,6 +123,7 @@ pub struct Measurement {
     pub logical_bytes: u64,
     pub elapsed: Duration,
     pub disk: Option<DiskUsage>,
+    pub registered_sstable_count: Option<usize>,
 }
 
 impl Measurement {
@@ -140,11 +141,17 @@ impl Measurement {
             logical_bytes,
             elapsed,
             disk: None,
+            registered_sstable_count: None,
         }
     }
 
     pub fn with_disk(mut self, disk: DiskUsage) -> Self {
         self.disk = Some(disk);
+        self
+    }
+
+    pub fn with_registered_sstable_count(mut self, count: usize) -> Self {
+        self.registered_sstable_count = Some(count);
         self
     }
 }

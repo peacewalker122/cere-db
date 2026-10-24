@@ -1,6 +1,9 @@
 use crate::{
-    api::api::{AsyncKVEngine, KVEngine},
-    command::{ParseError, Response, execute_command, execute_command_async, parse_command},
+    api::api::KVEngine,
+    command::{
+        FtsCommandEngine, ParseError, Response, execute_command, execute_command_async,
+        parse_command,
+    },
 };
 use std::io::{self, BufRead, Write};
 
@@ -10,6 +13,7 @@ fn format_response(response: &Response) -> &'static str {
         Response::Nil => "(nil)",
         Response::Bye => "bye",
         Response::Value(_) => "",
+        Response::Document(_) | Response::SearchResults(_) => "",
     }
 }
 
@@ -61,7 +65,7 @@ pub fn run_repl<E: KVEngine>(engine: &mut E) -> io::Result<()> {
     Ok(())
 }
 
-pub async fn run_repl_async<E: AsyncKVEngine>(engine: &mut E) -> io::Result<()> {
+pub async fn run_repl_async<E: FtsCommandEngine>(engine: &mut E) -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdin_lock = stdin.lock();
     let mut stdout = io::stdout();
@@ -69,7 +73,7 @@ pub async fn run_repl_async<E: AsyncKVEngine>(engine: &mut E) -> io::Result<()> 
 
     writeln!(
         stdout,
-        "wasm-kv CLI REPL (SET/GET/DELETE/BATCH). Type EXIT to quit."
+        "wasm-kv CLI REPL (SET/GET/DELETE/BATCH/DOC/FTS). Type EXIT to quit."
     )?;
 
     loop {
@@ -85,6 +89,26 @@ pub async fn run_repl_async<E: AsyncKVEngine>(engine: &mut E) -> io::Result<()> 
         match parse_command(&line) {
             Ok(command) => match execute_command_async(engine, command).await {
                 Ok(Response::Value(value)) => writeln!(stdout, "{value}")?,
+                Ok(Response::Document(Some(document))) => writeln!(
+                    stdout,
+                    "{}",
+                    String::from_utf8_lossy(&document).escape_default()
+                )?,
+                Ok(Response::Document(None)) => writeln!(stdout, "(nil)")?,
+                Ok(Response::SearchResults(hits)) => {
+                    if hits.is_empty() {
+                        writeln!(stdout, "(no results)")?;
+                    } else {
+                        for hit in hits {
+                            writeln!(
+                                stdout,
+                                "{}\t{}",
+                                hit.id.as_str().escape_default(),
+                                String::from_utf8_lossy(&hit.document).escape_default()
+                            )?;
+                        }
+                    }
+                }
                 Ok(response) => {
                     writeln!(stdout, "{}", format_response(&response))?;
                     if response == Response::Bye {

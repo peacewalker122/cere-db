@@ -27,6 +27,7 @@ pub async fn compaction(
     config: Arc<StorageConfig>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<SSTableCodec, DBError> {
+    let _compaction_lease = manifest.compaction_lease().await;
     let snapshot = manifest.snapshot().await;
     if cancel.is_cancelled() {
         return Err(DBError::StorageError("compaction cancelled".to_string()));
@@ -118,6 +119,10 @@ pub async fn compaction(
     }
 
     if merged_sstable.blocks.is_empty() {
+        let _publication_lease = manifest.publication_lease().await;
+        if cancel.is_cancelled() {
+            return Err(DBError::StorageError("compaction cancelled".to_string()));
+        }
         manifest
             .publish_compaction(&snapshot, &merge_candidates, None)
             .await?;
@@ -170,6 +175,10 @@ pub async fn compaction(
         .map(|block| block.record_count as usize)
         .sum();
 
+    let _publication_lease = manifest.publication_lease().await;
+    if cancel.is_cancelled() {
+        return Err(DBError::StorageError("compaction cancelled".to_string()));
+    }
     manifest
         .publish_compaction(
             &snapshot,

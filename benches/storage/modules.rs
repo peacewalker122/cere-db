@@ -1,7 +1,7 @@
 use std::{hint::black_box, io::Cursor, path::Path, sync::Arc, time::Instant};
 
 use ceredb::{
-    BatchOperation, KV2, StorageConfig,
+    BatchOperation, DocumentId, FtsIndex, FtsQuery, KV2, StorageConfig,
     storage::{
         bloom::BloomFilterWrapper,
         checksum::{calculate_crc32, verify_crc32},
@@ -28,6 +28,166 @@ pub async fn run(
     manifest(config, sample, measurements).await?;
     writer(config, sample, measurements).await?;
     compact(config, sample, measurements).await?;
+    fts(config, sample, measurements).await?;
+    Ok(())
+}
+
+async fn fts(
+    config: &BenchConfig,
+    sample: usize,
+    measurements: &mut Vec<Measurement>,
+) -> BenchResult<()> {
+    let scenarios = [
+        "fts/index_put_documents",
+        "fts/search_common",
+        "fts/search_rare",
+        "fts/search_missing",
+        "fts/search_and",
+        "fts/search_or",
+    ];
+    if !scenarios.iter().any(|name| config.includes(name)) {
+        return Ok(());
+    }
+
+    let directory = config.temporary_directory()?;
+    let settings = storage_config(config);
+    let engine = KV2::open(directory.path(), settings).await?;
+    let mut index = FtsIndex::open(engine).await?;
+    let documents: Vec<_> = (0..config.records)
+        .map(|number| {
+            let id = DocumentId::new(format!("doc-{number:016x}"))?;
+            let text = if number == 0 {
+                format!("common shared rareterm payload-{number}")
+            } else if number + 1 == config.records && config.records > 1 {
+                format!("common shared deleteterm payload-{number}")
+            } else {
+                format!("common shared payload-{number}")
+            };
+            Ok((id, text.into_bytes()))
+        })
+        .collect::<Result<_, ceredb::error::DBError>>()?;
+    let replacement = (config.records > 2)
+        .then(|| (documents[1].0.clone(), b"common revised payload-1".to_vec()));
+    let deleted = (config.records > 1).then(|| documents.last().unwrap().0.clone());
+    let live_documents: Vec<_> = documents
+        .iter()
+        .filter(|(id, _)| deleted.as_ref() != Some(id))
+        .map(|(id, text)| {
+            replacement
+                .as_ref()
+                .filter(|(replace_id, _)| replace_id == id)
+                .cloned()
+                .unwrap_or_else(|| (id.clone(), text.clone()))
+        })
+        .collect();
+
+    if config.includes("fts/index_put_documents") {
+        let started = Instant::now();
+        for (id, document) in &documents {
+            index.put_document(id.clone(), document.clone()).await?;
+        }
+        if let Some((id, document)) = &replacement {
+            index.put_document(id.clone(), document.clone()).await?;
+        }
+        if let Some(id) = &deleted {
+            index.delete_document(id).await?;
+        }
+        let elapsed = started.elapsed();
+        for (id, document) in &live_documents {
+            require(
+                index.get_document(id).await?.as_ref() == Some(document),
+                "FTS indexed document did not round-trip",
+            )?;
+        }
+        if let Some(id) = &deleted {
+            require(
+                index.get_document(id).await?.is_none(),
+                "FTS deleted document remained present",
+            )?;
+        }
+        let mutations =
+            config.records + u64::from(replacement.is_some()) + u64::from(deleted.is_some());
+        measurements.push(Measurement::new(
+            "fts/index_put_documents",
+            sample,
+            mutations,
+            documents
+                .iter()
+                .map(|(_, document)| document.len() as u64)
+                .sum::<u64>()
+                + replacement
+                    .as_ref()
+                    .map_or(0, |(_, document)| document.len() as u64),
+            elapsed,
+        ));
+    } else {
+        for (id, document) in &documents {
+            index.put_document(id.clone(), document.clone()).await?;
+        }
+        if let Some((id, document)) = &replacement {
+            index.put_document(id.clone(), document.clone()).await?;
+        }
+        if let Some(id) = &deleted {
+            index.delete_document(id).await?;
+        }
+    }
+
+    for (scenario, query, expected_ids) in [
+        (
+            "fts/search_common",
+            FtsQuery::And(vec!["common".into()]),
+            live_documents.len().min(1000),
+        ),
+        ("fts/search_rare", FtsQuery::And(vec!["rareterm".into()]), 1),
+        (
+            "fts/search_missing",
+            FtsQuery::And(vec!["notindexed".into()]),
+            0,
+        ),
+        (
+            "fts/search_and",
+            FtsQuery::And(vec!["common".into(), "rareterm".into()]),
+            1,
+        ),
+        (
+            "fts/search_or",
+            FtsQuery::Or(vec!["common".into(), "rareterm".into()]),
+            live_documents.len().min(1000),
+        ),
+    ] {
+        if !config.includes(scenario) {
+            continue;
+        }
+        let started = Instant::now();
+        let hits = black_box(index.search(query, expected_ids).await?);
+        let elapsed = started.elapsed();
+        require(
+            hits.len() == expected_ids,
+            "FTS query returned unexpected hit count",
+        )?;
+        require(
+            hits.windows(2)
+                .all(|pair| pair[0].id.as_str() < pair[1].id.as_str()),
+            "FTS results are not in ascending ID order",
+        )?;
+        require(
+            hits.first()
+                .is_none_or(|hit| hit.id.as_str() == "doc-0000000000000000"),
+            "FTS results do not begin with the expected document ID",
+        )?;
+        measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
+    }
+    let stale_hits = index
+        .search(FtsQuery::And(vec!["revised".into(), "rareterm".into()]), 10)
+        .await?;
+    require(
+        stale_hits.is_empty(),
+        "FTS overwrite retained a stale posting",
+    )?;
+    let deleted_hits = index
+        .search(FtsQuery::And(vec!["deleteterm".into()]), 10)
+        .await?;
+    require(deleted_hits.is_empty(), "FTS delete retained a posting")?;
     Ok(())
 }
 

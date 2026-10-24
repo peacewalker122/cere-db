@@ -167,6 +167,8 @@ pub struct ManifestManager {
     manifest_path: PathBuf,
     state: Mutex<ManifestState>,
     file_cache: Mutex<LruFileCache>,
+    read_lease: tokio::sync::RwLock<()>,
+    compaction_lock: Mutex<()>,
 }
 
 impl ManifestManager {
@@ -190,6 +192,8 @@ impl ManifestManager {
             manifest_path,
             state: Mutex::new(state),
             file_cache: Mutex::new(LruFileCache::new(DEFAULT_FILE_CACHE_CAPACITY)),
+            read_lease: tokio::sync::RwLock::new(()),
+            compaction_lock: Mutex::new(()),
         })
     }
 
@@ -232,33 +236,26 @@ impl ManifestManager {
         inputs: &[SSTableMeta],
         output: Option<SSTableMeta>,
     ) -> Result<(), DBError> {
-        let manifest = Arc::clone(self);
-        let expected_levels = expected.levels.clone();
-        let inputs = inputs.to_vec();
-        tokio::spawn(async move {
-            let mut state = manifest.state.lock().await;
-            let levels: HashMap<_, Vec<_>> = state
-                .levels
-                .iter()
-                .map(|(level, files)| (*level, files.values().cloned().collect()))
-                .collect();
-            if levels != expected_levels {
-                return Err(DBError::StorageError(
-                    "manifest changed during compaction".to_string(),
-                ));
-            }
-            let removals: Vec<_> = inputs
-                .iter()
-                .map(|meta| (meta.level, meta.file_id))
-                .collect();
-            let payload = encode_compaction_payload(&removals, output.as_ref())?;
-            let entry = encode_entry(ENTRY_KIND_COMPACTION, &payload)?;
-            append_manifest_entry(&manifest.manifest_path, &entry).await?;
-            apply_compaction(&mut state, &removals, output);
-            Ok(())
-        })
-        .await
-        .map_err(|error| DBError::StorageError(error.to_string()))?
+        let mut state = self.state.lock().await;
+        let levels: HashMap<_, Vec<_>> = state
+            .levels
+            .iter()
+            .map(|(level, files)| (*level, files.values().cloned().collect()))
+            .collect();
+        if levels != expected.levels {
+            return Err(DBError::StorageError(
+                "manifest changed during compaction".to_string(),
+            ));
+        }
+        let removals: Vec<_> = inputs
+            .iter()
+            .map(|meta| (meta.level, meta.file_id))
+            .collect();
+        let payload = encode_compaction_payload(&removals, output.as_ref())?;
+        let entry = encode_entry(ENTRY_KIND_COMPACTION, &payload)?;
+        append_manifest_entry(&self.manifest_path, &entry).await?;
+        apply_compaction(&mut state, &removals, output);
+        Ok(())
     }
 
     pub async fn remove_sstable(&self, level: u32, file_id: u64) -> Result<(), DBError> {
@@ -321,6 +318,18 @@ impl ManifestManager {
                 .map(|(level, files)| (*level, files.values().cloned().collect()))
                 .collect(),
         }
+    }
+
+    pub(crate) async fn read_lease(&self) -> tokio::sync::RwLockReadGuard<'_, ()> {
+        self.read_lease.read().await
+    }
+
+    pub(crate) async fn publication_lease(&self) -> tokio::sync::RwLockWriteGuard<'_, ()> {
+        self.read_lease.write().await
+    }
+
+    pub(crate) async fn compaction_lease(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.compaction_lock.lock().await
     }
 
     /// Get a cached template file handle for an SSTable, or open and cache a new one.

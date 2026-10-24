@@ -1,13 +1,64 @@
 use crate::{
     api::api::{AsyncKVEngine, BatchOperation, KVEngine},
     error::DBError,
+    fts::{DocumentId, FtsIndex, FtsQuery, SearchHit},
 };
+
+pub trait FtsCommandEngine: AsyncKVEngine {
+    async fn put_document(&mut self, _id: DocumentId, _document: Vec<u8>) -> Result<(), DBError> {
+        Err(unsupported_fts())
+    }
+
+    async fn get_document(&self, _id: &DocumentId) -> Result<Option<Vec<u8>>, DBError> {
+        Err(unsupported_fts())
+    }
+
+    async fn delete_document(&mut self, _id: &DocumentId) -> Result<bool, DBError> {
+        Err(unsupported_fts())
+    }
+
+    async fn search(&self, _query: FtsQuery, _limit: usize) -> Result<Vec<SearchHit>, DBError> {
+        Err(unsupported_fts())
+    }
+}
+
+impl<E: AsyncKVEngine> FtsCommandEngine for FtsIndex<E> {
+    async fn put_document(&mut self, id: DocumentId, document: Vec<u8>) -> Result<(), DBError> {
+        FtsIndex::put_document(self, id, document).await
+    }
+
+    async fn get_document(&self, id: &DocumentId) -> Result<Option<Vec<u8>>, DBError> {
+        FtsIndex::get_document(self, id).await
+    }
+
+    async fn delete_document(&mut self, id: &DocumentId) -> Result<bool, DBError> {
+        FtsIndex::delete_document(self, id).await
+    }
+
+    async fn search(&self, query: FtsQuery, limit: usize) -> Result<Vec<SearchHit>, DBError> {
+        FtsIndex::search(self, query, limit).await
+    }
+}
+
+impl FtsCommandEngine for crate::storage::kv2::KV2 {}
+impl FtsCommandEngine for crate::storage::kv2::RaftKV2 {}
+
+fn unsupported_fts() -> DBError {
+    DBError::StorageError(
+        "document and full-text search commands are unsupported by this engine".into(),
+    )
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Set { key: String, value: String },
     Get { key: String },
     Delete { key: String },
     Batch { operations: Vec<BatchOperation> },
+    DocumentPut { id: String, text: String },
+    DocumentGet { id: String },
+    DocumentDelete { id: String },
+    Search { query: FtsQuery },
     Exit,
 }
 
@@ -16,6 +67,8 @@ pub enum Response {
     Ok,
     Value(String),
     Nil,
+    Document(Option<Vec<u8>>),
+    SearchResults(Vec<SearchHit>),
     Bye,
 }
 
@@ -118,6 +171,56 @@ pub fn parse_command(input: &str) -> Result<Command, ParseError> {
             }
             Ok(Command::Batch { operations })
         }
+        "DOC" => match tokens.get(1).map(|token| token.to_uppercase()).as_deref() {
+            Some("PUT") if tokens.len() == 4 => Ok(Command::DocumentPut {
+                id: tokens[2].clone(),
+                text: tokens[3].clone(),
+            }),
+            Some("GET") if tokens.len() == 3 => Ok(Command::DocumentGet {
+                id: tokens[2].clone(),
+            }),
+            Some("DELETE") if tokens.len() == 3 => Ok(Command::DocumentDelete {
+                id: tokens[2].clone(),
+            }),
+            Some("PUT") => Err(ParseError::InvalidArity {
+                command: "DOC PUT".into(),
+                expected: "DOC PUT <id> <text>",
+            }),
+            Some("GET") => Err(ParseError::InvalidArity {
+                command: "DOC GET".into(),
+                expected: "DOC GET <id>",
+            }),
+            Some("DELETE") => Err(ParseError::InvalidArity {
+                command: "DOC DELETE".into(),
+                expected: "DOC DELETE <id>",
+            }),
+            _ => Err(ParseError::InvalidArity {
+                command: "DOC".into(),
+                expected: "DOC PUT <id> <text>, DOC GET <id>, or DOC DELETE <id>",
+            }),
+        },
+        "FTS" => {
+            let query_kind = tokens.get(1).map(|token| token.to_uppercase());
+            if tokens.len() < 3 {
+                return Err(ParseError::InvalidArity {
+                    command: "FTS".into(),
+                    expected: "FTS AND <query> or FTS OR <query>",
+                });
+            }
+            let text = tokens[2..].join(" ");
+            match query_kind.as_deref() {
+                Some("AND") => Ok(Command::Search {
+                    query: FtsQuery::And(vec![text]),
+                }),
+                Some("OR") => Ok(Command::Search {
+                    query: FtsQuery::Or(vec![text]),
+                }),
+                _ => Err(ParseError::InvalidArity {
+                    command: "FTS".into(),
+                    expected: "FTS AND <query> or FTS OR <query>",
+                }),
+            }
+        }
         "EXIT" | "QUIT" => Ok(Command::Exit),
         _ => Err(ParseError::UnknownCommand(tokens[0].clone())),
     }
@@ -141,11 +244,15 @@ pub fn execute_command<E: KVEngine>(engine: &mut E, command: Command) -> Result<
             engine.write_batch(operations)?;
             Ok(Response::Ok)
         }
+        Command::DocumentPut { .. }
+        | Command::DocumentGet { .. }
+        | Command::DocumentDelete { .. }
+        | Command::Search { .. } => Err(unsupported_fts()),
         Command::Exit => Ok(Response::Bye),
     }
 }
 
-pub async fn execute_command_async<E: AsyncKVEngine>(
+pub async fn execute_command_async<E: FtsCommandEngine>(
     engine: &mut E,
     command: Command,
 ) -> Result<Response, DBError> {
@@ -166,6 +273,20 @@ pub async fn execute_command_async<E: AsyncKVEngine>(
             engine.write_batch(operations).await?;
             Ok(Response::Ok)
         }
+        Command::DocumentPut { id, text } => {
+            engine
+                .put_document(DocumentId::new(id)?, text.into_bytes())
+                .await?;
+            Ok(Response::Ok)
+        }
+        Command::DocumentGet { id } => Ok(Response::Document(
+            engine.get_document(&DocumentId::new(id)?).await?,
+        )),
+        Command::DocumentDelete { id } => {
+            engine.delete_document(&DocumentId::new(id)?).await?;
+            Ok(Response::Ok)
+        }
+        Command::Search { query } => Ok(Response::SearchResults(engine.search(query, 100).await?)),
         Command::Exit => Ok(Response::Bye),
     }
 }
@@ -319,6 +440,8 @@ mod tests {
         }
     }
 
+    impl FtsCommandEngine for MockKV {}
+
     struct DefaultBatchKV;
 
     impl KVEngine for DefaultBatchKV {
@@ -355,6 +478,8 @@ mod tests {
             Ok(Vec::new())
         }
     }
+
+    impl FtsCommandEngine for DefaultBatchKV {}
 
     #[test]
     fn parse_set_command() {
@@ -505,6 +630,64 @@ mod tests {
                 key: "key".to_string()
             })
         );
+    }
+
+    #[test]
+    fn parse_document_and_search_commands_with_quoted_text() {
+        assert_eq!(
+            parse_command("DOC PUT doc-1 \"a text document\""),
+            Ok(Command::DocumentPut {
+                id: "doc-1".into(),
+                text: "a text document".into()
+            })
+        );
+        assert_eq!(
+            parse_command("DOC GET doc-1"),
+            Ok(Command::DocumentGet { id: "doc-1".into() })
+        );
+        assert_eq!(
+            parse_command("DOC DELETE doc-1"),
+            Ok(Command::DocumentDelete { id: "doc-1".into() })
+        );
+        assert_eq!(
+            parse_command("FTS AND \"a text\""),
+            Ok(Command::Search {
+                query: FtsQuery::And(vec!["a text".into()])
+            })
+        );
+        assert_eq!(
+            parse_command("FTS OR word another"),
+            Ok(Command::Search {
+                query: FtsQuery::Or(vec!["word another".into()])
+            })
+        );
+        assert!(matches!(
+            parse_command("DOC PUT only-id"),
+            Err(ParseError::InvalidArity { .. })
+        ));
+        assert!(matches!(
+            parse_command("FTS XOR term"),
+            Err(ParseError::InvalidArity { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn unsupported_fts_command_does_not_mutate_raw_engine() {
+        let mut kv = MockKV::default();
+        let result = execute_command_async(
+            &mut kv,
+            Command::DocumentPut {
+                id: "doc".into(),
+                text: "text".into(),
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(DBError::StorageError(message)) if message.contains("unsupported"))
+        );
+        assert!(kv.data.is_empty());
+        assert_eq!((kv.puts, kv.deletes), (0, 0));
+        assert!(kv.batches.is_empty());
     }
 
     #[test]

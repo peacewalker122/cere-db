@@ -1,0 +1,3310 @@
+{
+  "configuration": {
+    "filter": null,
+    "flush_bytes": 512,
+    "key_bytes": 20,
+    "records": 128,
+    "repetitions": 3,
+    "suite": "all",
+    "value_bytes": 256,
+    "wal_segment_bytes": 1048576,
+    "warmup_runs": 1
+  },
+  "metadata": {
+    "architecture": "x86_64",
+    "arguments": [
+      "/home/peacewalker/project/learn/wasm-kv/target/release/deps/storage-0df15882e746aa06",
+      "--run",
+      "--suite",
+      "all",
+      "--records",
+      "128",
+      "--value-bytes",
+      "256",
+      "--repetitions",
+      "3",
+      "--warmup-runs",
+      "1",
+      "--flush-bytes",
+      "512",
+      "--data-dir",
+      "target/fts-final-data",
+      "--output",
+      "benches/storage/results/2026-10-24T12-59-17Z-fts-final/raw.json",
+      "--bench"
+    ],
+    "available_parallelism": 8,
+    "cache_policy": "OS page cache is retained; no cold-cache claim",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "data_directory": "/home/peacewalker/project/learn/wasm-kv/target/fts-final-data",
+    "debug_assertions": false,
+    "filesystem_type": "btrfs",
+    "git_revision": "7c90975d3459021468c569a14d6610fe9f65cbf1",
+    "latency_policy": "run timings and amortized costs; no request latency percentiles",
+    "os": "linux",
+    "runtime_workers": 2,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_qualification": "HEAD plus dirty worktree; the reported revision alone does not identify the complete build input",
+    "total_wall_seconds_including_setup_and_warmup": 120.125806717,
+    "tracked_changes": "M README.md\n M benches/storage/README.md\n M benches/storage/e2e.rs\n M benches/storage/main.rs\n M benches/storage/modules.rs\n M benches/storage/support.rs\n M src/command.rs\n M src/lib.rs\n M src/main.rs\n M src/repl.rs\n M src/storage/compactionmanager/compaction.rs\n M src/storage/kv2.rs\n M src/storage/manifest_codec.rs\n M src/storage/readmanager/read.rs\n M tests/integration/batches.rs\n M tests/integration/mod.rs",
+    "unix_time_seconds": 1792846877
+  },
+  "samples": [
+    {
+      "disk": null,
+      "elapsed_ns": 10910,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "record/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 13086,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "record/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 3721,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "bloom/insert"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 3101,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "bloom/contains"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 18695,
+      "logical_bytes": 5120,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "index/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 8708,
+      "logical_bytes": 5120,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "index/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 63283,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "block/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 58670,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "block/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2596,
+      "logical_bytes": 32768,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "checksum/calculate"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2570,
+      "logical_bytes": 32768,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "checksum/verify"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 112831,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "sstable/serialize"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 12816,
+      "logical_bytes": 8972,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "sstable/deserialize_metadata"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 16552,
+      "logical_bytes": 8192,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "footer/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 17049,
+      "logical_bytes": 8192,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "footer/decode"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 368240797,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "wal/durable_append"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 285309,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "wal/scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 52644
+      },
+      "elapsed_ns": 772298833,
+      "logical_bytes": 0,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "wal/rotate"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 26772,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 381577234,
+      "logical_bytes": 0,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "manifest/register"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 26772,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 79341,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "manifest/reopen"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 377974763,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "writer/batch_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43596
+      },
+      "elapsed_ns": 23911731,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "writer/batch_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43374
+      },
+      "elapsed_ns": 5920076,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "writer/batch_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43337
+      },
+      "elapsed_ns": 3179547,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "writer/batch_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 401005921,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "writer/put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 48072
+      },
+      "elapsed_ns": 18045765,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "writer/flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 48072
+      },
+      "elapsed_ns": 159495,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "sstable/read_blocks"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 702,
+        "sstable_bytes": 1237028,
+        "wal_bytes": 96108
+      },
+      "elapsed_ns": 12202126,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "compaction/merge_l0"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2280528253,
+      "logical_bytes": 3134,
+      "operations": 130,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "fts/index_put_documents"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1924555499,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "fts/search_common"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 18611359,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "fts/search_rare"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1645,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "fts/search_missing"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1628617469,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "fts/search_and"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1951989028,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "fts/search_or"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 36
+      },
+      "elapsed_ns": 13310792,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/open_empty"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 388208401,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/put_sequential_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 757441,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/reopen_before_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 31090,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/get_present_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 24387,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/get_missing_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 404510077,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/overwrite_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 103652
+      },
+      "elapsed_ns": 198458734,
+      "logical_bytes": 1280,
+      "operations": 64,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/delete_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 103652
+      },
+      "elapsed_ns": 37565,
+      "logical_bytes": 8832,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/range_scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1556832097,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/put_automatic_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 306343092,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/get_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 3053392,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/range_scan_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1668810,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/reopen_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1398,
+        "sstable_bytes": 6744,
+        "wal_bytes": 16526
+      },
+      "elapsed_ns": 488362906,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/sequential_set_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 15435,
+        "sstable_bytes": 56124,
+        "wal_bytes": 58028
+      },
+      "elapsed_ns": 3313425,
+      "logical_bytes": 17664,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/range_scan_after_flush_delete"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 22923,
+        "sstable_bytes": 83107,
+        "wal_bytes": 83180
+      },
+      "elapsed_ns": 5369611,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/range_scan_after_flush_reinsert"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 98277
+      },
+      "elapsed_ns": 401294203,
+      "logical_bytes": 3134,
+      "operations": 130,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/fts_index_put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 98277
+      },
+      "elapsed_ns": 1033691,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/fts_reopen_before_flush"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 523026,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/fts_search_common"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 6740,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/fts_search_rare"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1038,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/fts_search_missing"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 464087,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/fts_search_and"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 507208,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/fts_search_or"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 5956,
+        "sstable_bytes": 8459270,
+        "wal_bytes": 119463
+      },
+      "elapsed_ns": 4658578,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": 8,
+      "sample": 0,
+      "scenario": "e2e/fts_search_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 5956,
+        "sstable_bytes": 8459270,
+        "wal_bytes": 119463
+      },
+      "elapsed_ns": 1641970,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": 8,
+      "sample": 0,
+      "scenario": "e2e/fts_reopen_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96611
+      },
+      "elapsed_ns": 379570063,
+      "logical_bytes": 3110,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/doc_put_documents"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 437843,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/fts_and_search"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 755490,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/fts_or_search"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1541001330,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_sequential_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1398,
+        "sstable_bytes": 6744,
+        "wal_bytes": 16526
+      },
+      "elapsed_ns": 531433801,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/batch_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1539017533,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_put_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 22455,
+        "sstable_bytes": 71072,
+        "wal_bytes": 83108
+      },
+      "elapsed_ns": 2517333884,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_mixed_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 6946,
+        "wal_bytes": 12014
+      },
+      "elapsed_ns": 110656379,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/batch_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1864,
+        "sstable_bytes": 40672,
+        "wal_bytes": 43884
+      },
+      "elapsed_ns": 192937416,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_put_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 3735,
+        "sstable_bytes": 41664,
+        "wal_bytes": 71348
+      },
+      "elapsed_ns": 347950365,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_mixed_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 466,
+        "sstable_bytes": 6442,
+        "wal_bytes": 11720
+      },
+      "elapsed_ns": 43639301,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/batch_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 466,
+        "sstable_bytes": 39192,
+        "wal_bytes": 43446
+      },
+      "elapsed_ns": 46770462,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_put_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 39696,
+        "wal_bytes": 70472
+      },
+      "elapsed_ns": 87661316,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_mixed_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 6310,
+        "wal_bytes": 11647
+      },
+      "elapsed_ns": 20330494,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "app/batch_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 43373
+      },
+      "elapsed_ns": 20592427,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_put_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 70253
+      },
+      "elapsed_ns": 21486630,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/batch_mixed_256"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 10533,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "record/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 13000,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "record/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 3285,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "bloom/insert"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 3125,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "bloom/contains"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 17101,
+      "logical_bytes": 5120,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "index/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 8378,
+      "logical_bytes": 5120,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "index/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 54312,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "block/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 58496,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "block/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2459,
+      "logical_bytes": 32768,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "checksum/calculate"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2525,
+      "logical_bytes": 32768,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "checksum/verify"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 114548,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "sstable/serialize"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 12340,
+      "logical_bytes": 8972,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "sstable/deserialize_metadata"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 16652,
+      "logical_bytes": 8192,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "footer/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 17052,
+      "logical_bytes": 8192,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "footer/decode"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 377721884,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "wal/durable_append"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 271528,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "wal/scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 52644
+      },
+      "elapsed_ns": 767751423,
+      "logical_bytes": 0,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "wal/rotate"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 26772,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 376259725,
+      "logical_bytes": 0,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "manifest/register"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 26772,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 75506,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "manifest/reopen"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 381843390,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "writer/batch_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43596
+      },
+      "elapsed_ns": 36838101,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "writer/batch_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43374
+      },
+      "elapsed_ns": 6407941,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "writer/batch_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43337
+      },
+      "elapsed_ns": 3109269,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "writer/batch_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 392220770,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "writer/put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 48072
+      },
+      "elapsed_ns": 18373138,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "writer/flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 48072
+      },
+      "elapsed_ns": 190928,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "sstable/read_blocks"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 702,
+        "sstable_bytes": 1237028,
+        "wal_bytes": 96108
+      },
+      "elapsed_ns": 11801731,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "compaction/merge_l0"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2296613279,
+      "logical_bytes": 3134,
+      "operations": 130,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "fts/index_put_documents"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1912444513,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "fts/search_common"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 18815808,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "fts/search_rare"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2060,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "fts/search_missing"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1598744769,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "fts/search_and"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1936393931,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "fts/search_or"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 36
+      },
+      "elapsed_ns": 13407317,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/open_empty"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 383150801,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/put_sequential_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 396182,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/reopen_before_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 30904,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/get_present_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 24805,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/get_missing_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 390007444,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/overwrite_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 103652
+      },
+      "elapsed_ns": 199257614,
+      "logical_bytes": 1280,
+      "operations": 64,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/delete_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 103652
+      },
+      "elapsed_ns": 36078,
+      "logical_bytes": 8832,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/range_scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1560651159,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/put_automatic_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 315560424,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/get_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 3366995,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/range_scan_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1818901,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/reopen_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1398,
+        "sstable_bytes": 6744,
+        "wal_bytes": 16526
+      },
+      "elapsed_ns": 463808356,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/sequential_set_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 15435,
+        "sstable_bytes": 56124,
+        "wal_bytes": 58028
+      },
+      "elapsed_ns": 4285373,
+      "logical_bytes": 17664,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/range_scan_after_flush_delete"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 22923,
+        "sstable_bytes": 83107,
+        "wal_bytes": 83180
+      },
+      "elapsed_ns": 5256894,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/range_scan_after_flush_reinsert"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 98277
+      },
+      "elapsed_ns": 389550714,
+      "logical_bytes": 3134,
+      "operations": 130,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/fts_index_put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 98277
+      },
+      "elapsed_ns": 1086890,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/fts_reopen_before_flush"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 544724,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/fts_search_common"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 11827,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/fts_search_rare"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1650,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/fts_search_missing"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 494777,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/fts_search_and"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 510106,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/fts_search_or"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 5956,
+        "sstable_bytes": 8459270,
+        "wal_bytes": 119463
+      },
+      "elapsed_ns": 4815956,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": 8,
+      "sample": 1,
+      "scenario": "e2e/fts_search_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 5956,
+        "sstable_bytes": 8459270,
+        "wal_bytes": 119463
+      },
+      "elapsed_ns": 1975534,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": 8,
+      "sample": 1,
+      "scenario": "e2e/fts_reopen_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96611
+      },
+      "elapsed_ns": 386270865,
+      "logical_bytes": 3110,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/doc_put_documents"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 483123,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/fts_and_search"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 495222,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/fts_or_search"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1526423559,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_sequential_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1398,
+        "sstable_bytes": 6744,
+        "wal_bytes": 16526
+      },
+      "elapsed_ns": 522569493,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/batch_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1537040313,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_put_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 22455,
+        "sstable_bytes": 71072,
+        "wal_bytes": 83108
+      },
+      "elapsed_ns": 2505269107,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_mixed_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 6946,
+        "wal_bytes": 12014
+      },
+      "elapsed_ns": 91294030,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/batch_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1864,
+        "sstable_bytes": 40672,
+        "wal_bytes": 43884
+      },
+      "elapsed_ns": 184180945,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_put_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 3735,
+        "sstable_bytes": 41664,
+        "wal_bytes": 71348
+      },
+      "elapsed_ns": 357105076,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_mixed_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 466,
+        "sstable_bytes": 6442,
+        "wal_bytes": 11720
+      },
+      "elapsed_ns": 47206878,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/batch_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 466,
+        "sstable_bytes": 39192,
+        "wal_bytes": 43446
+      },
+      "elapsed_ns": 40066566,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_put_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 39696,
+        "wal_bytes": 70472
+      },
+      "elapsed_ns": 90521191,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_mixed_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 6310,
+        "wal_bytes": 11647
+      },
+      "elapsed_ns": 20181879,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "app/batch_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 43373
+      },
+      "elapsed_ns": 23600750,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_put_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 70253
+      },
+      "elapsed_ns": 21710463,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/batch_mixed_256"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 10971,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "record/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 12860,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "record/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 3421,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "bloom/insert"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 3167,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "bloom/contains"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 18420,
+      "logical_bytes": 5120,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "index/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 8341,
+      "logical_bytes": 5120,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "index/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 61701,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "block/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 70704,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "block/decode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2699,
+      "logical_bytes": 32768,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "checksum/calculate"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2540,
+      "logical_bytes": 32768,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "checksum/verify"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 108692,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "sstable/serialize"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 12730,
+      "logical_bytes": 8972,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "sstable/deserialize_metadata"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 16855,
+      "logical_bytes": 8192,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "footer/encode"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 17090,
+      "logical_bytes": 8192,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "footer/decode"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 384380161,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "wal/durable_append"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 202986,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "wal/scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 52644
+      },
+      "elapsed_ns": 772345176,
+      "logical_bytes": 0,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "wal/rotate"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 26772,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 384540019,
+      "logical_bytes": 0,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "manifest/register"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 26772,
+        "sstable_bytes": 0,
+        "wal_bytes": 0
+      },
+      "elapsed_ns": 90185,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "manifest/reopen"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 383136665,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "writer/batch_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43596
+      },
+      "elapsed_ns": 23145601,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "writer/batch_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43374
+      },
+      "elapsed_ns": 6157998,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "writer/batch_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 43337
+      },
+      "elapsed_ns": 3313433,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "writer/batch_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 389919522,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "writer/put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 48072
+      },
+      "elapsed_ns": 18150576,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "writer/flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 48072
+      },
+      "elapsed_ns": 144410,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "sstable/read_blocks"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 702,
+        "sstable_bytes": 1237028,
+        "wal_bytes": 96108
+      },
+      "elapsed_ns": 19604437,
+      "logical_bytes": 70656,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "compaction/merge_l0"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2374269034,
+      "logical_bytes": 3134,
+      "operations": 130,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "fts/index_put_documents"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1931026557,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "fts/search_common"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 20894780,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "fts/search_rare"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 2559,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "fts/search_missing"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1626514750,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "fts/search_and"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 1920380144,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "fts/search_or"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 36
+      },
+      "elapsed_ns": 7440548,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/open_empty"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 393481460,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/put_sequential_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 354066,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/reopen_before_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 31533,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/get_present_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 48036
+      },
+      "elapsed_ns": 24208,
+      "logical_bytes": 2560,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/get_missing_single_pass"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 385774294,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/overwrite_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 103652
+      },
+      "elapsed_ns": 200272777,
+      "logical_bytes": 1280,
+      "operations": 64,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/delete_durable"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 103652
+      },
+      "elapsed_ns": 42241,
+      "logical_bytes": 8832,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/range_scan"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1553679876,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/put_automatic_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 289577874,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/get_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 2750222,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/range_scan_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1549554,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/reopen_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1398,
+        "sstable_bytes": 6744,
+        "wal_bytes": 16526
+      },
+      "elapsed_ns": 474082697,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/sequential_set_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 15435,
+        "sstable_bytes": 56124,
+        "wal_bytes": 58028
+      },
+      "elapsed_ns": 4116032,
+      "logical_bytes": 17664,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/range_scan_after_flush_delete"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 22923,
+        "sstable_bytes": 83107,
+        "wal_bytes": 83180
+      },
+      "elapsed_ns": 4848857,
+      "logical_bytes": 35328,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/range_scan_after_flush_reinsert"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 98277
+      },
+      "elapsed_ns": 398326269,
+      "logical_bytes": 3134,
+      "operations": 130,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/fts_index_put"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 98277
+      },
+      "elapsed_ns": 954063,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/fts_reopen_before_flush"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 517268,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/fts_search_common"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 6532,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/fts_search_rare"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 950,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/fts_search_missing"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 467902,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/fts_search_and"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 510500,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/fts_search_or"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 5956,
+        "sstable_bytes": 8459270,
+        "wal_bytes": 119463
+      },
+      "elapsed_ns": 4710724,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": 8,
+      "sample": 2,
+      "scenario": "e2e/fts_search_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 5956,
+        "sstable_bytes": 8459270,
+        "wal_bytes": 119463
+      },
+      "elapsed_ns": 1569101,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": 8,
+      "sample": 2,
+      "scenario": "e2e/fts_reopen_after_flush"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96611
+      },
+      "elapsed_ns": 390520521,
+      "logical_bytes": 3110,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/doc_put_documents"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 487429,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/fts_and_search"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 494343,
+      "logical_bytes": 0,
+      "operations": 1,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/fts_or_search"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1558229567,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_sequential_checkpoint"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1398,
+        "sstable_bytes": 6744,
+        "wal_bytes": 16526
+      },
+      "elapsed_ns": 511764053,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/batch_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 14967,
+        "sstable_bytes": 53632,
+        "wal_bytes": 50340
+      },
+      "elapsed_ns": 1523145966,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_put_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 22455,
+        "sstable_bytes": 71072,
+        "wal_bytes": 83108
+      },
+      "elapsed_ns": 2508093676,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_mixed_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 6946,
+        "wal_bytes": 12014
+      },
+      "elapsed_ns": 104235836,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/batch_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 1864,
+        "sstable_bytes": 40672,
+        "wal_bytes": 43884
+      },
+      "elapsed_ns": 173079159,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_put_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 3735,
+        "sstable_bytes": 41664,
+        "wal_bytes": 71348
+      },
+      "elapsed_ns": 373843781,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_mixed_16"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 466,
+        "sstable_bytes": 6442,
+        "wal_bytes": 11720
+      },
+      "elapsed_ns": 40865924,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/batch_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 466,
+        "sstable_bytes": 39192,
+        "wal_bytes": 43446
+      },
+      "elapsed_ns": 45273127,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_put_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 932,
+        "sstable_bytes": 39696,
+        "wal_bytes": 70472
+      },
+      "elapsed_ns": 93311238,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_mixed_64"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 6310,
+        "wal_bytes": 11647
+      },
+      "elapsed_ns": 24799341,
+      "logical_bytes": 3602,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "app/batch_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 43373
+      },
+      "elapsed_ns": 24656791,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_put_256"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 233,
+        "sstable_bytes": 39060,
+        "wal_bytes": 70253
+      },
+      "elapsed_ns": 21791630,
+      "logical_bytes": 54272,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/batch_mixed_256"
+    }
+  ],
+  "schema_version": 1,
+  "summaries": [
+    {
+      "amortized_us_per_operation": 4077.5191328125006,
+      "logical_mib_per_second": 0.0065816959862083114,
+      "max_run_ms": 531.433801,
+      "median_run_ms": 522.569493,
+      "min_run_ms": 511.76405300000005,
+      "operations_per_second": 245.2471631470291,
+      "samples": 3,
+      "scenario": "app/batch_1"
+    },
+    {
+      "amortized_us_per_operation": 797.3600130208333,
+      "logical_mib_per_second": 0.03365730770526918,
+      "max_run_ms": 110.656379,
+      "median_run_ms": 104.23583599999999,
+      "min_run_ms": 91.29402999999999,
+      "operations_per_second": 1254.138637089984,
+      "samples": 3,
+      "scenario": "app/batch_16"
+    },
+    {
+      "amortized_us_per_operation": 170.0825885416667,
+      "logical_mib_per_second": 0.15778799899641183,
+      "max_run_ms": 24.799341,
+      "median_run_ms": 20.330494,
+      "min_run_ms": 20.181879,
+      "operations_per_second": 5879.496593826951,
+      "samples": 3,
+      "scenario": "app/batch_256"
+    },
+    {
+      "amortized_us_per_operation": 343.0002682291667,
+      "logical_mib_per_second": 0.07824189598647542,
+      "max_run_ms": 47.206878,
+      "median_run_ms": 43.639300999999996,
+      "min_run_ms": 40.865924,
+      "operations_per_second": 2915.4496151352164,
+      "samples": 3,
+      "scenario": "app/batch_64"
+    },
+    {
+      "amortized_us_per_operation": 3011.3579401041666,
+      "logical_mib_per_second": 0.0076946368108042245,
+      "max_run_ms": 390.52052100000003,
+      "median_run_ms": 386.270865,
+      "min_run_ms": 379.570063,
+      "operations_per_second": 332.0760998492955,
+      "samples": 3,
+      "scenario": "app/doc_put_documents"
+    },
+    {
+      "amortized_us_per_operation": 469.465,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.487429,
+      "median_run_ms": 0.483123,
+      "min_run_ms": 0.437843,
+      "operations_per_second": 2130.084244831883,
+      "samples": 3,
+      "scenario": "app/fts_and_search"
+    },
+    {
+      "amortized_us_per_operation": 581.6850000000001,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.75549,
+      "median_run_ms": 0.49522200000000005,
+      "min_run_ms": 0.494343,
+      "operations_per_second": 1719.1435226969922,
+      "samples": 3,
+      "scenario": "app/fts_or_search"
+    },
+    {
+      "amortized_us_per_operation": 3714.203018229167,
+      "logical_mib_per_second": 0.007225504685232524,
+      "max_run_ms": 488.362906,
+      "median_run_ms": 474.082697,
+      "min_run_ms": 463.808356,
+      "operations_per_second": 269.23676360501514,
+      "samples": 3,
+      "scenario": "app/sequential_set_checkpoint"
+    },
+    {
+      "amortized_us_per_operation": 0.4892447916666667,
+      "logical_mib_per_second": 538.0008449992016,
+      "max_run_ms": 0.070704,
+      "median_run_ms": 0.05867,
+      "min_run_ms": 0.058496,
+      "operations_per_second": 2043966.57263001,
+      "samples": 3,
+      "scenario": "block/decode"
+    },
+    {
+      "amortized_us_per_operation": 0.46691666666666665,
+      "logical_mib_per_second": 563.7282412881492,
+      "max_run_ms": 0.06328299999999999,
+      "median_run_ms": 0.061701,
+      "min_run_ms": 0.054312,
+      "operations_per_second": 2141709.7983223274,
+      "samples": 3,
+      "scenario": "block/encode"
+    },
+    {
+      "amortized_us_per_operation": 0.0244609375,
+      "logical_mib_per_second": 779.7528744809965,
+      "max_run_ms": 0.003167,
+      "median_run_ms": 0.003125,
+      "min_run_ms": 0.003101,
+      "operations_per_second": 40881507.50558927,
+      "samples": 3,
+      "scenario": "bloom/contains"
+    },
+    {
+      "amortized_us_per_operation": 0.027153645833333333,
+      "logical_mib_per_second": 702.4281912342956,
+      "max_run_ms": 0.003721,
+      "median_run_ms": 0.003421,
+      "min_run_ms": 0.0032849999999999997,
+      "operations_per_second": 36827467.152584635,
+      "samples": 3,
+      "scenario": "bloom/insert"
+    },
+    {
+      "amortized_us_per_operation": 0.020192708333333333,
+      "logical_mib_per_second": 12090.533917977817,
+      "max_run_ms": 0.002699,
+      "median_run_ms": 0.002596,
+      "min_run_ms": 0.0024590000000000002,
+      "operations_per_second": 49522826.92803714,
+      "samples": 3,
+      "scenario": "checksum/calculate"
+    },
+    {
+      "amortized_us_per_operation": 0.019882812499999996,
+      "logical_mib_per_second": 12278.978388998037,
+      "max_run_ms": 0.00257,
+      "median_run_ms": 0.0025399999999999997,
+      "min_run_ms": 0.002525,
+      "operations_per_second": 50294695.48133596,
+      "samples": 3,
+      "scenario": "checksum/verify"
+    },
+    {
+      "amortized_us_per_operation": 14536.098,
+      "logical_mib_per_second": 4.635550235008047,
+      "max_run_ms": 19.604436999999997,
+      "median_run_ms": 12.202126,
+      "min_run_ms": 11.801731,
+      "operations_per_second": 68.79425276301798,
+      "samples": 3,
+      "scenario": "compaction/merge_l0"
+    },
+    {
+      "amortized_us_per_operation": 9805.594618489586,
+      "logical_mib_per_second": 0.020618734808483023,
+      "max_run_ms": 2517.333884,
+      "median_run_ms": 2508.093676,
+      "min_run_ms": 2505.269107,
+      "operations_per_second": 101.98259655915044,
+      "samples": 3,
+      "scenario": "e2e/batch_mixed_1"
+    },
+    {
+      "amortized_us_per_operation": 1404.8166953125,
+      "logical_mib_per_second": 0.14391838860738376,
+      "max_run_ms": 373.843781,
+      "median_run_ms": 357.105076,
+      "min_run_ms": 347.950365,
+      "operations_per_second": 711.836642699887,
+      "samples": 3,
+      "scenario": "e2e/batch_mixed_16"
+    },
+    {
+      "amortized_us_per_operation": 84.62073307291666,
+      "logical_mib_per_second": 2.389236629561101,
+      "max_run_ms": 21.791629999999998,
+      "median_run_ms": 21.710463,
+      "min_run_ms": 21.486629999999998,
+      "operations_per_second": 11817.434849427646,
+      "samples": 3,
+      "scenario": "e2e/batch_mixed_256"
+    },
+    {
+      "amortized_us_per_operation": 353.50748046875,
+      "logical_mib_per_second": 0.5719227067275527,
+      "max_run_ms": 93.311238,
+      "median_run_ms": 90.521191,
+      "min_run_ms": 87.661316,
+      "operations_per_second": 2828.7944534412754,
+      "samples": 3,
+      "scenario": "e2e/batch_mixed_64"
+    },
+    {
+      "amortized_us_per_operation": 11977.093260416666,
+      "logical_mib_per_second": 0.021976460031252035,
+      "max_run_ms": 1539.017533,
+      "median_run_ms": 1537.040313,
+      "min_run_ms": 1523.145966,
+      "operations_per_second": 83.49271215119614,
+      "samples": 3,
+      "scenario": "e2e/batch_put_1"
+    },
+    {
+      "amortized_us_per_operation": 1432.8060416666667,
+      "logical_mib_per_second": 0.18370533322287602,
+      "max_run_ms": 192.937416,
+      "median_run_ms": 184.180945,
+      "min_run_ms": 173.079159,
+      "operations_per_second": 697.9311720634437,
+      "samples": 3,
+      "scenario": "e2e/batch_put_16"
+    },
+    {
+      "amortized_us_per_operation": 179.29679166666665,
+      "logical_mib_per_second": 1.4680358130304434,
+      "max_run_ms": 24.656791000000002,
+      "median_run_ms": 23.60075,
+      "min_run_ms": 20.592427,
+      "operations_per_second": 5577.344640160181,
+      "samples": 3,
+      "scenario": "e2e/batch_put_256"
+    },
+    {
+      "amortized_us_per_operation": 344.03686197916664,
+      "logical_mib_per_second": 0.7650753172608116,
+      "max_run_ms": 46.770462,
+      "median_run_ms": 45.273127,
+      "min_run_ms": 40.066565999999995,
+      "operations_per_second": 2906.6652748988145,
+      "samples": 3,
+      "scenario": "e2e/batch_put_64"
+    },
+    {
+      "amortized_us_per_operation": 12045.975145833332,
+      "logical_mib_per_second": 0.021850793160499753,
+      "max_run_ms": 1558.229567,
+      "median_run_ms": 1541.0013299999998,
+      "min_run_ms": 1526.4235589999998,
+      "operations_per_second": 83.01528003284128,
+      "samples": 3,
+      "scenario": "e2e/batch_sequential_checkpoint"
+    },
+    {
+      "amortized_us_per_operation": 3114.5266927083335,
+      "logical_mib_per_second": 0.006124040090193948,
+      "max_run_ms": 200.27277700000002,
+      "median_run_ms": 199.257614,
+      "min_run_ms": 198.458734,
+      "operations_per_second": 321.07607308076047,
+      "samples": 3,
+      "scenario": "e2e/delete_durable"
+    },
+    {
+      "amortized_us_per_operation": 3049.156887179487,
+      "logical_mib_per_second": 0.007540080039285077,
+      "max_run_ms": 401.29420300000004,
+      "median_run_ms": 398.326269,
+      "min_run_ms": 389.550714,
+      "operations_per_second": 327.95951044848135,
+      "samples": 3,
+      "scenario": "e2e/fts_index_put"
+    },
+    {
+      "amortized_us_per_operation": 1728.8683333333336,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 1.9755340000000001,
+      "median_run_ms": 1.64197,
+      "min_run_ms": 1.569101,
+      "operations_per_second": 578.4130466846809,
+      "samples": 3,
+      "scenario": "e2e/fts_reopen_after_flush"
+    },
+    {
+      "amortized_us_per_operation": 1024.8813333333333,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 1.0868900000000001,
+      "median_run_ms": 1.033691,
+      "min_run_ms": 0.954063,
+      "operations_per_second": 975.7227178170872,
+      "samples": 3,
+      "scenario": "e2e/fts_reopen_before_flush"
+    },
+    {
+      "amortized_us_per_operation": 4728.419333333333,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 4.815956,
+      "median_run_ms": 4.710724,
+      "min_run_ms": 4.658578,
+      "operations_per_second": 211.48716505543996,
+      "samples": 3,
+      "scenario": "e2e/fts_search_after_flush"
+    },
+    {
+      "amortized_us_per_operation": 475.5886666666667,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.49477699999999997,
+      "median_run_ms": 0.46790200000000004,
+      "min_run_ms": 0.464087,
+      "operations_per_second": 2102.657338344199,
+      "samples": 3,
+      "scenario": "e2e/fts_search_and"
+    },
+    {
+      "amortized_us_per_operation": 528.3393333333333,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.544724,
+      "median_run_ms": 0.523026,
+      "min_run_ms": 0.517268,
+      "operations_per_second": 1892.7229848493832,
+      "samples": 3,
+      "scenario": "e2e/fts_search_common"
+    },
+    {
+      "amortized_us_per_operation": 1.212666666666667,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.00165,
+      "median_run_ms": 0.001038,
+      "min_run_ms": 0.00095,
+      "operations_per_second": 824628.9169873556,
+      "samples": 3,
+      "scenario": "e2e/fts_search_missing"
+    },
+    {
+      "amortized_us_per_operation": 509.27133333333336,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.5105,
+      "median_run_ms": 0.510106,
+      "min_run_ms": 0.507208,
+      "operations_per_second": 1963.5898087070807,
+      "samples": 3,
+      "scenario": "e2e/fts_search_or"
+    },
+    {
+      "amortized_us_per_operation": 8.366333333333333,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.011827,
+      "median_run_ms": 0.0067399999999999995,
+      "min_run_ms": 0.0065320000000000005,
+      "operations_per_second": 119526.67436949679,
+      "samples": 3,
+      "scenario": "e2e/fts_search_rare"
+    },
+    {
+      "amortized_us_per_operation": 2373.6494531249996,
+      "logical_mib_per_second": 0.11089005201740872,
+      "max_run_ms": 315.560424,
+      "median_run_ms": 306.34309199999996,
+      "min_run_ms": 289.577874,
+      "operations_per_second": 421.2921999427767,
+      "samples": 3,
+      "scenario": "e2e/get_after_flush"
+    },
+    {
+      "amortized_us_per_operation": 0.19114583333333332,
+      "logical_mib_per_second": 99.78499659400546,
+      "max_run_ms": 0.024805,
+      "median_run_ms": 0.024387,
+      "min_run_ms": 0.024208,
+      "operations_per_second": 5231607.629427793,
+      "samples": 3,
+      "scenario": "e2e/get_missing_single_pass"
+    },
+    {
+      "amortized_us_per_operation": 0.24355989583333335,
+      "logical_mib_per_second": 1080.695614635346,
+      "max_run_ms": 0.031533,
+      "median_run_ms": 0.031090000000000003,
+      "min_run_ms": 0.030904,
+      "operations_per_second": 4105766.2493183785,
+      "samples": 3,
+      "scenario": "e2e/get_present_single_pass"
+    },
+    {
+      "amortized_us_per_operation": 11386.219,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 13.407317,
+      "median_run_ms": 13.310792,
+      "min_run_ms": 7.440548,
+      "operations_per_second": 87.82546690872536,
+      "samples": 3,
+      "scenario": "e2e/open_empty"
+    },
+    {
+      "amortized_us_per_operation": 3073.6766015625,
+      "logical_mib_per_second": 0.08563493999151388,
+      "max_run_ms": 404.510077,
+      "median_run_ms": 390.00744399999996,
+      "min_run_ms": 385.774294,
+      "operations_per_second": 325.34327114689006,
+      "samples": 3,
+      "scenario": "e2e/overwrite_durable"
+    },
+    {
+      "amortized_us_per_operation": 12164.487322916668,
+      "logical_mib_per_second": 0.021637912420053754,
+      "max_run_ms": 1560.6511589999998,
+      "median_run_ms": 1556.832097,
+      "min_run_ms": 1553.679876,
+      "operations_per_second": 82.20650599192132,
+      "samples": 3,
+      "scenario": "e2e/put_automatic_checkpoint"
+    },
+    {
+      "amortized_us_per_operation": 3033.4392239583335,
+      "logical_mib_per_second": 0.08677085377192988,
+      "max_run_ms": 393.48146,
+      "median_run_ms": 388.208401,
+      "min_run_ms": 383.150801,
+      "operations_per_second": 329.6588216114317,
+      "samples": 3,
+      "scenario": "e2e/put_sequential_durable"
+    },
+    {
+      "amortized_us_per_operation": 38.62799999999999,
+      "logical_mib_per_second": 218.05041841410377,
+      "max_run_ms": 0.042241,
+      "median_run_ms": 0.037564999999999994,
+      "min_run_ms": 0.036078000000000006,
+      "operations_per_second": 25887.956922439684,
+      "samples": 3,
+      "scenario": "e2e/range_scan"
+    },
+    {
+      "amortized_us_per_operation": 3056.869666666667,
+      "logical_mib_per_second": 11.021538346035689,
+      "max_run_ms": 3.3669949999999997,
+      "median_run_ms": 3.0533919999999997,
+      "min_run_ms": 2.750222,
+      "operations_per_second": 327.13203670552303,
+      "samples": 3,
+      "scenario": "e2e/range_scan_after_flush"
+    },
+    {
+      "amortized_us_per_operation": 3904.943333333333,
+      "logical_mib_per_second": 4.313943042707406,
+      "max_run_ms": 4.285373,
+      "median_run_ms": 4.116032000000001,
+      "min_run_ms": 3.313425,
+      "operations_per_second": 256.0856623612976,
+      "samples": 3,
+      "scenario": "e2e/range_scan_after_flush_delete"
+    },
+    {
+      "amortized_us_per_operation": 5158.454,
+      "logical_mib_per_second": 6.531299154746752,
+      "max_run_ms": 5.369611,
+      "median_run_ms": 5.256894,
+      "min_run_ms": 4.848857,
+      "operations_per_second": 193.85653143364272,
+      "samples": 3,
+      "scenario": "e2e/range_scan_after_flush_reinsert"
+    },
+    {
+      "amortized_us_per_operation": 1679.0883333333334,
+      "logical_mib_per_second": 20.065297090782398,
+      "max_run_ms": 1.8189009999999999,
+      "median_run_ms": 1.66881,
+      "min_run_ms": 1.549554,
+      "operations_per_second": 595.5612817669906,
+      "samples": 3,
+      "scenario": "e2e/reopen_after_flush"
+    },
+    {
+      "amortized_us_per_operation": 502.56300000000005,
+      "logical_mib_per_second": 67.0391697160356,
+      "max_run_ms": 0.7574409999999999,
+      "median_run_ms": 0.39618200000000003,
+      "min_run_ms": 0.354066,
+      "operations_per_second": 1989.8002837455206,
+      "samples": 3,
+      "scenario": "e2e/reopen_before_flush"
+    },
+    {
+      "amortized_us_per_operation": 0.13330989583333333,
+      "logical_mib_per_second": 457.84415229239517,
+      "max_run_ms": 0.01709,
+      "median_run_ms": 0.017051999999999998,
+      "min_run_ms": 0.017048999999999998,
+      "operations_per_second": 7501318.591158602,
+      "samples": 3,
+      "scenario": "footer/decode"
+    },
+    {
+      "amortized_us_per_operation": 0.13036197916666667,
+      "logical_mib_per_second": 468.19752691823646,
+      "max_run_ms": 0.016855000000000002,
+      "median_run_ms": 0.016652,
+      "min_run_ms": 0.016552,
+      "operations_per_second": 7670948.281028386,
+      "samples": 3,
+      "scenario": "footer/encode"
+    },
+    {
+      "amortized_us_per_operation": 17824.129656410256,
+      "logical_mib_per_second": 0.0012898743122305694,
+      "max_run_ms": 2374.269034,
+      "median_run_ms": 2296.6132789999997,
+      "min_run_ms": 2280.528253,
+      "operations_per_second": 56.10372115085916,
+      "samples": 3,
+      "scenario": "fts/index_put_documents"
+    },
+    {
+      "amortized_us_per_operation": 1617958.996,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 1628.617469,
+      "median_run_ms": 1626.51475,
+      "min_run_ms": 1598.7447690000001,
+      "operations_per_second": 0.6180626347591321,
+      "samples": 3,
+      "scenario": "fts/search_and"
+    },
+    {
+      "amortized_us_per_operation": 1922675.523,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 1931.0265570000001,
+      "median_run_ms": 1924.555499,
+      "min_run_ms": 1912.4445130000001,
+      "operations_per_second": 0.520108561240575,
+      "samples": 3,
+      "scenario": "fts/search_common"
+    },
+    {
+      "amortized_us_per_operation": 2.0879999999999996,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.002559,
+      "median_run_ms": 0.00206,
+      "min_run_ms": 0.001645,
+      "operations_per_second": 478927.2030651341,
+      "samples": 3,
+      "scenario": "fts/search_missing"
+    },
+    {
+      "amortized_us_per_operation": 1936254.3676666666,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 1951.989028,
+      "median_run_ms": 1936.393931,
+      "min_run_ms": 1920.3801440000002,
+      "operations_per_second": 0.5164610686999125,
+      "samples": 3,
+      "scenario": "fts/search_or"
+    },
+    {
+      "amortized_us_per_operation": 19440.649,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 20.89478,
+      "median_run_ms": 18.815808,
+      "min_run_ms": 18.611359,
+      "operations_per_second": 51.438611951689474,
+      "samples": 3,
+      "scenario": "fts/search_rare"
+    },
+    {
+      "amortized_us_per_operation": 0.06621614583333334,
+      "logical_mib_per_second": 576.097750422779,
+      "max_run_ms": 0.008708,
+      "median_run_ms": 0.008378,
+      "min_run_ms": 0.008341,
+      "operations_per_second": 15102056.868682897,
+      "samples": 3,
+      "scenario": "index/decode"
+    },
+    {
+      "amortized_us_per_operation": 0.1411875,
+      "logical_mib_per_second": 270.18661465250113,
+      "max_run_ms": 0.018695,
+      "median_run_ms": 0.01842,
+      "min_run_ms": 0.017101,
+      "operations_per_second": 7082779.991146525,
+      "samples": 3,
+      "scenario": "index/encode"
+    },
+    {
+      "amortized_us_per_operation": 2974.9400468750005,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 384.54001900000003,
+      "median_run_ms": 381.577234,
+      "min_run_ms": 376.259725,
+      "operations_per_second": 336.1412278040498,
+      "samples": 3,
+      "scenario": "manifest/register"
+    },
+    {
+      "amortized_us_per_operation": 81.67733333333334,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 0.090185,
+      "median_run_ms": 0.079341,
+      "min_run_ms": 0.075506,
+      "operations_per_second": 12243.29883443795,
+      "samples": 3,
+      "scenario": "manifest/reopen"
+    },
+    {
+      "amortized_us_per_operation": 0.10142187500000001,
+      "logical_mib_per_second": 2595.240043906948,
+      "max_run_ms": 0.013086,
+      "median_run_ms": 0.013,
+      "min_run_ms": 0.01286,
+      "operations_per_second": 9859805.885071637,
+      "samples": 3,
+      "scenario": "record/decode"
+    },
+    {
+      "amortized_us_per_operation": 0.08441145833333336,
+      "logical_mib_per_second": 3118.227270623804,
+      "max_run_ms": 0.010971,
+      "median_run_ms": 0.010910000000000001,
+      "min_run_ms": 0.010533,
+      "operations_per_second": 11846732.893194297,
+      "samples": 3,
+      "scenario": "record/encode"
+    },
+    {
+      "amortized_us_per_operation": 12.628666666666668,
+      "logical_mib_per_second": 677.5351818716841,
+      "max_run_ms": 0.012816000000000001,
+      "median_run_ms": 0.01273,
+      "min_run_ms": 0.01234,
+      "operations_per_second": 79184.9231906245,
+      "samples": 3,
+      "scenario": "sstable/deserialize_metadata"
+    },
+    {
+      "amortized_us_per_operation": 164.94433333333333,
+      "logical_mib_per_second": 204.25925261653933,
+      "max_run_ms": 0.19092800000000001,
+      "median_run_ms": 0.159495,
+      "min_run_ms": 0.14441,
+      "operations_per_second": 6062.651439980762,
+      "samples": 3,
+      "scenario": "sstable/read_blocks"
+    },
+    {
+      "amortized_us_per_operation": 112.02366666666666,
+      "logical_mib_per_second": 300.7525753486615,
+      "max_run_ms": 0.114548,
+      "median_run_ms": 0.112831,
+      "min_run_ms": 0.108692,
+      "operations_per_second": 8926.685134986357,
+      "samples": 3,
+      "scenario": "sstable/serialize"
+    },
+    {
+      "amortized_us_per_operation": 2943.6011510416665,
+      "logical_mib_per_second": 0.08941908153384848,
+      "max_run_ms": 384.380161,
+      "median_run_ms": 377.721884,
+      "min_run_ms": 368.240797,
+      "operations_per_second": 339.71993782042284,
+      "samples": 3,
+      "scenario": "wal/durable_append"
+    },
+    {
+      "amortized_us_per_operation": 6021.863104166666,
+      "logical_mib_per_second": 0.0,
+      "max_run_ms": 772.3451759999999,
+      "median_run_ms": 772.2988330000001,
+      "min_run_ms": 767.7514229999999,
+      "operations_per_second": 166.06156312455474,
+      "samples": 3,
+      "scenario": "wal/rotate"
+    },
+    {
+      "amortized_us_per_operation": 253.27433333333332,
+      "logical_mib_per_second": 133.0233735356787,
+      "max_run_ms": 0.285309,
+      "median_run_ms": 0.271528,
+      "min_run_ms": 0.202986,
+      "operations_per_second": 3948.2879565372464,
+      "samples": 3,
+      "scenario": "wal/scan"
+    },
+    {
+      "amortized_us_per_operation": 2976.4448385416667,
+      "logical_mib_per_second": 0.08843238346627277,
+      "max_run_ms": 383.136665,
+      "median_run_ms": 381.84339,
+      "min_run_ms": 377.974763,
+      "operations_per_second": 335.9712859620668,
+      "samples": 3,
+      "scenario": "writer/batch_1"
+    },
+    {
+      "amortized_us_per_operation": 218.47769010416664,
+      "logical_mib_per_second": 1.2047642539731573,
+      "max_run_ms": 36.838100999999995,
+      "median_run_ms": 23.911731,
+      "min_run_ms": 23.145601,
+      "operations_per_second": 4577.126385413614,
+      "samples": 3,
+      "scenario": "writer/batch_16"
+    },
+    {
+      "amortized_us_per_operation": 25.005856770833333,
+      "logical_mib_per_second": 10.526098495258767,
+      "max_run_ms": 3.3134330000000003,
+      "median_run_ms": 3.179547,
+      "min_run_ms": 3.109269,
+      "operations_per_second": 39990.63136146542,
+      "samples": 3,
+      "scenario": "writer/batch_256"
+    },
+    {
+      "amortized_us_per_operation": 48.14066406250001,
+      "logical_mib_per_second": 5.467604497237506,
+      "max_run_ms": 6.407941,
+      "median_run_ms": 6.157997999999999,
+      "min_run_ms": 5.920076,
+      "operations_per_second": 20772.459613388823,
+      "samples": 3,
+      "scenario": "writer/batch_64"
+    },
+    {
+      "amortized_us_per_operation": 18189.826333333334,
+      "logical_mib_per_second": 1.8522115402641097,
+      "max_run_ms": 18.373138,
+      "median_run_ms": 18.150576,
+      "min_run_ms": 18.045765,
+      "operations_per_second": 54.97578600667966,
+      "samples": 3,
+      "scenario": "writer/flush"
+    },
+    {
+      "amortized_us_per_operation": 3081.1099296875004,
+      "logical_mib_per_second": 0.08542834151809096,
+      "max_run_ms": 401.005921,
+      "median_run_ms": 392.22077,
+      "min_run_ms": 389.91952200000003,
+      "operations_per_second": 324.5583646220063,
+      "samples": 3,
+      "scenario": "writer/put"
+    }
+  ]
+}

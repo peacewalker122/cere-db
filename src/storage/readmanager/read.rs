@@ -39,6 +39,7 @@ impl ReadManager {
         range: impl RangeBounds<Vec<u8>>,
         sequence_number: u64,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
+        let _read_lease = self.manifest.read_lease().await;
         // Collect entries from memtable
         let mut merged: HashMap<Vec<u8>, MemtableRecord> = HashMap::new();
 
@@ -152,6 +153,7 @@ impl ReadManager {
         key: Vec<u8>,
         sequence_number: u64,
     ) -> Result<Option<MemtableRecord>, DBError> {
+        let _read_lease = self.manifest.read_lease().await;
         let in_mem = self
             .memtable
             .range((key.clone(), 0)..=(key.clone(), sequence_number))
@@ -479,6 +481,35 @@ mod tests {
         assert_eq!(record.value, b"sstable-value".to_vec());
         assert_eq!(record.record_type, RecordType::Put);
         assert_eq!(record.lsn, 7);
+
+        let read_lease = manager.manifest.read_lease().await;
+        let snapshot = manager.manifest.snapshot().await;
+        let meta = snapshot.levels[&0][0].clone();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let compaction_manifest = Arc::clone(&manager.manifest);
+        let compaction_path = meta.path.clone();
+        let compaction_snapshot = snapshot.clone();
+        let compaction = tokio::spawn(async move {
+            let _publication_lease = compaction_manifest.publication_lease().await;
+            let _ = ready_tx.send(());
+            compaction_manifest
+                .publish_compaction(&compaction_snapshot, &[meta], None)
+                .await
+                .unwrap();
+            compaction_manifest.evict_file(&compaction_path).await;
+            tokio::fs::remove_file(compaction_path).await.unwrap();
+        });
+        tokio::task::yield_now().await;
+        assert!(std::fs::metadata(&flush_result.sstable_path).is_ok());
+        let delayed_read = manager
+            .get_from_single_sstable(&snapshot.levels[&0][0], b"sstable-key", 7)
+            .await
+            .unwrap();
+        assert_eq!(delayed_read.unwrap().value, b"sstable-value");
+        drop(read_lease);
+        ready_rx.await.unwrap();
+        compaction.await.unwrap();
+        assert!(std::fs::metadata(&flush_result.sstable_path).is_err());
     }
 
     #[tokio::test]

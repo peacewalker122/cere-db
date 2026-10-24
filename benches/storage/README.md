@@ -17,7 +17,8 @@ cargo bench --bench storage -- --run --suite all \
 ```
 
 Use `--suite modules` or `--suite e2e` to select a layer. `--filter TEXT` selects
-scenario names containing `TEXT`; required preparation still runs. A smoke run:
+scenario names containing `TEXT`; a full scenario name selects only that result,
+while its required fixture setup still runs. A smoke run:
 
 ```sh
 cargo bench --bench storage -- --run --suite all \
@@ -60,6 +61,19 @@ values, and include parsing plus execution in timing. Fixture construction,
 setup, verification, and cleanup remain outside timing. App payload size is the
 actual UTF-8 textual key/value bytes, distinct from `--value-bytes` (the
 configured binary engine payload).
+
+FTS documents are deterministic UTF-8 text fixtures with their own byte lengths;
+they are not the configured binary value payloads. `fts/index_put_documents`
+measures public `FtsIndex::put_document` calls, and the `fts/search_*` cases
+measure common, rare, missing, AND, and OR query behavior. Query fixture
+creation and correctness checks are outside timed sections. `e2e/fts_*` covers
+indexing through `KV2`, reopen/recovery before automatic flush, then a configured
+checkpoint and reopen with searches revalidated. It exercises the storage API
+and is supplemented by app command workloads below. There is no public
+tokenizer API, so no tokenizer-only benchmark is added. `app/doc_put_documents` and
+`app/fts_{and,or}_search` include command parsing plus async dispatch in their
+timed regions. DOC document text is quoted UTF-8 fixture content. Setup and
+response validation remain outside timing.
 
 Durable write scenarios use the normal sync behavior. CPU-only codec/filter
 scenarios stay separate from disk I/O. Warmup runs are discarded. The OS page
@@ -149,6 +163,30 @@ storage harness.
   and exact values after reopen are verified outside timing. Compare these app
   scenarios with each other; `e2e/batch_sequential_checkpoint` and
   `e2e/batch_put_*` remain a matched binary-payload engine-only comparison.
+- `fts/index_put_documents`, `fts/search_common`, `fts/search_rare`,
+  `fts/search_missing`, `fts/search_and`, and `fts/search_or` measure the public
+  FTS index API over UTF-8 documents. The put case times one insertion per
+  document plus a replacement and a delete when the fixture size permits; its
+  operation count is the actual number of those document mutations. Search
+  fixture setup, document round-trips, stale-posting checks, and exact result
+  checks occur outside timing. Search result caps are at most 1000. These are
+  public API measurements because no tokenizer abstraction is independently
+  exposed.
+- `e2e/fts_index_put`, `e2e/fts_reopen_before_flush`,
+  `e2e/fts_search_{common,rare,missing,and,or}`, and
+  `e2e/fts_reopen_after_flush` exercise FTS records persisted through `KV2`.
+  The reopen-after-flush case writes padding records through the raw KV API to
+  force the configured checkpoint, then checks documents and search results
+  after reopen. Reopen timings include engine open/recovery and FTS metadata
+  validation; fixture work and correctness checks remain outside timing.
+- `e2e/fts_search_after_flush` measures an OR query on the reopened index after
+  the configured checkpoint; the expected hit count and ascending ID order are
+  validated immediately after the query timing ends.
+- `app/doc_put_documents`, `app/fts_and_search`, and `app/fts_or_search` use
+  the public command parser and async command executor with an `FtsIndex`.
+  Timings include parsing, dispatch, and document/query execution. Document
+  fixture setup for searches and response verification are outside timing;
+  operation counts mean document mutations for DOC PUT and one query for FTS.
 
 Public methods allocate their own return values within timing. Preallocated
 result vectors retain outputs where needed for post-timing verification; that

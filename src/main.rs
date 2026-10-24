@@ -1,6 +1,6 @@
 use ceredb::repl::run_repl_async;
-use ceredb::{Config, KV2};
 use ceredb::storage::kv2::RaftKV2;
+use ceredb::{Config, FtsIndex, KV2};
 use clap::Parser;
 use log::info;
 
@@ -52,10 +52,18 @@ async fn main() {
     } else {
         info!("Raft mode: disabled (single-node WAL mode)");
 
-        let mut kv = match KV2::open(&config.data_dir, storage_config).await {
+        let kv = match KV2::open(&config.data_dir, storage_config).await {
             Ok(engine) => engine,
             Err(err) => {
                 eprintln!("Failed to initialize KV2 engine: {err}");
+                return;
+            }
+        };
+
+        let mut kv = match FtsIndex::open(kv).await {
+            Ok(engine) => engine,
+            Err(err) => {
+                eprintln!("Failed to initialize FTS index: {err}");
                 return;
             }
         };

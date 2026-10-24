@@ -55,9 +55,22 @@ pub struct KV2 {
 
     // Async compaction trigger channel (Step 1.3)
     pub compaction_sender: Sender<CompactionTrigger>,
+    compaction_cancel: tokio_util::sync::CancellationToken,
+    worker_stop: tokio_util::sync::CancellationToken,
+    compaction_worker: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl KV2 {
+    pub async fn shutdown(&mut self) -> Result<(), DBError> {
+        self.worker_stop.cancel();
+        if let Some(worker) = self.compaction_worker.take() {
+            worker
+                .await
+                .map_err(|error| DBError::StorageError(error.to_string()))?;
+        }
+        Ok(())
+    }
+
     /// Open KV2 from a base directory with custom configuration.
     ///
     /// Directory layout:
@@ -107,12 +120,14 @@ impl KV2 {
         let manifest_for_worker = Arc::clone(&manifest);
         let sstable_dir_for_compaction = sstable_dir.clone();
         let config_for_compaction = Arc::clone(&config);
-        Self::run_compaction_worker(
+        let worker_stop = tokio_util::sync::CancellationToken::new();
+        let compaction_worker = Self::run_compaction_worker(
             compaction_receiver,
             manifest_for_worker,
             sstable_dir_for_compaction,
             config_for_compaction,
             cancel.child_token(),
+            worker_stop.clone(),
         );
 
         Ok(Self {
@@ -126,6 +141,9 @@ impl KV2 {
             write_component,
             read_manager,
             compaction_sender,
+            compaction_cancel: cancel,
+            worker_stop,
+            compaction_worker: Some(compaction_worker),
         })
     }
 
@@ -206,10 +224,10 @@ impl KV2 {
         let level0_count = snapshot.levels.get(&0).map_or(0, |files| files.len());
 
         if level0_count >= self.config.max_level0_files {
-            // Send trigger to rayon worker (non-blocking)
             let _ = self
                 .compaction_sender
-                .send(CompactionTrigger::CompactLevel { level: 0 });
+                .send(CompactionTrigger::CompactLevel { level: 0 })
+                .await;
         }
 
         Ok(())
@@ -223,13 +241,14 @@ impl KV2 {
 
     /// Rayon worker that processes compaction triggers received via mpsc channel.
     /// Runs in a dedicated thread, using rayon for parallel compaction work.
-    async fn run_compaction_worker(
+    fn run_compaction_worker(
         mut receiver: Receiver<CompactionTrigger>,
         manifest: Arc<ManifestManager>,
         sstable_dir: PathBuf,
         config: Arc<StorageConfig>,
         cancel: tokio_util::sync::CancellationToken,
-    ) {
+        worker_stop: tokio_util::sync::CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -249,13 +268,34 @@ impl KV2 {
                             }
                         }
                     },
-                    _ = cancel.cancelled() => {
+                    _ = worker_stop.cancelled() => {
                         log::info!("Compaction worker received shutdown signal");
+                        receiver.close();
+                        while let Some(CompactionTrigger::CompactLevel { level }) = receiver.recv().await {
+                            if let Err(error) = compaction(
+                                Arc::clone(&manifest),
+                                level,
+                                Arc::clone(&config),
+                                cancel.child_token(),
+                            )
+                            .await
+                            {
+                                log::error!("Compaction failed for level {}: {}", level, error);
+                            }
+                        }
                         break;
                     }
+                    else => break,
                 }
             }
-        });
+        })
+    }
+}
+
+impl Drop for KV2 {
+    fn drop(&mut self) {
+        self.compaction_cancel.cancel();
+        self.worker_stop.cancel();
     }
 }
 
@@ -322,6 +362,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_joins_idle_compaction_worker_before_reopen() {
+        let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        for _ in 0..3 {
+            let mut engine = KV2::open_with_defaults(&temp_dir).await.unwrap();
+            let worker = engine.compaction_worker.as_ref().unwrap();
+            assert!(!worker.is_finished());
+            engine.shutdown().await.unwrap();
+            assert!(engine.compaction_worker.is_none());
+            drop(engine);
+        }
+        let mut reopened = KV2::open_with_defaults(&temp_dir).await.unwrap();
+        reopened.shutdown().await.unwrap();
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn kvengine_put_get_delete_roundtrip() {
         let temp_dir = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
 
@@ -348,6 +404,7 @@ mod tests {
             kv2.put(b"recovery-key".to_vec(), b"recovery-value".to_vec())
                 .await
                 .unwrap();
+            kv2.shutdown().await.unwrap();
         }
 
         let reopened = KV2::open_with_defaults(&temp_dir).await.unwrap();
@@ -537,6 +594,9 @@ pub struct RaftKV2 {
     raft_layer: RaftConsensusLayer,
     /// Shared handle to the write pipeline — same instance as in the state machine.
     write_handle: Arc<RwLock<WriteComponent>>,
+    compaction_cancel: tokio_util::sync::CancellationToken,
+    worker_stop: tokio_util::sync::CancellationToken,
+    compaction_worker: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RaftKV2 {
@@ -585,12 +645,14 @@ impl RaftKV2 {
         let sstable_dir_for_compaction = base_dir.join("sstable");
         let config_for_compaction = Arc::clone(&config);
         let cancel = tokio_util::sync::CancellationToken::new();
-        Self::run_compaction_worker(
+        let worker_stop = tokio_util::sync::CancellationToken::new();
+        let compaction_worker = Self::run_compaction_worker(
             compaction_receiver,
             manifest_for_worker,
             sstable_dir_for_compaction,
             config_for_compaction,
-            cancel,
+            cancel.clone(),
+            worker_stop.clone(),
         );
 
         // --- Shared sequence number ---
@@ -607,6 +669,9 @@ impl RaftKV2 {
             sequence_number: seq_arc,
             raft_layer,
             write_handle,
+            compaction_cancel: cancel,
+            worker_stop,
+            compaction_worker: Some(compaction_worker),
         })
     }
 
@@ -642,7 +707,8 @@ impl RaftKV2 {
         sstable_dir: PathBuf,
         config: Arc<StorageConfig>,
         cancel: tokio_util::sync::CancellationToken,
-    ) {
+        worker_stop: tokio_util::sync::CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -656,10 +722,26 @@ impl RaftKV2 {
                             }
                         }
                     }
-                    _ = cancel.cancelled() => break,
+                    _ = worker_stop.cancelled() => {
+                        receiver.close();
+                        while let Some(CompactionTrigger::CompactLevel { level }) = receiver.recv().await {
+                            if let Err(error) = compaction(
+                                Arc::clone(&manifest),
+                                level,
+                                Arc::clone(&config),
+                                cancel.child_token(),
+                            )
+                            .await
+                            {
+                                log::error!("RaftKV2 compaction failed: {error}");
+                            }
+                        }
+                        break;
+                    }
+                    else => break,
                 }
             }
-        });
+        })
     }
 
     async fn maybe_flush(&mut self) -> Result<(), DBError> {
@@ -689,6 +771,24 @@ impl RaftKV2 {
     /// Return a reference to the Raft consensus layer.
     pub fn raft_layer(&self) -> &RaftConsensusLayer {
         &self.raft_layer
+    }
+
+    pub async fn shutdown(&mut self) -> Result<(), DBError> {
+        self.worker_stop.cancel();
+        if let Some(worker) = self.compaction_worker.take() {
+            worker
+                .await
+                .map_err(|error| DBError::StorageError(error.to_string()))?;
+        }
+        self.raft_layer.shutdown().await;
+        Ok(())
+    }
+}
+
+impl Drop for RaftKV2 {
+    fn drop(&mut self) {
+        self.compaction_cancel.cancel();
+        self.worker_stop.cancel();
     }
 }
 

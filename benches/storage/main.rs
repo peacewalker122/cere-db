@@ -119,6 +119,7 @@ fn report(
                 "operations": sample.operations,
                 "logical_bytes": sample.logical_bytes,
                 "elapsed_ns": sample.elapsed.as_nanos(),
+                "registered_sstable_count": sample.registered_sstable_count,
                 "disk": sample.disk.map(|disk| json!({
                     "wal_bytes": disk.wal_bytes,
                     "sstable_bytes": disk.sstable_bytes,
@@ -133,7 +134,11 @@ fn report(
             "unix_time_seconds": SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             "git_revision": command_output("git", &["rev-parse", "HEAD"]),
             "tracked_changes": command_output("git", &["status", "--porcelain", "--untracked-files=no"]),
+            "source_qualification": "HEAD plus dirty worktree; the reported revision alone does not identify the complete build input",
+            "arguments": std::env::args().collect::<Vec<_>>(),
             "rustc": command_output("rustc", &["--version"]),
+            "cpu_model": cpu_model(),
+            "filesystem_type": filesystem_type(&std::fs::canonicalize(&config.data_dir)?),
             "os": std::env::consts::OS,
             "architecture": std::env::consts::ARCH,
             "available_parallelism": std::thread::available_parallelism()?.get(),
@@ -162,6 +167,25 @@ fn report(
 
 fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
     let output = Command::new(program).args(arguments).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn cpu_model() -> Option<String> {
+    std::fs::read_to_string("/proc/cpuinfo")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("model name\t: ").map(str::to_owned))
+}
+
+fn filesystem_type(path: &std::path::Path) -> Option<String> {
+    let output = Command::new("findmnt")
+        .args(["-n", "-o", "FSTYPE", "-T"])
+        .arg(path)
+        .output()
+        .ok()?;
     output
         .status
         .success()

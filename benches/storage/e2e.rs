@@ -1,9 +1,10 @@
 use std::{hint::black_box, path::Path, time::Instant};
 
 use ceredb::{
-    KV2, StorageConfig,
+    DocumentId, FtsIndex, FtsQuery, KV2, StorageConfig,
     api::api::{AsyncKVEngine, BatchOperation},
-    command::{execute_command_async, parse_command},
+    command::{Response, execute_command_async, parse_command},
+    storage::manifest_codec::ManifestManager,
 };
 
 use crate::support::{BenchConfig, BenchResult, DiskUsage, Measurement};
@@ -51,6 +52,32 @@ pub async fn run(
     {
         checkpoint_mutations(config, sample, measurements).await?;
     }
+    if [
+        "e2e/fts_index_put",
+        "e2e/fts_reopen_before_flush",
+        "e2e/fts_reopen_after_flush",
+        "e2e/fts_search_after_flush",
+        "e2e/fts_search_common",
+        "e2e/fts_search_rare",
+        "e2e/fts_search_missing",
+        "e2e/fts_search_and",
+        "e2e/fts_search_or",
+    ]
+    .iter()
+    .any(|name| config.includes(name))
+    {
+        fts_lifecycle(config, sample, measurements).await?;
+    }
+    if [
+        "app/doc_put_documents",
+        "app/fts_and_search",
+        "app/fts_or_search",
+    ]
+    .iter()
+    .any(|name| config.includes(name))
+    {
+        app_fts_workloads(config, sample, measurements).await?;
+    }
     if [1, 16, 64, 256].iter().any(|size| {
         config.includes(&format!("e2e/batch_put_{size}"))
             || config.includes(&format!("e2e/batch_mixed_{size}"))
@@ -59,6 +86,442 @@ pub async fn run(
         || config.includes("app/sequential_set_checkpoint")
     {
         batch_workloads(config, sample, measurements).await?;
+    }
+    Ok(())
+}
+
+fn fts_documents(config: &BenchConfig) -> BenchResult<Vec<(DocumentId, Vec<u8>)>> {
+    Ok((0..config.records)
+        .map(|number| {
+            let id = DocumentId::new(format!("doc-{number:016x}"))?;
+            let text = if number == 0 {
+                format!("common shared rareterm payload-{number}")
+            } else if number + 1 == config.records && config.records > 1 {
+                format!("common shared deleteterm payload-{number}")
+            } else {
+                format!("common shared payload-{number}")
+            };
+            Ok((id, text.into_bytes()))
+        })
+        .collect::<Result<_, ceredb::error::DBError>>()?)
+}
+
+async fn fts_lifecycle(
+    config: &BenchConfig,
+    sample: usize,
+    measurements: &mut Vec<Measurement>,
+) -> BenchResult<()> {
+    let directory = config.temporary_directory()?;
+    let mut settings = storage_config(config, u64::MAX);
+    settings.max_level0_files = 1;
+    let engine = KV2::open(directory.path(), settings.clone()).await?;
+    let mut index = FtsIndex::open(engine).await?;
+    let documents = fts_documents(config)?;
+    let replacement = (config.records > 2)
+        .then(|| (documents[1].0.clone(), b"common revised payload-1".to_vec()));
+    let deleted = (config.records > 1).then(|| documents.last().unwrap().0.clone());
+    let live_documents: Vec<_> = documents
+        .iter()
+        .filter(|(id, _)| deleted.as_ref() != Some(id))
+        .map(|(id, document)| {
+            replacement
+                .as_ref()
+                .filter(|(replace_id, _)| replace_id == id)
+                .cloned()
+                .unwrap_or_else(|| (id.clone(), document.clone()))
+        })
+        .collect();
+
+    if config.includes("e2e/fts_index_put") {
+        let started = Instant::now();
+        for (id, document) in &documents {
+            index.put_document(id.clone(), document.clone()).await?;
+        }
+        if let Some((id, document)) = &replacement {
+            index.put_document(id.clone(), document.clone()).await?;
+        }
+        if let Some(id) = &deleted {
+            index.delete_document(id).await?;
+        }
+        let elapsed = started.elapsed();
+        verify_fts_documents(&index, &live_documents).await?;
+        if let Some(id) = &deleted {
+            if index.get_document(id).await?.is_some() {
+                return Err("FTS delete left the document readable".into());
+            }
+        }
+        record(
+            config,
+            measurements,
+            Measurement::new(
+                "e2e/fts_index_put",
+                sample,
+                config.records + u64::from(replacement.is_some()) + u64::from(deleted.is_some()),
+                documents
+                    .iter()
+                    .map(|(_, document)| document.len() as u64)
+                    .sum::<u64>()
+                    + replacement
+                        .as_ref()
+                        .map_or(0, |(_, document)| document.len() as u64),
+                elapsed,
+            ),
+            directory.path(),
+        )?;
+    } else {
+        for (id, document) in &documents {
+            index.put_document(id.clone(), document.clone()).await?;
+        }
+        if let Some((id, document)) = &replacement {
+            index.put_document(id.clone(), document.clone()).await?;
+        }
+        if let Some(id) = &deleted {
+            index.delete_document(id).await?;
+        }
+    }
+
+    let persisted = index.into_inner();
+    drop(persisted);
+    let started = Instant::now();
+    let engine = KV2::open(directory.path(), settings.clone()).await?;
+    let elapsed = started.elapsed();
+    let index = FtsIndex::open(engine).await?;
+    verify_fts_documents(&index, &live_documents).await?;
+    if let Some(id) = &deleted {
+        if index.get_document(id).await?.is_some() {
+            return Err("reopened FTS index retained a deleted document".into());
+        }
+    }
+    verify_fts_postings(&index).await?;
+    if config.includes("e2e/fts_reopen_before_flush") {
+        record(
+            config,
+            measurements,
+            Measurement::new("e2e/fts_reopen_before_flush", sample, 1, 0, elapsed),
+            directory.path(),
+        )?;
+    }
+    bench_fts_queries(&index, config, sample, measurements).await?;
+
+    if config.includes("e2e/fts_reopen_after_flush")
+        || config.includes("e2e/fts_search_after_flush")
+    {
+        let mut checkpoint_settings = storage_config(config, config.flush_bytes);
+        checkpoint_settings.max_level0_files = 1;
+        let engine = index.into_inner();
+        drop(engine);
+        let mut engine = KV2::open(directory.path(), checkpoint_settings.clone()).await?;
+        for (id, document) in &documents {
+            engine
+                .put(
+                    format!("fts-bench-padding-{}", id.as_str()).into_bytes(),
+                    document.clone(),
+                )
+                .await?;
+        }
+        engine.shutdown().await?;
+        let registered_sstable_count = registered_sstable_count(directory.path()).await?;
+        if registered_sstable_count == 0 {
+            return Err("FTS checkpoint workload produced no manifest-registered SSTable; increase --records or lower --flush-bytes".into());
+        }
+        drop(engine);
+        let started = Instant::now();
+        let engine = KV2::open(directory.path(), checkpoint_settings).await?;
+        let elapsed = started.elapsed();
+        let index = FtsIndex::open(engine).await?;
+        verify_fts_documents(&index, &live_documents).await?;
+        if let Some(id) = &deleted {
+            if index.get_document(id).await?.is_some() {
+                return Err("reopened FTS index retained a deleted document".into());
+            }
+        }
+        verify_fts_postings(&index).await?;
+        verify_fts_queries(&index, config).await?;
+        if config.includes("e2e/fts_search_after_flush") {
+            let limit =
+                (config.records.saturating_sub(u64::from(config.records > 1)) as usize).min(1000);
+            let started = Instant::now();
+            let hits = index
+                .search(
+                    FtsQuery::Or(vec!["common".into(), "rareterm".into()]),
+                    limit,
+                )
+                .await?;
+            let elapsed = started.elapsed();
+            if hits.len() != limit
+                || hits
+                    .windows(2)
+                    .any(|pair| pair[0].id.as_str() >= pair[1].id.as_str())
+                || hits
+                    .first()
+                    .is_none_or(|hit| hit.id.as_str() != "doc-0000000000000000")
+            {
+                return Err("FTS OR search after flush returned incorrect results".into());
+            }
+            record(
+                config,
+                measurements,
+                Measurement::new("e2e/fts_search_after_flush", sample, 1, 0, elapsed)
+                    .with_registered_sstable_count(registered_sstable_count),
+                directory.path(),
+            )?;
+        }
+        if config.includes("e2e/fts_reopen_after_flush") {
+            record(
+                config,
+                measurements,
+                Measurement::new("e2e/fts_reopen_after_flush", sample, 1, 0, elapsed)
+                    .with_registered_sstable_count(registered_sstable_count),
+                directory.path(),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+async fn registered_sstable_count(directory: &Path) -> BenchResult<usize> {
+    let manifest = ManifestManager::load_or_create(directory.join("MANIFEST")).await?;
+    let snapshot = manifest.snapshot().await;
+    let tables: Vec<_> = snapshot.levels.values().flatten().collect();
+    if tables
+        .iter()
+        .any(|table| match std::fs::metadata(&table.path) {
+            Ok(metadata) => metadata.len() == 0,
+            Err(_) => true,
+        })
+    {
+        return Err("manifest references a missing or empty SSTable".into());
+    }
+    Ok(tables.len())
+}
+
+async fn app_fts_workloads(
+    config: &BenchConfig,
+    sample: usize,
+    measurements: &mut Vec<Measurement>,
+) -> BenchResult<()> {
+    let directory = config.temporary_directory()?;
+    let engine = KV2::open(directory.path(), storage_config(config, u64::MAX)).await?;
+    let mut index = FtsIndex::open(engine).await?;
+    let documents = fts_documents(config)?;
+
+    if config.includes("app/doc_put_documents") {
+        let started = Instant::now();
+        for (id, document) in &documents {
+            let command = format!(
+                "DOC PUT {} \"{}\"",
+                id.as_str(),
+                String::from_utf8_lossy(document)
+            );
+            let parsed = parse_command(&command)
+                .map_err(|error| format!("benchmark generated invalid DOC PUT: {error:?}"))?;
+            if execute_command_async(&mut index, parsed).await? != Response::Ok {
+                return Err("DOC PUT returned a non-OK response".into());
+            }
+        }
+        let elapsed = started.elapsed();
+        verify_fts_documents(&index, &documents).await?;
+        record(
+            config,
+            measurements,
+            Measurement::new(
+                "app/doc_put_documents",
+                sample,
+                config.records,
+                documents
+                    .iter()
+                    .map(|(_, document)| document.len() as u64)
+                    .sum(),
+                elapsed,
+            ),
+            directory.path(),
+        )?;
+    }
+
+    for (scenario, command_text, expected_id) in [
+        (
+            "app/fts_and_search",
+            "FTS AND common rareterm",
+            Some("doc-0000000000000000"),
+        ),
+        (
+            "app/fts_or_search",
+            "FTS OR common rareterm",
+            Some("doc-0000000000000000"),
+        ),
+    ] {
+        if !config.includes(scenario) {
+            continue;
+        }
+        if !config.includes("app/doc_put_documents") {
+            for (id, document) in &documents {
+                index.put_document(id.clone(), document.clone()).await?;
+            }
+        }
+        let started = Instant::now();
+        let command = parse_command(command_text)
+            .map_err(|error| format!("benchmark generated invalid FTS command: {error:?}"))?;
+        let response = execute_command_async(&mut index, command).await?;
+        let elapsed = started.elapsed();
+        let Response::SearchResults(hits) = response else {
+            return Err(format!("{scenario} returned a non-search response").into());
+        };
+        let expected_count = if scenario.ends_with("and_search") {
+            1
+        } else {
+            (config.records as usize).min(100)
+        };
+        if hits.len() != expected_count
+            || hits
+                .windows(2)
+                .any(|pair| pair[0].id.as_str() >= pair[1].id.as_str())
+            || hits.first().map(|hit| hit.id.as_str()) != expected_id
+        {
+            return Err(format!("{scenario} returned incorrect results").into());
+        }
+        measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
+    }
+    Ok(())
+}
+
+async fn verify_fts_documents<E: AsyncKVEngine>(
+    index: &FtsIndex<E>,
+    expected: &[(DocumentId, Vec<u8>)],
+) -> BenchResult<()> {
+    for (id, document) in expected {
+        if index.get_document(id).await?.as_ref() != Some(document) {
+            return Err(format!("FTS document mismatch for {}", id.as_str()).into());
+        }
+    }
+    Ok(())
+}
+
+async fn verify_fts_queries<E: AsyncKVEngine>(
+    index: &FtsIndex<E>,
+    config: &BenchConfig,
+) -> BenchResult<()> {
+    let result_limit =
+        (config.records.saturating_sub(u64::from(config.records > 1)) as usize).min(1000);
+    let common = index
+        .search(FtsQuery::And(vec!["common".into()]), result_limit)
+        .await?;
+    if common.len() != result_limit
+        || common
+            .windows(2)
+            .any(|pair| pair[0].id.as_str() >= pair[1].id.as_str())
+        || common
+            .first()
+            .is_none_or(|hit| hit.id.as_str() != "doc-0000000000000000")
+    {
+        return Err("FTS common-term search returned incorrect count or ordering".into());
+    }
+    let rare = index
+        .search(FtsQuery::And(vec!["rareterm".into()]), 10)
+        .await?;
+    if rare.len() != 1 || rare[0].id.as_str() != "doc-0000000000000000" {
+        return Err("FTS rare-term search returned incorrect hits".into());
+    }
+    let missing = index
+        .search(FtsQuery::And(vec!["notindexed".into()]), 10)
+        .await?;
+    if !missing.is_empty() {
+        return Err("FTS missing-term search returned hits".into());
+    }
+    let and_hits = index
+        .search(FtsQuery::And(vec!["common".into(), "rareterm".into()]), 10)
+        .await?;
+    if and_hits.len() != 1 || and_hits[0].id.as_str() != "doc-0000000000000000" {
+        return Err("FTS AND search returned incorrect hits".into());
+    }
+    let or_hits = index
+        .search(
+            FtsQuery::Or(vec!["common".into(), "rareterm".into()]),
+            result_limit,
+        )
+        .await?;
+    if or_hits.len() != result_limit
+        || or_hits
+            .windows(2)
+            .any(|pair| pair[0].id.as_str() >= pair[1].id.as_str())
+        || or_hits
+            .first()
+            .is_none_or(|hit| hit.id.as_str() != "doc-0000000000000000")
+    {
+        return Err("FTS OR search returned incorrect count or ordering".into());
+    }
+    verify_fts_postings(index).await?;
+    Ok(())
+}
+
+async fn verify_fts_postings<E: AsyncKVEngine>(index: &FtsIndex<E>) -> BenchResult<()> {
+    if !index
+        .search(FtsQuery::And(vec!["revised".into(), "rareterm".into()]), 10)
+        .await?
+        .is_empty()
+    {
+        return Err("FTS overwrite retained a stale posting".into());
+    }
+    if !index
+        .search(FtsQuery::And(vec!["deleteterm".into()]), 10)
+        .await?
+        .is_empty()
+    {
+        return Err("FTS delete retained a posting".into());
+    }
+    Ok(())
+}
+
+async fn bench_fts_queries<E: AsyncKVEngine>(
+    index: &FtsIndex<E>,
+    config: &BenchConfig,
+    sample: usize,
+    measurements: &mut Vec<Measurement>,
+) -> BenchResult<()> {
+    let limit = (config.records.saturating_sub(u64::from(config.records > 1)) as usize).min(1000);
+    for (scenario, query, expected_count) in [
+        (
+            "e2e/fts_search_common",
+            FtsQuery::And(vec!["common".into()]),
+            limit,
+        ),
+        (
+            "e2e/fts_search_rare",
+            FtsQuery::And(vec!["rareterm".into()]),
+            1,
+        ),
+        (
+            "e2e/fts_search_missing",
+            FtsQuery::And(vec!["notindexed".into()]),
+            0,
+        ),
+        (
+            "e2e/fts_search_and",
+            FtsQuery::And(vec!["common".into(), "rareterm".into()]),
+            1,
+        ),
+        (
+            "e2e/fts_search_or",
+            FtsQuery::Or(vec!["common".into(), "rareterm".into()]),
+            limit,
+        ),
+    ] {
+        if !config.includes(scenario) {
+            continue;
+        }
+        let started = Instant::now();
+        let hits = index.search(query, limit.max(1)).await?;
+        let elapsed = started.elapsed();
+        if hits.len() != expected_count
+            || hits
+                .windows(2)
+                .any(|pair| pair[0].id.as_str() >= pair[1].id.as_str())
+            || hits
+                .first()
+                .is_some_and(|hit| hit.id.as_str() != "doc-0000000000000000")
+        {
+            return Err(format!("{scenario} returned incorrect hit count or ordering").into());
+        }
+        measurements.push(Measurement::new(scenario, sample, 1, 0, elapsed));
     }
     Ok(())
 }

@@ -37,6 +37,37 @@ individual writes.
 
 Raft mode is available with `--raft-mode`. See `cargo run -- --help` for CLI options. Raft support is experimental and not production-hardened.
 
+## Full-text search
+
+Single-node CLI mode also supports explicit document indexing:
+
+```text
+DOC PUT article-1 "Rust stores text as UTF-8 bytes"
+DOC GET article-1
+FTS AND "rust text"
+FTS OR "utf-8 bytes"
+DOC DELETE article-1
+```
+
+Document IDs are non-empty. Text is tokenized into Unicode alphanumeric terms,
+lowercased, and deduplicated; search uses exact AND or OR term matching, orders
+results by document ID, and returns at most 100 documents per command. Documents
+must contain valid UTF-8 for indexing. `SET`, `GET`, `DELETE`, and `BATCH` remain
+raw key-value operations and do not update the search index automatically.
+
+The search index and documents persist in a reserved, versioned key namespace
+inside the same database and are updated atomically by document commands. Do
+not use that reserved namespace for raw keys. The index is managed by one open
+`FtsIndex` at a time; separate independently opened writers to the same database
+are not coordinated. The current CLI's Raft backend supports raw key-value
+commands but reports document and search commands as unsupported.
+
+This is exact-term retrieval, not phrase search or a full GIN-compatible
+implementation: it has no ranking, stemming, stop-word processing, or
+compatibility with PostgreSQL GIN. The library API allows search limits up to
+1000; as the current storage scan API materializes each posting list, a limit
+does not bound the work of scanning large matching lists.
+
 ## Benchmark
 
 Run the public storage-module and end-to-end benchmarks with:
