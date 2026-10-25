@@ -14,6 +14,12 @@ const FORMAT_VERSION: u8 = 2;
 const TOKENIZER_VERSION: u8 = 1;
 const MAX_QUERY_TERMS: usize = 32;
 const MAX_LIMIT: usize = 1000;
+pub const MAX_DOCUMENT_BATCH_DOCUMENTS: usize = 256;
+pub const MAX_DOCUMENT_BATCH_INPUT_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_DOCUMENT_BATCH_MUTATION_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_DOCUMENT_BATCH_MUTATIONS: usize = 16_384;
+const WAL_UPDATE_FRAME_OVERHEAD_BYTES: usize = 62;
+const WAL_COMMIT_FRAME_BYTES: usize = 37;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DocumentId(String);
@@ -190,6 +196,151 @@ impl<E: AsyncKVEngine> FtsIndex<E> {
             key: STATS_KEY.to_vec(),
             value: encode_stats(count, total),
         });
+        self.engine.write_batch(operations).await
+    }
+
+    pub async fn put_documents(
+        &mut self,
+        documents: Vec<(DocumentId, Vec<u8>)>,
+    ) -> Result<(), DBError> {
+        if documents.is_empty() {
+            return Ok(());
+        }
+        if documents.len() > MAX_DOCUMENT_BATCH_DOCUMENTS {
+            return Err(DBError::StorageError(
+                "FTS document batch exceeds document limit".into(),
+            ));
+        }
+        let input_bytes = documents.iter().try_fold(0usize, |sum, (_, document)| {
+            sum.checked_add(document.len())
+                .ok_or_else(|| DBError::StorageError("FTS document batch size overflow".into()))
+        })?;
+        if input_bytes > MAX_DOCUMENT_BATCH_INPUT_BYTES {
+            return Err(DBError::StorageError(
+                "FTS document batch exceeds input byte limit".into(),
+            ));
+        }
+
+        let mut final_documents = BTreeMap::new();
+        for (id, document) in documents {
+            let frequencies = {
+                let text = std::str::from_utf8(&document).map_err(|error| {
+                    DBError::StorageError(format!("document is not valid UTF-8: {error}"))
+                })?;
+                tokenize(text)
+            };
+            final_documents.insert(id, (document, frequencies));
+        }
+
+        self.engine.await_pending_writes().await?;
+        let mut old_states = BTreeMap::new();
+        for id in final_documents.keys() {
+            old_states.insert(id.clone(), self.load_document_state(id).await?);
+        }
+        let (mut count, mut total) = self.load_stats().await?;
+        let mut df_deltas: BTreeMap<String, i64> = BTreeMap::new();
+        let mut operations = Vec::new();
+        for (id, (document, frequencies)) in &final_documents {
+            let old = old_states.get(id).expect("state loaded for every batch ID");
+            let old_terms = old.as_ref().map(|(_, terms, _)| terms);
+            let old_length = old.as_ref().map_or(0, |(_, _, length)| *length);
+            let new_length = frequencies.values().try_fold(0u64, |sum, tf| {
+                sum.checked_add(*tf)
+                    .ok_or_else(|| corrupt("document length overflow"))
+            })?;
+            if old.is_none() {
+                count = count
+                    .checked_add(1)
+                    .ok_or_else(|| corrupt("document count overflow"))?;
+            }
+            total = total
+                .checked_sub(old_length)
+                .and_then(|v| v.checked_add(new_length))
+                .ok_or_else(|| corrupt("corpus length overflow"))?;
+            let terms: BTreeSet<_> = old_terms
+                .into_iter()
+                .flat_map(|terms| terms.keys())
+                .chain(frequencies.keys())
+                .collect();
+            for term in terms {
+                let previous = old_terms
+                    .and_then(|terms| terms.get(term))
+                    .copied()
+                    .unwrap_or(0);
+                let next = frequencies.get(term).copied().unwrap_or(0);
+                if previous != next {
+                    if previous == 0 && next != 0 {
+                        *df_deltas.entry(term.clone()).or_default() += 1;
+                    } else if previous != 0 && next == 0 {
+                        *df_deltas.entry(term.clone()).or_default() -= 1;
+                    }
+                    if next == 0 {
+                        operations.push(BatchOperation::Delete {
+                            key: posting_key(term, id)?,
+                        });
+                    } else {
+                        operations.push(BatchOperation::Put {
+                            key: posting_key(term, id)?,
+                            value: next.to_be_bytes().to_vec(),
+                        });
+                    }
+                }
+            }
+            operations.push(BatchOperation::Put {
+                key: document_key(id)?,
+                value: document.clone(),
+            });
+            operations.push(BatchOperation::Put {
+                key: forward_key(id)?,
+                value: encode_terms(frequencies)?,
+            });
+        }
+        for (term, delta) in df_deltas {
+            let current = self.load_df(&term).await?;
+            let updated = if delta >= 0 {
+                current
+                    .checked_add(delta as u64)
+                    .ok_or_else(|| corrupt("document frequency overflow"))?
+            } else {
+                current
+                    .checked_sub(delta.unsigned_abs())
+                    .ok_or_else(|| corrupt("document frequency underflow"))?
+            };
+            if updated == 0 {
+                operations.push(BatchOperation::Delete {
+                    key: df_key(&term)?,
+                });
+            } else {
+                operations.push(BatchOperation::Put {
+                    key: df_key(&term)?,
+                    value: updated.to_be_bytes().to_vec(),
+                });
+            }
+        }
+        operations.push(BatchOperation::Put {
+            key: STATS_KEY.to_vec(),
+            value: encode_stats(count, total),
+        });
+        let mutation_bytes = operations.iter().try_fold(0usize, |sum, operation| {
+            let (key, value_len) = match operation {
+                BatchOperation::Put { key, value } => (key, value.len()),
+                BatchOperation::Delete { key } => (key, 0),
+            };
+            sum.checked_add(key.len())
+                .and_then(|v| v.checked_add(value_len))
+                .and_then(|v| v.checked_add(WAL_UPDATE_FRAME_OVERHEAD_BYTES))
+                .ok_or_else(|| DBError::StorageError("FTS mutation size overflow".into()))
+        })?;
+        let encoded_transaction_bytes = mutation_bytes
+            .checked_add(WAL_COMMIT_FRAME_BYTES)
+            .ok_or_else(|| DBError::StorageError("FTS mutation size overflow".into()))?;
+        if operations.len() > MAX_DOCUMENT_BATCH_MUTATIONS
+            || encoded_transaction_bytes > MAX_DOCUMENT_BATCH_MUTATION_BYTES
+        {
+            return Err(DBError::StorageError(
+                "FTS document batch exceeds mutation limit".into(),
+            ));
+        }
         self.engine.write_batch(operations).await
     }
 

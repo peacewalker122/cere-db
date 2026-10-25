@@ -1,5 +1,6 @@
 mod bm25;
 mod compaction_disk;
+mod document_batches;
 mod fts;
 // mod raft_cluster; // old rust-raft tests removed during openraft migration
 mod batches;

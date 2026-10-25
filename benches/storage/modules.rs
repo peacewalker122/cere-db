@@ -28,7 +28,130 @@ pub async fn run(
     manifest(config, sample, measurements).await?;
     writer(config, sample, measurements).await?;
     compact(config, sample, measurements).await?;
+    fts_put_workloads(config, sample, measurements).await?;
     fts(config, sample, measurements).await?;
+    Ok(())
+}
+
+async fn fts_put_workloads(
+    config: &BenchConfig,
+    sample: usize,
+    measurements: &mut Vec<Measurement>,
+) -> BenchResult<()> {
+    let sizes = [1usize, 16, 64, 256];
+    if !sizes.iter().any(|size| {
+        config.includes(&format!("fts/put_sequential_{size}"))
+            || config.includes(&format!("fts/put_batch_{size}"))
+    }) {
+        return Ok(());
+    }
+    if config.records > 65_536 {
+        return Err("FTS matched-put scenarios are capped at 65,536 documents".into());
+    }
+    let documents: Vec<_> = (0..config.records)
+        .map(|number| {
+            let id = DocumentId::new(format!("doc-{number:016x}"))?;
+            let text = if number == 0 {
+                format!("common shared rareterm payload-{number}")
+            } else {
+                format!("common shared payload-{number}")
+            };
+            Ok((id, text.into_bytes()))
+        })
+        .collect::<Result<_, ceredb::error::DBError>>()?;
+    let input_bytes = documents
+        .iter()
+        .map(|(_, text)| text.len() as u64)
+        .sum::<u64>();
+
+    for size in sizes {
+        for batch in [false, true] {
+            let scenario = match (batch, size) {
+                (false, 1) => "fts/put_sequential_1",
+                (false, 16) => "fts/put_sequential_16",
+                (false, 64) => "fts/put_sequential_64",
+                (false, _) => "fts/put_sequential_256",
+                (true, 1) => "fts/put_batch_1",
+                (true, 16) => "fts/put_batch_16",
+                (true, 64) => "fts/put_batch_64",
+                (true, _) => "fts/put_batch_256",
+            };
+            if !config.includes(scenario) {
+                continue;
+            }
+            let directory = config.temporary_directory()?;
+            let engine = KV2::open(directory.path(), storage_config(config)).await?;
+            let mut index = FtsIndex::open(engine).await?;
+            let batch_inputs = batch.then(|| {
+                documents
+                    .chunks(size)
+                    .map(<[(DocumentId, Vec<u8>)]>::to_vec)
+                    .collect::<Vec<_>>()
+            });
+            let sequential_inputs = (!batch).then(|| {
+                documents
+                    .iter()
+                    .map(|(id, document)| (id.clone(), document.clone()))
+                    .collect::<Vec<_>>()
+            });
+            let started = Instant::now();
+            if let Some(groups) = batch_inputs {
+                for group in groups {
+                    index.put_documents(group).await?;
+                }
+            } else if let Some(inputs) = sequential_inputs {
+                for (id, document) in inputs {
+                    index.put_document(id, document).await?;
+                }
+            }
+            let elapsed = started.elapsed();
+            for (id, document) in &documents {
+                require(
+                    index.get_document(id).await?.as_ref() == Some(document),
+                    "FTS put benchmark document mismatch",
+                )?;
+            }
+            let expected = documents.len().min(1000);
+            let hits = index
+                .search(FtsQuery::And(vec!["common".into()]), expected)
+                .await?;
+            require(
+                hits.len() == expected,
+                "FTS put benchmark search count mismatch",
+            )?;
+            require(
+                hits.first()
+                    .is_none_or(|hit| hit.id.as_str() == "doc-0000000000000000"),
+                "FTS put benchmark search ordering mismatch",
+            )?;
+            let ranked = index
+                .search_ranked(
+                    FtsQuery::And(vec!["common".into()]),
+                    expected,
+                    Bm25Config::default(),
+                )
+                .await?;
+            require(
+                ranked.len() == expected
+                    && ranked
+                        .iter()
+                        .all(|hit| hit.score.is_finite() && hit.score > 0.0)
+                    && ranked.windows(2).all(|pair| {
+                        pair[0].score > pair[1].score
+                            || (pair[0].score == pair[1].score
+                                && pair[0].id.as_str() < pair[1].id.as_str())
+                    }),
+                "FTS put benchmark ranked search mismatch",
+            )?;
+            measurements.push(Measurement::new(
+                scenario,
+                sample,
+                documents.len() as u64,
+                input_bytes,
+                elapsed,
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -849,12 +972,84 @@ async fn writer(
         "writer/put",
         "writer/flush",
         "sstable/read_blocks",
-        "writer/batch_",
+        "writer/batch_1",
+        "writer/batch_16",
+        "writer/batch_64",
+        "writer/batch_256",
+        "writer/concurrent_1",
+        "writer/concurrent_4",
+        "writer/concurrent_16",
     ]
     .iter()
     .any(|name| config.includes(name))
     {
         return Ok(());
+    }
+    for writers in [1usize, 4, 16] {
+        let scenario = match writers {
+            1 => "writer/concurrent_1",
+            4 => "writer/concurrent_4",
+            _ => "writer/concurrent_16",
+        };
+        if !config.includes(scenario) {
+            continue;
+        }
+        if config.logical_bytes() > 256 * 1024 * 1024 {
+            return Err("concurrent writer fixture exceeds the 256 MiB input budget".into());
+        }
+        let directory = config.temporary_directory()?;
+        let (writer, _) = make_writer(directory.path(), storage_config(config)).await?;
+        let worker_inputs: Vec<Vec<_>> = (0..writers)
+            .map(|worker| {
+                let first = config.records * worker as u64 / writers as u64;
+                let end = config.records * (worker + 1) as u64 / writers as u64;
+                (first..end)
+                    .map(|index| (config.key(index), config.value(index)))
+                    .collect()
+            })
+            .collect();
+        let operations = config.records;
+        let started = Instant::now();
+        let mut tasks = tokio::task::JoinSet::new();
+        for work in worker_inputs {
+            let writer = writer.clone();
+            tasks.spawn(async move {
+                for (key, value) in work {
+                    writer.put(key, value).await?;
+                }
+                Ok::<_, ceredb::error::DBError>(())
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result??;
+        }
+        let elapsed = started.elapsed();
+        let memtable = writer.active_memtable_handle();
+        require(
+            memtable.len() == operations as usize,
+            "concurrent writer memtable length mismatch",
+        )?;
+        for index in 0..operations {
+            let key = config.key(index);
+            let actual = memtable
+                .range((key.clone(), 0)..=(key, u64::MAX))
+                .next()
+                .ok_or("concurrent writer record missing")?;
+            require(
+                actual.value().value == config.value(index),
+                "concurrent writer value mismatch",
+            )?;
+        }
+        measurements.push(
+            Measurement::new(
+                scenario,
+                sample,
+                config.records,
+                config.logical_bytes(),
+                elapsed,
+            )
+            .with_disk(DiskUsage::inspect(directory.path())?),
+        );
     }
     for batch_size in [1u64, 16, 64, 256] {
         let scenario = match batch_size {

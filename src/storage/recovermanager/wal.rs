@@ -26,6 +26,8 @@ use crate::{
 const LEGACY_WAL_VERSION: u64 = 1;
 const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024;
 const FRAME_HEADER_SIZE: usize = 20;
+const MAX_GROUP_COUNT: usize = 1024;
+const MAX_GROUP_ENCODED_SIZE: usize = 256 * 1024 * 1024;
 
 pub struct WALManager {
     state: Mutex<WriterState>,
@@ -35,6 +37,8 @@ pub struct WALManager {
     checkpoint_owner: bool,
     checkpoint_owner_registered: AtomicBool,
     checkpoint_token: OnceLock<Arc<CheckpointOwner>>,
+    #[cfg(test)]
+    sync_data_count: AtomicU64,
 }
 
 pub(crate) struct CheckpointOwner {
@@ -210,6 +214,8 @@ impl WALManager {
             checkpoint_owner,
             checkpoint_owner_registered: AtomicBool::new(false),
             checkpoint_token: OnceLock::new(),
+            #[cfg(test)]
+            sync_data_count: AtomicU64::new(0),
         })
     }
 
@@ -248,45 +254,99 @@ impl WALManager {
         if !owns_checkpoint {
             self.mark_untracked_mutation();
         }
-        self.write_transaction_inner(commands).await
+        self.write_engine_transactions(vec![commands], owner).await
+    }
+
+    pub(crate) async fn write_engine_transactions(
+        &self,
+        groups: Vec<Vec<LogCommand>>,
+        owner: Option<&Arc<CheckpointOwner>>,
+    ) -> Result<(), DBError> {
+        let owns_checkpoint = self
+            .checkpoint_token
+            .get()
+            .is_some_and(|token| owner.is_some_and(|owner| Arc::ptr_eq(token, owner)));
+        if !owns_checkpoint {
+            self.mark_untracked_mutation();
+        }
+        self.write_transactions_inner(groups).await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_data_count(&self) -> u64 {
+        self.sync_data_count
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn write_transaction_inner(&self, commands: Vec<LogCommand>) -> Result<(), DBError> {
-        if commands.is_empty() {
+        self.write_transactions_inner(vec![commands]).await
+    }
+
+    async fn write_transactions_inner(&self, groups: Vec<Vec<LogCommand>>) -> Result<(), DBError> {
+        if groups.is_empty() {
+            return Ok(());
+        }
+        if groups.len() > MAX_GROUP_COUNT {
             return Err(DBError::StorageError(
-                "WAL transaction must contain an update".into(),
+                "WAL transaction group exceeds count limit".into(),
             ));
         }
         let mut state = self.state.lock().await;
         ensure_healthy(&state)?;
-        let transaction_id = state.next_lsn;
         let mut bytes = Vec::new();
-        let mut previous_lsn = 0;
         let mut next_lsn = state.next_lsn;
-        for command in commands {
-            if command.record_type == RecordType::Delete && !command.value.is_empty() {
-                return Err(DBError::StorageError("Delete contains a value".into()));
+        for commands in groups {
+            if commands.is_empty() {
+                return Err(DBError::StorageError(
+                    "WAL transaction must contain an update".into(),
+                ));
             }
-            bytes.extend(encode_frame(&Frame {
+            let transaction_id = next_lsn;
+            let mut previous_lsn = 0;
+            let mut group_size = 0usize;
+            for command in commands {
+                if command.record_type == RecordType::Delete && !command.value.is_empty() {
+                    return Err(DBError::StorageError("Delete contains a value".into()));
+                }
+                let frame = encode_frame(&Frame {
+                    lsn: next_lsn,
+                    transaction_id,
+                    previous_lsn,
+                    record: TransactionRecord::Update(command),
+                })?;
+                group_size = group_size
+                    .checked_add(frame.len())
+                    .ok_or_else(|| DBError::StorageError("WAL transaction size overflow".into()))?;
+                bytes.extend(frame);
+                if group_size > MAX_GROUP_ENCODED_SIZE {
+                    return Err(DBError::StorageError(
+                        "WAL transaction exceeds group limit".into(),
+                    ));
+                }
+                previous_lsn = next_lsn;
+                next_lsn = next_lsn
+                    .checked_add(1)
+                    .ok_or_else(|| DBError::StorageError("WAL LSN exhausted".into()))?;
+            }
+            let commit = encode_frame(&Frame {
                 lsn: next_lsn,
                 transaction_id,
                 previous_lsn,
-                record: TransactionRecord::Update(command),
-            })?);
-            previous_lsn = next_lsn;
+                record: TransactionRecord::Commit,
+            })?;
+            group_size = group_size
+                .checked_add(commit.len())
+                .ok_or_else(|| DBError::StorageError("WAL transaction size overflow".into()))?;
+            if group_size > MAX_GROUP_ENCODED_SIZE {
+                return Err(DBError::StorageError(
+                    "WAL transaction exceeds group limit".into(),
+                ));
+            }
+            bytes.extend(commit);
             next_lsn = next_lsn
                 .checked_add(1)
                 .ok_or_else(|| DBError::StorageError("WAL LSN exhausted".into()))?;
         }
-        bytes.extend(encode_frame(&Frame {
-            lsn: next_lsn,
-            transaction_id,
-            previous_lsn,
-            record: TransactionRecord::Commit,
-        })?);
-        let following_lsn = next_lsn
-            .checked_add(1)
-            .ok_or_else(|| DBError::StorageError("WAL LSN exhausted".into()))?;
         state.poisoned = true;
         if state.size > WAL_HEADER_SIZE
             && state.size.saturating_add(bytes.len() as u64) > self.max_segment_size
@@ -295,8 +355,11 @@ impl WALManager {
         }
         state.file.write_all(&bytes).await?;
         state.file.sync_data().await?;
+        #[cfg(test)]
+        self.sync_data_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         state.size += bytes.len() as u64;
-        state.next_lsn = following_lsn;
+        state.next_lsn = next_lsn;
         state.poisoned = false;
         Ok(())
     }

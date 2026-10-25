@@ -1,0 +1,1 @@
+Initial environment capture command was corrected to use the explicit rustc path; no benchmark command had started.

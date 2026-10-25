@@ -62,6 +62,7 @@ pub struct KV2 {
 
 impl KV2 {
     pub async fn shutdown(&mut self) -> Result<(), DBError> {
+        self.write_component.await_pending_writes().await;
         self.worker_stop.cancel();
         if let Some(worker) = self.compaction_worker.take() {
             worker

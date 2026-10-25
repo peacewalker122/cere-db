@@ -1,0 +1,4 @@
+32-record smoke, each case run separately and sequentially against the same fixed release binary, --suite modules, --value-bytes 64, --repetitions 1, --warmup-runs 0, --flush-bytes 16384, --wal-segment-bytes 1048576:
+--filter fts/put_sequential_1
+--filter fts/put_batch_1
+--filter writer/concurrent_16

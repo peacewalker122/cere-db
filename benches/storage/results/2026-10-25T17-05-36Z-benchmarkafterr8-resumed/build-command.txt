@@ -1,0 +1,1 @@
+PATH="/home/peacewalker/.cargo/bin:/home/peacewalker/.local/bin:$PATH" rtk cargo bench --bench storage --no-run

@@ -10,6 +10,8 @@ static FAIL_SYNC_ONCE: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync:
 #[cfg(test)]
 static SYNCED_DIRECTORIES: std::sync::Mutex<Vec<std::path::PathBuf>> =
     std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+static TEST_HOOK_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub(crate) async fn create_dir_all_durable(path: &Path) -> Result<(), DBError> {
     if let Ok(metadata) = tokio::fs::metadata(path).await {
@@ -140,10 +142,11 @@ pub(crate) async fn sync_parent(path: &Path) -> Result<(), DBError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FAIL_SYNC_ONCE, SYNCED_DIRECTORIES, create_dir_all_durable};
+    use super::{FAIL_SYNC_ONCE, SYNCED_DIRECTORIES, TEST_HOOK_LOCK, create_dir_all_durable};
 
     #[tokio::test]
     async fn parent_traversal_detours_are_synced_and_retry_the_complete_chain() {
+        let _hook_guard = TEST_HOOK_LOCK.lock().await;
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("transit/deep/../../R/retry/a/b/db");
         let detour_parent = root.path().join("transit");
@@ -177,6 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn retry_syncs_existing_ancestors_after_initial_failure() {
+        let _hook_guard = TEST_HOOK_LOCK.lock().await;
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("retry/a/b/db");
         let failed_parent = root.path().join("retry/a");
@@ -197,6 +201,7 @@ mod tests {
 
     #[tokio::test]
     async fn relative_and_symlink_paths_sync_resolved_ancestry() {
+        let _hook_guard = TEST_HOOK_LOCK.lock().await;
         let root = tempfile::Builder::new().tempdir_in(".").unwrap();
         let relative = root.path().join("relative/a/b");
         let failed_parent = root
@@ -239,6 +244,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn nested_symlink_targets_and_dotdot_sync_every_alias_ancestry() {
+        let _hook_guard = TEST_HOOK_LOCK.lock().await;
         use std::os::unix::fs::symlink;
 
         let root = tempfile::tempdir().unwrap();

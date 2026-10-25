@@ -76,6 +76,26 @@ state, or return an error when they cannot guarantee that. The default is
 unsupported, so custom engines used with `FtsIndex` must implement the barrier;
 it does not prevent writes admitted after the barrier from racing.
 
+The public `FtsIndex::put_documents` method indexes a document batch atomically
+in one format-2 write batch. It accepts at most 256 documents, 4 MiB of input
+document bytes, 8 MiB of encoded mutations, and 16,384 mutations. All input
+must be valid UTF-8; repeated document IDs use the final occurrence in the
+batch. The method returns only after the underlying batch's durable completion,
+so a successful return is the acknowledgment for the whole batch. Cancellation
+before that acknowledgment does not establish whether the write committed;
+callers that need certainty should reopen/read the affected IDs rather than
+assuming cancellation rolled it back. Larger logical imports should be split
+into multiple calls and are therefore not atomic as one whole import.
+
+Use document batches when one caller has a set of FTS documents to index:
+tokenization and index-state updates are prepared for the batch before one
+atomic storage write. Group commit instead benefits overlapping independent
+durable writer calls by coordinating their WAL synchronization; sequential FTS
+batching and concurrent writer group commit are different workload shapes.
+Neither guarantees a performance improvement. Raw `SET`/`BATCH` key-value
+operations still do not update the FTS index; use `DOC PUT` or the FTS library
+API for searchable documents.
+
 This is exact-term retrieval, not phrase search or a full GIN-compatible
 implementation: it has no stemming, stop-word processing, or compatibility
 with PostgreSQL GIN. Corpus statistics are updated in the same atomic batch as

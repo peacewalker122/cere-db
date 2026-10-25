@@ -103,6 +103,34 @@ is excluded from query timing. Their results should not be presented as a
 direct speed comparison with warm `e2e/*` query calls, which have a different
 storage lifecycle and placement.
 
+`fts/put_sequential_{1,16,64,256}` and `fts/put_batch_{1,16,64,256}` are
+matched fresh-index workloads: each loads the same UTF-8 documents with
+`put_document` calls or `put_documents` calls of at most the named size. The
+suffix is the maximum documents per batch, not the operation count; reported
+operations count documents, and reported logical bytes are the original UTF-8
+document bytes. Fixture construction, index open, exact document round-trips,
+Boolean search validation, and cleanup are outside timing. Tokenization and
+all other work performed by the public method remain timed. A batch-size-1
+scenario is useful as a public-call control, but is not a distinct algorithmic
+baseline from sequential puts. Batch input limits are 256 documents, 4 MiB of
+input document bytes, 8 MiB of encoded mutations, and 16,384 mutations per
+call; input exceeding a limit fails rather than being split by the API. This
+harness explicitly splits larger corpora at the requested maximum batch size.
+
+`writer/put` and `writer/concurrent_{1,4,16}` compare the public
+`WriteComponent::put` durable acknowledgement path over the same unique keys
+and values. Concurrent scenarios clone the public writer, partition input
+across a bounded number of Tokio tasks, include task scheduling and joining in
+the timer, and verify the complete shared memtable after timing. All variants
+count individual records and target the normal durable write behavior; they do
+not use private synchronization counters or test-only hooks. A timing result
+alone does not prove that multiple writes shared one sync: only core tests that
+observe the group coordinator can establish that behavior. Concurrent writes
+may benefit from group commit when independent callers overlap; a sequential
+FTS batch is a different workload that amortizes index-state work within one
+public call. Do not infer a speedup until the core group-commit gate passes and
+matched runs on the same machine confirm one.
+
 Durable write scenarios use the normal sync behavior. CPU-only codec/filter
 scenarios stay separate from disk I/O. Warmup runs are discarded. The OS page
 cache remains enabled; reopening is not a cold-cache or process-crash experiment.
@@ -157,6 +185,11 @@ multi-node networking remain outside this storage harness.
   synthetic public metadata fixtures; referenced SSTables are not read.
 - `manifest/reopen`: one full manifest reopen/replay.
 - `writer/put`: one `WriteComponent::put` per input, including its WAL sync.
+  `writer/concurrent_{1,4,16}` uses clones of that same public writer, with
+  disjoint key partitions and the same record/value corpus. Task creation,
+  caller scheduling, per-record durable calls, and task joins are timed;
+  fixture creation and full memtable verification are not. These measurements
+  describe observed throughput only and cannot prove sync grouping.
   `writer/batch_{1,16,64,256}` measures the public writer batch API in groups of
   the named maximum mutation size; each sample's operation count is mutations,
   while the number of batch calls is determined by the group size.

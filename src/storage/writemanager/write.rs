@@ -10,6 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 use crossbeam_skiplist::SkipMap;
 use tokio::io::AsyncWriteExt;
 
+use super::admission::{AdmissionQueue, MAX_DRAIN_BYTES, MAX_DRAIN_REQUESTS};
 use crate::api::api::BatchOperation;
 use crate::error::DBError;
 use crate::storage::{
@@ -23,6 +24,9 @@ use crate::storage::{
     sstable_codec::SSTableCodec,
     writemanager::block::{Block, BlockBuilder, BlockBuilderState},
 };
+
+const MAX_WAL_FRAME_BYTES: usize = 64 * 1024 * 1024;
+const MAX_WAL_TRANSACTION_BYTES: usize = 256 * 1024 * 1024;
 
 /// Result of a checkpoint operation
 #[derive(Debug, Clone)]
@@ -60,6 +64,7 @@ pub struct WriteComponent {
     memtable_size: Arc<std::sync::atomic::AtomicUsize>,
     sequence_number: Arc<std::sync::atomic::AtomicU64>,
     writer_lock: Arc<tokio::sync::Mutex<()>>,
+    admission: AdmissionQueue,
     checkpoint_owner: Option<Arc<crate::storage::recovermanager::wal::CheckpointOwner>>,
 
     sstable_dir: PathBuf,
@@ -75,6 +80,7 @@ impl Clone for WriteComponent {
             memtable_size: Arc::clone(&self.memtable_size),
             sequence_number: Arc::clone(&self.sequence_number),
             writer_lock: Arc::clone(&self.writer_lock),
+            admission: self.admission.clone(),
             checkpoint_owner: self.checkpoint_owner.clone(),
             sstable_dir: self.sstable_dir.clone(),
             wal_manager: Arc::clone(&self.wal_manager),
@@ -122,6 +128,7 @@ impl WriteComponent {
             memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(sequence_number)),
             writer_lock: Arc::new(tokio::sync::Mutex::new(())),
+            admission: AdmissionQueue::new(),
             checkpoint_owner,
             sstable_dir,
             wal_manager,
@@ -142,6 +149,7 @@ impl WriteComponent {
             memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             writer_lock: Arc::new(tokio::sync::Mutex::new(())),
+            admission: AdmissionQueue::new(),
             checkpoint_owner,
             sstable_dir: PathBuf::from("data"),
             wal_manager,
@@ -163,53 +171,107 @@ impl WriteComponent {
         if operations.is_empty() {
             return Ok(());
         }
-        let writer = Arc::clone(&self.writer_lock).lock_owned().await;
-        let component = self.clone();
-        tokio::spawn(async move { component.write_batch_committed(operations, writer).await })
+        let estimated_bytes = validate_batch(&operations)?;
+        let admission = self.admission.enqueue(operations, estimated_bytes).await?;
+        if admission.should_start_runner {
+            let component = self.clone();
+            tokio::spawn(async move { component.run_write_admission().await });
+        }
+        admission
+            .completion
             .await
-            .map_err(|error| DBError::StorageError(format!("batch writer task failed: {error}")))?
+            .map_err(|_| DBError::StorageError("write runner stopped before completion".into()))?
     }
 
     pub async fn await_pending_writes(&self) {
+        if let Ok(ticket) = self.admission.last_admitted_ticket() {
+            let _ = self.admission.await_completed_through(ticket).await;
+        }
         let _writer = Arc::clone(&self.writer_lock).lock_owned().await;
     }
 
-    async fn write_batch_committed(
-        &self,
-        operations: Vec<BatchOperation>,
-        _writer: tokio::sync::OwnedMutexGuard<()>,
-    ) -> Result<(), DBError> {
-        if operations.is_empty() {
-            return Ok(());
-        }
-        let current = self.current_sequence_number();
-        let count = u64::try_from(operations.len())
-            .map_err(|_| DBError::StorageError("batch sequence exhausted".into()))?;
-        let final_sequence = current
-            .checked_add(count)
-            .ok_or_else(|| DBError::StorageError("batch sequence exhausted".into()))?;
-        let mut commands = Vec::with_capacity(operations.len());
-        for (offset, operation) in operations.iter().enumerate() {
-            let lsn = current + offset as u64 + 1;
-            let command = match operation {
-                BatchOperation::Put { key, value } => {
-                    LogCommand::new(RecordType::Put, key.clone(), value.clone(), lsn)
-                }
-                BatchOperation::Delete { key } => {
-                    LogCommand::new(RecordType::Delete, key.clone(), Vec::new(), lsn)
-                }
+    async fn run_write_admission(&self) {
+        loop {
+            tokio::task::yield_now().await;
+            let requests = match self
+                .admission
+                .drain_ready(MAX_DRAIN_REQUESTS, MAX_DRAIN_BYTES)
+            {
+                Ok(Some(requests)) => requests,
+                Ok(None) | Err(_) => return,
             };
-            commands.push(command);
+            let _writer = Arc::clone(&self.writer_lock).lock_owned().await;
+            let current = self.current_sequence_number();
+            let mut next_lsn = current;
+            let mut groups = Vec::with_capacity(requests.len());
+            let mut build_error = None;
+            for request in &requests {
+                let mut commands = Vec::with_capacity(request.operations.len());
+                for operation in &request.operations {
+                    next_lsn = match next_lsn.checked_add(1) {
+                        Some(lsn) => lsn,
+                        None => {
+                            build_error = Some("batch sequence exhausted".to_string());
+                            break;
+                        }
+                    };
+                    let command = match operation {
+                        BatchOperation::Put { key, value } => {
+                            LogCommand::new(RecordType::Put, key.clone(), value.clone(), next_lsn)
+                        }
+                        BatchOperation::Delete { key } => {
+                            LogCommand::new(RecordType::Delete, key.clone(), Vec::new(), next_lsn)
+                        }
+                    };
+                    commands.push(command);
+                }
+                if build_error.is_some() {
+                    break;
+                }
+                groups.push(commands);
+            }
+            let result = if let Some(message) = build_error {
+                Err(DBError::StorageError(message))
+            } else {
+                self.wal_manager
+                    .write_engine_transactions(groups.clone(), self.checkpoint_owner.as_ref())
+                    .await
+                    .map(|()| {
+                        for commands in groups {
+                            for command in commands {
+                                self.append_to_memtable(
+                                    command.key,
+                                    command.value,
+                                    command.record_type,
+                                    command.lsn,
+                                );
+                            }
+                        }
+                        self.sequence_number
+                            .store(next_lsn, std::sync::atomic::Ordering::SeqCst);
+                    })
+            };
+            for request in requests {
+                let request_result = result.as_ref().map(|()| ()).map_err(Self::clone_db_error);
+                let _ = self.admission.complete(request, request_result);
+            }
         }
-        self.wal_manager
-            .write_engine_transaction(commands.clone(), self.checkpoint_owner.as_ref())
-            .await?;
-        for command in commands {
-            self.append_to_memtable(command.key, command.value, command.record_type, command.lsn);
+    }
+
+    fn clone_db_error(error: &DBError) -> DBError {
+        match error {
+            DBError::IO(error) => DBError::IO(match error.raw_os_error() {
+                Some(code) => std::io::Error::from_raw_os_error(code),
+                None => std::io::Error::new(error.kind(), error.to_string()),
+            }),
+            DBError::TryIntoError(_) => {
+                DBError::TryIntoError(<[u8; 2]>::try_from(&[0u8][..]).unwrap_err())
+            }
+            DBError::Corrupted(message) => DBError::Corrupted(message.clone()),
+            DBError::MutexPoisoned(message) => DBError::MutexPoisoned(message.clone()),
+            DBError::StorageError(message) => DBError::StorageError(message.clone()),
+            DBError::NotFound => DBError::NotFound,
         }
-        self.sequence_number
-            .store(final_sequence, std::sync::atomic::Ordering::SeqCst);
-        Ok(())
     }
 
     /// Apply a committed replicated command to memtable.
@@ -217,6 +279,9 @@ impl WriteComponent {
     /// This path intentionally does not write to WAL, because the entry is
     /// already durable via raft/WAL replication flow.
     pub async fn apply_replicated_command(&self, cmd: LogCommand) {
+        if let Ok(ticket) = self.admission.last_admitted_ticket() {
+            let _ = self.admission.await_completed_through(ticket).await;
+        }
         self.wal_manager.mark_untracked_mutation();
         let _writer = self.writer_lock.lock().await;
         let normalized_value = if cmd.record_type == RecordType::Delete {
@@ -244,6 +309,8 @@ impl WriteComponent {
     }
 
     pub async fn flush_active_memtable(&mut self) -> Result<CheckpointResult, DBError> {
+        let ticket = self.admission.last_admitted_ticket()?;
+        self.admission.await_completed_through(ticket).await?;
         let writer_lock = Arc::clone(&self.writer_lock);
         let _writer = writer_lock.lock().await;
         let snapshot = Arc::new(SkipMap::new());
@@ -506,6 +573,35 @@ impl WriteComponent {
     }
 }
 
+fn validate_batch(operations: &[BatchOperation]) -> Result<usize, DBError> {
+    let mut transaction_bytes = 37usize;
+    for operation in operations {
+        let (key, value) = match operation {
+            BatchOperation::Put { key, value } => (key, value.as_slice()),
+            BatchOperation::Delete { key } => (key, &[][..]),
+        };
+        let frame_payload = 42usize
+            .checked_add(key.len())
+            .and_then(|size| size.checked_add(value.len()))
+            .ok_or_else(|| DBError::StorageError("WAL frame size overflow".into()))?;
+        if frame_payload > MAX_WAL_FRAME_BYTES {
+            return Err(DBError::StorageError("WAL frame exceeds 64 MiB".into()));
+        }
+        let frame_bytes = 20usize
+            .checked_add(frame_payload)
+            .ok_or_else(|| DBError::StorageError("WAL frame size overflow".into()))?;
+        transaction_bytes = transaction_bytes
+            .checked_add(frame_bytes)
+            .ok_or_else(|| DBError::StorageError("WAL transaction size overflow".into()))?;
+        if transaction_bytes > MAX_WAL_TRANSACTION_BYTES {
+            return Err(DBError::StorageError(
+                "WAL transaction exceeds group limit".into(),
+            ));
+        }
+    }
+    Ok(transaction_bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,6 +634,34 @@ mod tests {
             0,
             Arc::new(crate::storage::config::StorageConfig::default()),
         )
+    }
+
+    #[test]
+    fn cloned_db_errors_preserve_variants_and_io_details() {
+        let os_error =
+            WriteComponent::clone_db_error(&DBError::IO(std::io::Error::from_raw_os_error(5)));
+        match os_error {
+            DBError::IO(error) => {
+                assert_eq!(error.kind(), std::io::Error::from_raw_os_error(5).kind());
+                assert_eq!(error.raw_os_error(), Some(5));
+            }
+            error => panic!("unexpected cloned error: {error:?}"),
+        }
+
+        assert!(matches!(
+            WriteComponent::clone_db_error(&DBError::NotFound),
+            DBError::NotFound
+        ));
+        assert!(matches!(
+            WriteComponent::clone_db_error(&DBError::Corrupted("bad checksum".into())),
+            DBError::Corrupted(message) if message == "bad checksum"
+        ));
+        assert!(matches!(
+            WriteComponent::clone_db_error(&DBError::TryIntoError(
+                <[u8; 2]>::try_from(&[0u8][..]).unwrap_err()
+            )),
+            DBError::TryIntoError(_)
+        ));
     }
 
     #[tokio::test]
@@ -1102,31 +1226,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_batch_waiting_for_writer_lock_is_not_admitted() {
+    async fn cancelled_batch_waiting_for_admission_capacity_is_not_admitted() {
         let directory = tempfile::tempdir().unwrap();
         let component = build_write_component(directory.path()).await;
         let held = Arc::clone(&component.writer_lock).lock_owned().await;
+        let mut tasks = Vec::new();
+        for index in 0..super::super::admission::MAX_ADMITTED_REQUESTS {
+            let writer = component.clone();
+            tasks.push(tokio::spawn(async move {
+                writer
+                    .put(format!("key-{index}").into_bytes(), b"value".to_vec())
+                    .await
+            }));
+        }
+        while component.admission.last_admitted_ticket().unwrap()
+            < u64::from(super::super::admission::MAX_ADMITTED_REQUESTS)
+        {
+            tokio::task::yield_now().await;
+        }
         let writer = component.clone();
-        let task = tokio::spawn(async move {
+        let waiting = tokio::spawn(async move {
             writer
-                .write_batch(vec![BatchOperation::Put {
-                    key: b"cancelled".to_vec(),
-                    value: b"value".to_vec(),
-                }])
+                .put(b"not-admitted".to_vec(), b"value".to_vec())
                 .await
         });
         tokio::task::yield_now().await;
-        task.abort();
+        waiting.abort();
+        let _ = waiting.await;
         drop(held);
-        tokio::task::yield_now().await;
-        assert_eq!(component.current_sequence_number(), 0);
-        assert!(component.active_memtable_handle().is_empty());
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+        assert_eq!(
+            component.admission.last_admitted_ticket().unwrap(),
+            u64::from(super::super::admission::MAX_ADMITTED_REQUESTS)
+        );
+        assert_eq!(
+            component.current_sequence_number(),
+            u64::from(super::super::admission::MAX_ADMITTED_REQUESTS)
+        );
     }
 
     #[tokio::test]
     async fn cancelled_admitted_batch_finishes_publication() {
         let directory = tempfile::tempdir().unwrap();
         let component = build_write_component(directory.path()).await;
+        let held = Arc::clone(&component.writer_lock).lock_owned().await;
         let writer = component.clone();
         let task = tokio::spawn(async move {
             writer
@@ -1136,10 +1281,122 @@ mod tests {
                 }])
                 .await
         });
-        tokio::task::yield_now().await;
+        while component.admission.last_admitted_ticket().unwrap() == 0 {
+            tokio::task::yield_now().await;
+        }
         task.abort();
-        let _guard = Arc::clone(&component.writer_lock).lock_owned().await;
+        let _ = task.await;
+        drop(held);
+        component.await_pending_writes().await;
         assert_eq!(component.current_sequence_number(), 1);
         assert_eq!(component.active_memtable_handle().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_share_wal_sync_and_publish_distinct_sequences() {
+        let directory = tempfile::tempdir().unwrap();
+        let component = build_write_component(directory.path()).await;
+        let start = Arc::new(tokio::sync::Barrier::new(17));
+        let mut tasks = Vec::new();
+        for index in 0..16u8 {
+            let writer = component.clone();
+            let start = Arc::clone(&start);
+            tasks.push(tokio::spawn(async move {
+                start.wait().await;
+                writer
+                    .put(vec![index], vec![index, index.wrapping_add(1)])
+                    .await
+            }));
+        }
+        start.wait().await;
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+        assert!(component.wal_manager.sync_data_count() < 16);
+        assert_eq!(component.current_sequence_number(), 16);
+        let mut lsns: Vec<_> = component
+            .active_memtable_handle()
+            .iter()
+            .map(|entry| entry.key().1)
+            .collect();
+        lsns.sort_unstable();
+        assert_eq!(lsns, (1..=16).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn flush_barrier_includes_admitted_writes_before_checkpointing() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut component = build_write_component(directory.path()).await;
+        let held = Arc::clone(&component.writer_lock).lock_owned().await;
+        let writer = component.clone();
+        let write = tokio::spawn(async move {
+            writer
+                .put(b"before-flush".to_vec(), b"durable".to_vec())
+                .await
+        });
+        while component.admission.last_admitted_ticket().unwrap() == 0 {
+            tokio::task::yield_now().await;
+        }
+        let manifest = Arc::clone(&component.manifest_manager);
+        let flush = tokio::spawn(async move { component.flush_active_memtable().await });
+        tokio::task::yield_now().await;
+        assert!(!flush.is_finished());
+        drop(held);
+        write.await.unwrap().unwrap();
+        let checkpoint = flush.await.unwrap().unwrap();
+        assert_eq!(checkpoint.record_count, 1);
+        assert_eq!(
+            manifest
+                .snapshot()
+                .await
+                .recovery_checkpoint
+                .unwrap()
+                .committed_sequence,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_ticket_order_matches_published_sequence_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let component = build_write_component(directory.path()).await;
+        let mut completions = Vec::new();
+        let mut expected = Vec::new();
+        for key in 0..12u8 {
+            let request = component
+                .admission
+                .enqueue(
+                    vec![BatchOperation::Put {
+                        key: vec![key],
+                        value: vec![key],
+                    }],
+                    64,
+                )
+                .await
+                .unwrap();
+            expected.push((vec![key], request.ticket));
+            completions.push(request.completion);
+        }
+        let writer = component.clone();
+        tokio::spawn(async move { writer.run_write_admission().await });
+        for completion in completions {
+            completion.await.unwrap().unwrap();
+        }
+        let memtable = component.active_memtable_handle();
+        for (key, ticket) in expected {
+            let entry = memtable.iter().find(|entry| entry.key().0 == key).unwrap();
+            assert_eq!(entry.key().1, ticket);
+        }
+        assert_eq!(component.wal_manager.sync_data_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn batch_limits_are_rejected_before_admission() {
+        let too_large = vec![BatchOperation::Put {
+            key: vec![0; MAX_WAL_FRAME_BYTES],
+            value: Vec::new(),
+        }];
+        assert!(validate_batch(&too_large).is_err());
+        assert_eq!(validate_batch(&[]).unwrap(), 37);
     }
 }

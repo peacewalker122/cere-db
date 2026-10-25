@@ -1,0 +1,130 @@
+{
+  "archive": "2026-10-25T17-05-36Z-benchmarkafterr8-resumed",
+  "qualification": "PASS for same fixed release binary and unchanged captured benchmark-source hashes; dirty worktree qualification applies",
+  "binary_sha256": "f59a82ba5f6590dd1d5ed00c8dc25b1b66844b24804d014920f85d0a08161f5d",
+  "source_hashes_identical_before_build_and_after_last_run": true,
+  "scenario_count": 11,
+  "measured_samples_each": 3,
+  "warmup_runs_each": 1,
+  "configuration": {
+    "filter": "fts/put_sequential_1",
+    "flush_bytes": 16384,
+    "key_bytes": 20,
+    "records": 256,
+    "repetitions": 3,
+    "suite": "modules",
+    "value_bytes": 256,
+    "wal_segment_bytes": 1048576,
+    "warmup_runs": 1
+  },
+  "all_samples_validated": true,
+  "fts_utf8_bytes_per_sample": 6299,
+  "writer_engine_payload_bytes_per_sample": 70656,
+  "fts": [
+    {
+      "batch_size": 1,
+      "sequential_median_ms": 3988.369017,
+      "sequential_range_ms": [
+        3745.155694,
+        4578.376345
+      ],
+      "batch_median_ms": 2923.590232,
+      "batch_range_ms": [
+        2857.393095,
+        4296.956936
+      ],
+      "sequential_over_batch_duration_ratio": 1.3642024704233586
+    },
+    {
+      "batch_size": 16,
+      "sequential_median_ms": 2878.133605,
+      "sequential_range_ms": [
+        2751.167769,
+        3101.687915
+      ],
+      "batch_median_ms": 1366.8393939999999,
+      "batch_range_ms": [
+        1285.469696,
+        1720.704263
+      ],
+      "sequential_over_batch_duration_ratio": 2.1056852894598386
+    },
+    {
+      "batch_size": 64,
+      "sequential_median_ms": 2843.3372170000002,
+      "sequential_range_ms": [
+        2794.7005369999997,
+        3566.750516
+      ],
+      "batch_median_ms": 905.351121,
+      "batch_range_ms": [
+        706.503047,
+        1187.047889
+      ],
+      "sequential_over_batch_duration_ratio": 3.140590596341682
+    },
+    {
+      "batch_size": 256,
+      "sequential_median_ms": 3080.212483,
+      "sequential_range_ms": [
+        2994.075672,
+        3844.415128
+      ],
+      "batch_median_ms": 37.012268,
+      "batch_range_ms": [
+        36.250471,
+        37.499458
+      ],
+      "sequential_over_batch_duration_ratio": 83.22139251234212
+    }
+  ],
+  "writer": [
+    {
+      "concurrency": 1,
+      "median_ms": 821.70141,
+      "range_ms": [
+        810.616024,
+        837.240824
+      ],
+      "one_worker_over_duration_ratio": 1.0
+    },
+    {
+      "concurrency": 4,
+      "median_ms": 214.190511,
+      "range_ms": [
+        201.093043,
+        219.391988
+      ],
+      "one_worker_over_duration_ratio": 3.836310983916557
+    },
+    {
+      "concurrency": 16,
+      "median_ms": 57.293676000000005,
+      "range_ms": [
+        52.425997,
+        65.729561
+      ],
+      "one_worker_over_duration_ratio": 14.341921611034348
+    }
+  ],
+  "smoke": {
+    "records": 32,
+    "value_bytes": 64,
+    "repetitions": 1,
+    "warmup_runs": 0,
+    "scenarios": [
+      "fts/put_sequential_1",
+      "fts/put_batch_1",
+      "writer/concurrent_16"
+    ],
+    "all_validated": true
+  },
+  "limitations": [
+    "Worktree was dirty at HEAD; report does not attribute results to a clean commit.",
+    "OS page cache retained; not cold-cache.",
+    "No individual-request p95/p99 or production-capacity claim.",
+    "Writer concurrency timing is observational only and cannot prove grouped syncs.",
+    "No claim about 97k-document seed degradation.",
+    "Existing module scenarios do not establish flush, WAL rotation, or reopen behavior unless the specific case source does so."
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "configuration": {
+    "filter": "writer/concurrent_1",
+    "flush_bytes": 16384,
+    "key_bytes": 20,
+    "records": 256,
+    "repetitions": 3,
+    "suite": "modules",
+    "value_bytes": 256,
+    "wal_segment_bytes": 1048576,
+    "warmup_runs": 1
+  },
+  "metadata": {
+    "architecture": "x86_64",
+    "arguments": [
+      "target/release/deps/storage-0df15882e746aa06",
+      "--run",
+      "--suite",
+      "modules",
+      "--filter",
+      "writer/concurrent_1",
+      "--records",
+      "256",
+      "--value-bytes",
+      "256",
+      "--repetitions",
+      "3",
+      "--warmup-runs",
+      "1",
+      "--flush-bytes",
+      "16384",
+      "--wal-segment-bytes",
+      "1048576",
+      "--data-dir",
+      "target/2026-10-25T17-05-36Z-benchmarkafterr8-resumed-writer_concurrent_1-data",
+      "--output",
+      "benches/storage/results/2026-10-25T17-05-36Z-benchmarkafterr8-resumed/writer_concurrent_1.json"
+    ],
+    "available_parallelism": 8,
+    "cache_policy": "OS page cache is retained; no cold-cache claim",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "data_directory": "/home/peacewalker/project/learn/wasm-kv/target/2026-10-25T17-05-36Z-benchmarkafterr8-resumed-writer_concurrent_1-data",
+    "debug_assertions": false,
+    "filesystem_type": "btrfs",
+    "git_revision": "065f270981823ef74d25aa54e26c3ae49ea43339",
+    "latency_policy": "run timings and amortized costs; no request latency percentiles",
+    "os": "linux",
+    "runtime_workers": 2,
+    "rustc": null,
+    "source_qualification": "HEAD plus dirty worktree; the reported revision alone does not identify the complete build input",
+    "total_wall_seconds_including_setup_and_warmup": 3.531476732,
+    "tracked_changes": "M README.md\n M benches/storage/README.md\n M benches/storage/modules.rs\n M benches/storage/results/2026-10-25T08-31-34Z-wal-reclamation-final/summary.md\n M examples/fts_scale.rs\n M examples/fts_scale_assess.rs\n M src/fts/mod.rs\n M src/lib.rs\n M src/main.rs\n M src/storage/durable_dir.rs\n M src/storage/kv2.rs\n M src/storage/recovermanager/wal.rs\n M src/storage/recovermanager/wal_tests.rs\n M src/storage/writemanager/mod.rs\n M src/storage/writemanager/write.rs\n M tests/integration/batches.rs\n M tests/integration/mod.rs",
+    "unix_time_seconds": 1792948661
+  },
+  "samples": [
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 810616024,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "writer/concurrent_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 821701410,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "writer/concurrent_1"
+    },
+    {
+      "disk": {
+        "manifest_bytes": 0,
+        "sstable_bytes": 0,
+        "wal_bytes": 96036
+      },
+      "elapsed_ns": 837240824,
+      "logical_bytes": 70656,
+      "operations": 256,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "writer/concurrent_1"
+    }
+  ],
+  "schema_version": 1,
+  "summaries": [
+    {
+      "amortized_us_per_operation": 3215.5706484375005,
+      "logical_mib_per_second": 0.08185611205775409,
+      "max_run_ms": 837.240824,
+      "median_run_ms": 821.70141,
+      "min_run_ms": 810.616024,
+      "operations_per_second": 310.98679187344766,
+      "samples": 3,
+      "scenario": "writer/concurrent_1"
+    }
+  ]
+}

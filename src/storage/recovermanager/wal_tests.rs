@@ -31,6 +31,85 @@ async fn atomic_batch_preserves_application_sequences_and_physical_chains() {
 }
 
 #[tokio::test]
+async fn engine_groups_recover_as_distinct_transactions_with_one_sync() {
+    let directory = tempfile::tempdir().unwrap();
+    let wal = WALManager::new(directory.path().into(), 4096)
+        .await
+        .unwrap();
+    let first = vec![command(b"a", b"one", 70), command(b"b", b"two", 71)];
+    let second = vec![command(b"c", b"three", 72)];
+    wal.write_engine_transactions(vec![first.clone(), second.clone()], None)
+        .await
+        .unwrap();
+    assert_eq!(
+        wal.sync_data_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    let mut analysis = Analysis::default();
+    let paths = segment_paths(directory.path(), None).await.unwrap();
+    for (_, path) in paths {
+        scan_segment(&path, false, &mut analysis).await.unwrap();
+    }
+    assert_eq!(analysis.committed_transactions.len(), 2);
+    assert_eq!(analysis.latest_lsn, 5);
+    assert_eq!(
+        wal.recover_commands().await.unwrap(),
+        [first, second].concat()
+    );
+    drop(wal);
+    let wal = WALManager::new(directory.path().into(), 4096)
+        .await
+        .unwrap();
+    assert_eq!(wal.recover_commands().await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn invalid_later_group_writes_nothing_and_does_not_poison_writer() {
+    let directory = tempfile::tempdir().unwrap();
+    let wal = WALManager::new(directory.path().into(), 4096)
+        .await
+        .unwrap();
+    let path = segment_path(directory.path(), 0);
+    let before = tokio::fs::read(&path).await.unwrap();
+    let result = wal
+        .write_engine_transactions(
+            vec![
+                vec![command(b"valid", b"value", 1)],
+                vec![LogCommand::new(
+                    RecordType::Delete,
+                    b"bad".to_vec(),
+                    b"x".to_vec(),
+                    2,
+                )],
+            ],
+            None,
+        )
+        .await;
+    assert!(result.is_err());
+    assert_eq!(tokio::fs::read(path).await.unwrap(), before);
+    wal.append(command(b"after", b"valid", 3)).await.unwrap();
+}
+
+#[tokio::test]
+async fn grouped_append_rotates_once_and_recovers_every_transaction() {
+    let directory = tempfile::tempdir().unwrap();
+    let wal = WALManager::new(directory.path().into(), 180).await.unwrap();
+    let groups: Vec<_> = (0..4)
+        .map(|n| vec![command(&[n], &[n; 40], n as u64 + 1)])
+        .collect();
+    wal.write_engine_transactions(groups.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(wal.recover_commands().await.unwrap(), groups.concat());
+    assert_eq!(wal.state.lock().await.next_lsn, 9);
+    drop(wal);
+    let wal = WALManager::new(directory.path().into(), 180).await.unwrap();
+    assert_eq!(wal.recover_commands().await.unwrap(), groups.concat());
+    assert_eq!(wal.state.lock().await.next_lsn, 9);
+}
+
+#[tokio::test]
 async fn every_torn_transaction_prefix_is_repaired_before_append() {
     let source = tempfile::tempdir().unwrap();
     let wal = WALManager::new(source.path().into(), 4096).await.unwrap();
