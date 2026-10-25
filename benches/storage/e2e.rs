@@ -1280,7 +1280,7 @@ async fn wal_checkpoint_reclamation(
     measurements.push(Measurement::new(
         "e2e/wal_checkpoint_reclamation",
         sample,
-        config.records + 3,
+        config.records,
         config.logical_bytes(),
         elapsed,
     ));

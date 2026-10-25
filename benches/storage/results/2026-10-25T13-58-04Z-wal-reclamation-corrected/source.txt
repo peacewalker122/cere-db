@@ -1,0 +1,9 @@
+HEAD=45f68b8180616dd14ae45527a1e9d5b9428bea45
+source_qualification=HEAD plus dirty worktree; reported revision alone does not identify complete build input
+tracked_changes_at_run=M benches/storage/e2e.rs; M examples/fts_scale.rs; M examples/fts_scale_assess.rs; M src/main.rs; M tests/integration/batches.rs
+benchmark_source=benches/storage/e2e.rs; public KV2 scenario only
+benchmark_source_sha256=8f07d33f12b08bbb0710a177b6b839f05f95ac70282c4aa2f85b323a28e5a1c3
+environment=Linux x86_64; Btrfs; 11th Gen Intel Core i5-1135G7; 8 available logical CPUs; rustc 1.97.1 (8bab26f4f 2026-07-14); optimized bench profile; 2 Tokio workers
+data_directory=target/wal-reclamation-corrected-data-20261025-135644, fresh and isolated; benchmark TempDirs are created under it and deleted after each sample
+cache_policy=OS page cache retained; no cold-cache claim
+archive_note=the process wrote raw.json using the 13-56-44Z directory name; after capture the complete archive directory was renamed to the 13-58-04Z completion timestamp, with raw.json bytes unchanged

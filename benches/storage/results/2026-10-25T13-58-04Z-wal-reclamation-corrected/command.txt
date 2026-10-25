@@ -1,0 +1,1 @@
+/home/peacewalker/.cargo/bin/cargo bench --bench storage -- --run --suite e2e --filter e2e/wal_checkpoint_reclamation --records 128 --value-bytes 256 --repetitions 3 --warmup-runs 1 --flush-bytes 512 --wal-segment-bytes 512 --data-dir target/wal-reclamation-corrected-data-20261025-135644 --output benches/storage/results/2026-10-25T13-56-44Z-wal-reclamation-corrected/raw.json

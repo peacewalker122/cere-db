@@ -1,0 +1,13 @@
+HEAD=45f68b8180616dd14ae45527a1e9d5b9428bea45
+source_qualification=HEAD plus dirty worktree; the benchmark harness and core WAL sources listed below were clean at capture, while unrelated tracked files were dirty
+tracked_changes_at_run=M examples/fts_scale.rs; M examples/fts_scale_assess.rs; M src/main.rs; M tests/integration/batches.rs
+benchmark_source=existing benches/storage/e2e.rs public KV2 scenario; no harness modifications made during this task
+benchmark_source_sha256=3e575fa928561416c9ed9c7f850fc464afe4edc2f744a8dc62f1afc8f8280875
+src/storage/kv2.rs sha256=af429b4d81343b986584dc0f70b3e0dfd401bb0bf2c72415f653310b18ed7fa0
+src/storage/manifest_codec.rs sha256=c810d873c85b6e2e04c183a60fc99e8a929dd5ce7404c2b608f31ce474d1d704
+src/storage/recovermanager/wal.rs sha256=67107f4bf1a42f4d939af6fa6004ca4a26b11678f7f053b8ce18e0a32009f1b8
+src/storage/writemanager/block.rs sha256=687a926a882262b47b708289dd610f19c0c5361e846b5729ad32ce75622a6214
+src/storage/writemanager/write.rs sha256=1b7d000665af5095b85b14f3fdccd9e827c684db5a3adf7d5f07a615325817c4
+environment=Linux x86_64; Btrfs; 11th Gen Intel Core i5-1135G7; 8 available logical CPUs; rustc 1.97.1 (8bab26f4f 2026-07-14); optimized bench profile; 2 Tokio workers
+data_directory=target/wal-reclamation-approved-data-20261025, fresh and isolated; benchmark TempDirs are created under it and deleted after each sample
+no cold-cache claim; OS page cache retained

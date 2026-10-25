@@ -1,0 +1,3 @@
+PATH=/home/peacewalker/.cargo/bin:$PATH cargo bench --bench storage -- --run --suite e2e --filter e2e/wal_checkpoint_reclamation --records 128 --value-bytes 256 --repetitions 3 --warmup-runs 1 --flush-bytes 512 --wal-segment-bytes 512 --data-dir target/wal-reclamation-approved-data-20261025 --output benches/storage/results/2026-10-25T16-20-00Z-wal-reclamation-final/raw.json
+
+The archive directory was renamed after capture to match the actual UTC run time, 2026-10-25T13:49:52Z. The raw JSON therefore preserves the original --output argument under the pre-rename directory name; its contents are unchanged.

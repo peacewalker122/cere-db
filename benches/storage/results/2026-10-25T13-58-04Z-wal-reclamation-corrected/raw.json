@@ -1,0 +1,98 @@
+{
+  "configuration": {
+    "filter": "e2e/wal_checkpoint_reclamation",
+    "flush_bytes": 512,
+    "key_bytes": 20,
+    "records": 128,
+    "repetitions": 3,
+    "suite": "e2e",
+    "value_bytes": 256,
+    "wal_segment_bytes": 512,
+    "warmup_runs": 1
+  },
+  "metadata": {
+    "architecture": "x86_64",
+    "arguments": [
+      "/home/peacewalker/project/learn/wasm-kv/target/release/deps/storage-0df15882e746aa06",
+      "--run",
+      "--suite",
+      "e2e",
+      "--filter",
+      "e2e/wal_checkpoint_reclamation",
+      "--records",
+      "128",
+      "--value-bytes",
+      "256",
+      "--repetitions",
+      "3",
+      "--warmup-runs",
+      "1",
+      "--flush-bytes",
+      "512",
+      "--wal-segment-bytes",
+      "512",
+      "--data-dir",
+      "target/wal-reclamation-corrected-data-20261025-135644",
+      "--output",
+      "benches/storage/results/2026-10-25T13-56-44Z-wal-reclamation-corrected/raw.json",
+      "--bench"
+    ],
+    "available_parallelism": 8,
+    "cache_policy": "OS page cache is retained; no cold-cache claim",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "data_directory": "/home/peacewalker/project/learn/wasm-kv/target/wal-reclamation-corrected-data-20261025-135644",
+    "debug_assertions": false,
+    "filesystem_type": "btrfs",
+    "git_revision": "45f68b8180616dd14ae45527a1e9d5b9428bea45",
+    "latency_policy": "run timings and amortized costs; no request latency percentiles",
+    "os": "linux",
+    "runtime_workers": 2,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_qualification": "HEAD plus dirty worktree; the reported revision alone does not identify the complete build input",
+    "total_wall_seconds_including_setup_and_warmup": 35.075829494,
+    "tracked_changes": "M benches/storage/e2e.rs\n M examples/fts_scale.rs\n M examples/fts_scale_assess.rs\n M src/main.rs\n M tests/integration/batches.rs",
+    "unix_time_seconds": 1792936684
+  },
+  "samples": [
+    {
+      "disk": null,
+      "elapsed_ns": 7831757117,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/wal_checkpoint_reclamation"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 7746800149,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/wal_checkpoint_reclamation"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 7682862981,
+      "logical_bytes": 35328,
+      "operations": 128,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/wal_checkpoint_reclamation"
+    }
+  ],
+  "schema_version": 1,
+  "summaries": [
+    {
+      "amortized_us_per_operation": 60576.615226562506,
+      "logical_mib_per_second": 0.004345143919706942,
+      "max_run_ms": 7831.757117,
+      "median_run_ms": 7746.800149000001,
+      "min_run_ms": 7682.862980999999,
+      "operations_per_second": 16.508020401270386,
+      "samples": 3,
+      "scenario": "e2e/wal_checkpoint_reclamation"
+    }
+  ]
+}

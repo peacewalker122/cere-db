@@ -1,0 +1,768 @@
+   Compiling ceredb v0.1.0 (/home/peacewalker/project/learn/wasm-kv)
+warning: unused import: `io::Cursor`
+ --> src/storage/compactionmanager/compaction.rs:9:11
+  |
+9 | use std::{io::Cursor, path::PathBuf, sync::Arc};
+  |           ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `index::SparseIndexEntry` and `self`
+  --> src/storage/compactionmanager/compaction.rs:15:13
+   |
+15 |     bloom::{self, BloomFilterWrapper},
+   |             ^^^^
+16 |     config::StorageConfig,
+17 |     index::SparseIndexEntry,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::footer::SSTableFooter`
+ --> src/storage/index.rs:6:5
+  |
+6 | use super::footer::SSTableFooter;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `LogStore`
+  --> src/storage/kv2.rs:25:37
+   |
+25 |             log_store::{LogCommand, LogStore},
+   |                                     ^^^^^^^^
+
+warning: unused import: `bloom::BloomFilterWrapper`
+  --> src/storage/manifest_codec.rs:15:22
+   |
+15 | use crate::storage::{bloom::BloomFilterWrapper, durable_dir};
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `RaftTypeConfig`
+  --> src/storage/raft/log_store.rs:11:83
+   |
+11 |     Entry, ErrorSubject, ErrorVerb, LogId, LogState, OptionalSend, RaftLogReader, RaftTypeConfig,
+   |                                                                                   ^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt::Debug`
+  --> src/storage/raft/log_store.rs:18:5
+   |
+18 | use std::fmt::Debug;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `openraft::OptionalSend`
+ --> src/storage/raft/network.rs:8:5
+  |
+8 | use openraft::OptionalSend;
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `borrow::Cow`
+ --> src/storage/writemanager/block.rs:2:5
+  |
+2 |     borrow::Cow,
+  |     ^^^^^^^^^^^
+
+warning: unused import: `Record`
+  --> src/storage/writemanager/block.rs:14:34
+   |
+14 |         record::{MemtableRecord, Record},
+   |                                  ^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/storage/writemanager/block.rs:257:9
+    |
+257 |         mut data: &mut T,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `first_key_len`
+   --> src/storage/block.rs:149:13
+    |
+149 |         let first_key_len = u32::from_be_bytes(len_buf) as usize;
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_first_key_len`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `num_bits`
+   --> src/storage/bloom.rs:109:13
+    |
+109 |         let num_bits = u64::from_be_bytes(buf) as usize;
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_num_bits`
+
+warning: unused variable: `sstable_dir`
+   --> src/storage/kv2.rs:376:9
+    |
+376 |         sstable_dir: PathBuf,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sstable_dir`
+
+warning: unused variable: `sequence_number`
+   --> src/storage/readmanager/read.rs:251:9
+    |
+251 |         sequence_number: u64,
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sequence_number`
+
+warning: irrefutable `if let` pattern
+    --> src/storage/kv2.rs:1434:28
+     |
+1434 |                         if let CompactionTrigger::CompactLevel { level } = trigger {
+     |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: this pattern will always match, so the `if let` is useless
+     = help: consider replacing the `if let` with a `let`
+     = note: `#[warn(irrefutable_let_patterns)]` on by default
+
+warning: unused variable: `sstable_dir`
+    --> src/storage/kv2.rs:1425:9
+     |
+1425 |         sstable_dir: PathBuf,
+     |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sstable_dir`
+
+warning: unused variable: `footer`
+   --> src/storage/sstable_codec.rs:159:14
+    |
+159 |         let (footer, index, bloom) = Self::deserialize_sections(reader).await?;
+    |              ^^^^^^ help: if this is intentional, prefix it with an underscore: `_footer`
+
+warning: variable does not need to be mutable
+   --> src/storage/writemanager/block.rs:192:35
+    |
+192 |     pub fn decode<T: Read + Seek>(mut data: &mut T, offset: u64) -> Result<Self, DBError> {
+    |                                   ----^^^^
+    |                                   |
+    |                                   help: remove this `mut`
+
+warning: field `base_dir` is never read
+    --> src/storage/kv2.rs:1304:5
+     |
+1303 | pub struct RaftKV2 {
+     |            ------- field in this struct
+1304 |     base_dir: PathBuf,
+     |     ^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `build_recovered_memtable` is never used
+    --> src/storage/kv2.rs:1396:8
+     |
+1320 | impl RaftKV2 {
+     | ------------ associated function in this implementation
+...
+1396 |     fn build_recovered_memtable(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `LogPosition` is never constructed
+  --> src/storage/recovermanager/log_store.rs:68:12
+   |
+68 | pub struct LogPosition {
+   |            ^^^^^^^^^^^
+
+warning: trait `LogStore` is never used
+  --> src/storage/recovermanager/log_store.rs:73:11
+   |
+73 | pub trait LogStore: Send + Sync {
+   |           ^^^^^^^^
+
+warning: type alias `FileWalStore` is never used
+  --> src/storage/recovermanager/wal.rs:54:10
+   |
+54 | pub type FileWalStore = WALManager;
+   |          ^^^^^^^^^^^^
+
+warning: method `recovery_position` is never used
+   --> src/storage/recovermanager/wal.rs:338:25
+    |
+146 | impl WALManager {
+    | --------------- method in this implementation
+...
+338 |     pub(crate) async fn recovery_position(&self) -> Result<(u64, u64), DBError> {
+    |                         ^^^^^^^^^^^^^^^^^
+
+warning: function `decode_sparse_index` is never used
+   --> src/storage/sstable_codec.rs:251:4
+    |
+251 | fn decode_sparse_index(index_block: &[u8]) -> Result<Vec<SparseIndexEntry>, DBError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/api/api.rs:25:5
+   |
+25 |     async fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+25 -     async fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
+25 +     fn get(&self, key: &[u8]) -> impl std::future::Future<Output = Result<Option<Cow<'_, Vec<u8>>>, DBError>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/api/api.rs:26:5
+   |
+26 |     async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+26 -     async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
+26 +     fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> impl std::future::Future<Output = Result<(), DBError>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/api/api.rs:27:5
+   |
+27 |     async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+27 -     async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
+27 +     fn delete(&mut self, key: Vec<u8>) -> impl std::future::Future<Output = Result<(), DBError>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/api/api.rs:28:5
+   |
+28 |     async fn write_batch(&mut self, _operations: Vec<BatchOperation>) -> Result<(), DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+28 ~     fn write_batch(&mut self, _operations: Vec<BatchOperation>) -> impl std::future::Future<Output = Result<(), DBError>> + Send {async {
+29 |         Err(unsupported_batch())
+30 ~     } }
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/api/api.rs:32:5
+   |
+32 |     async fn await_pending_writes(&self) -> Result<(), DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+32 ~     fn await_pending_writes(&self) -> impl std::future::Future<Output = Result<(), DBError>> + Send {async {
+33 |         Err(DBError::StorageError(
+34 |             "pending-write barriers are unsupported by this engine".into(),
+35 |         ))
+36 ~     } }
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/api/api.rs:59:5
+   |
+59 |     async fn scan(
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+59 ~     fn scan(
+60 |         &self,
+61 |         range: impl RangeBounds<Vec<u8>> + Send,
+62 ~     ) -> impl std::future::Future<Output = Result<Vec<(Vec<u8>, Vec<u8>)>, DBError>> + Send;
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/command.rs:8:5
+   |
+ 8 |     async fn put_document(&mut self, _id: DocumentId, _document: Vec<u8>) -> Result<(), DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+ 8 ~     fn put_document(&mut self, _id: DocumentId, _document: Vec<u8>) -> impl std::future::Future<Output = Result<(), DBError>> + Send {async {
+ 9 |         Err(unsupported_fts())
+10 ~     } }
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/command.rs:12:5
+   |
+12 |     async fn get_document(&self, _id: &DocumentId) -> Result<Option<Vec<u8>>, DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+12 ~     fn get_document(&self, _id: &DocumentId) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, DBError>> + Send {async {
+13 |         Err(unsupported_fts())
+14 ~     } }
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/command.rs:16:5
+   |
+16 |     async fn delete_document(&mut self, _id: &DocumentId) -> Result<bool, DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+16 ~     fn delete_document(&mut self, _id: &DocumentId) -> impl std::future::Future<Output = Result<bool, DBError>> + Send {async {
+17 |         Err(unsupported_fts())
+18 ~     } }
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/command.rs:20:5
+   |
+20 |     async fn search(&self, _query: FtsQuery, _limit: usize) -> Result<Vec<SearchHit>, DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+20 ~     fn search(&self, _query: FtsQuery, _limit: usize) -> impl std::future::Future<Output = Result<Vec<SearchHit>, DBError>> + Send {async {
+21 |         Err(unsupported_fts())
+22 ~     } }
+   |
+
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> src/command.rs:24:5
+   |
+24 |     async fn search_ranked(
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+24 ~     fn search_ranked(
+25 |         &self,
+...
+28 |         _config: Bm25Config,
+29 ~     ) -> impl std::future::Future<Output = Result<Vec<RankedSearchHit>, DBError>> + Send {async {
+30 |         Err(unsupported_fts())
+31 ~     } }
+   |
+
+warning: `ceredb` (lib) generated 37 warnings (run `cargo fix --lib -p ceredb` to apply 18 suggestions)
+    Finished `bench` profile [optimized + debuginfo] target(s) in 55.26s
+     Running benches/storage/main.rs (target/release/deps/storage-0df15882e746aa06)
+e2e WAL checkpoint sample=0 record=2 before_segment_ids=[0] before_wal_bytes=411 after_segment_ids=[2] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=4 before_segment_ids=[2] before_wal_bytes=411 after_segment_ids=[4] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=6 before_segment_ids=[4] before_wal_bytes=411 after_segment_ids=[6] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=8 before_segment_ids=[6] before_wal_bytes=411 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=1/16 records=8 before_segment_ids=[8] before_wal_bytes=36 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=10 before_segment_ids=[8] before_wal_bytes=411 after_segment_ids=[10] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=12 before_segment_ids=[10] before_wal_bytes=411 after_segment_ids=[12] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=14 before_segment_ids=[12] before_wal_bytes=411 after_segment_ids=[14] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=16 before_segment_ids=[14] before_wal_bytes=411 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=2/16 records=16 before_segment_ids=[16] before_wal_bytes=36 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=18 before_segment_ids=[16] before_wal_bytes=411 after_segment_ids=[18] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=20 before_segment_ids=[18] before_wal_bytes=411 after_segment_ids=[20] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=22 before_segment_ids=[20] before_wal_bytes=411 after_segment_ids=[22] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=24 before_segment_ids=[22] before_wal_bytes=411 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=3/16 records=24 before_segment_ids=[24] before_wal_bytes=36 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=26 before_segment_ids=[24] before_wal_bytes=411 after_segment_ids=[26] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=28 before_segment_ids=[26] before_wal_bytes=411 after_segment_ids=[28] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=30 before_segment_ids=[28] before_wal_bytes=411 after_segment_ids=[30] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=32 before_segment_ids=[30] before_wal_bytes=411 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=4/16 records=32 before_segment_ids=[32] before_wal_bytes=36 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=34 before_segment_ids=[32] before_wal_bytes=411 after_segment_ids=[34] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=36 before_segment_ids=[34] before_wal_bytes=411 after_segment_ids=[36] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=38 before_segment_ids=[36] before_wal_bytes=411 after_segment_ids=[38] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=40 before_segment_ids=[38] before_wal_bytes=411 after_segment_ids=[40] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=5/16 records=40 before_segment_ids=[40] before_wal_bytes=36 after_segment_ids=[40] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=42 before_segment_ids=[40] before_wal_bytes=411 after_segment_ids=[42] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=44 before_segment_ids=[42] before_wal_bytes=411 after_segment_ids=[44] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=46 before_segment_ids=[44] before_wal_bytes=411 after_segment_ids=[46] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=48 before_segment_ids=[46] before_wal_bytes=411 after_segment_ids=[48] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=6/16 records=48 before_segment_ids=[48] before_wal_bytes=36 after_segment_ids=[48] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=50 before_segment_ids=[48] before_wal_bytes=411 after_segment_ids=[50] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=52 before_segment_ids=[50] before_wal_bytes=411 after_segment_ids=[52] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=54 before_segment_ids=[52] before_wal_bytes=411 after_segment_ids=[54] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=56 before_segment_ids=[54] before_wal_bytes=411 after_segment_ids=[56] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=7/16 records=56 before_segment_ids=[56] before_wal_bytes=36 after_segment_ids=[56] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=58 before_segment_ids=[56] before_wal_bytes=411 after_segment_ids=[58] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=60 before_segment_ids=[58] before_wal_bytes=411 after_segment_ids=[60] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=62 before_segment_ids=[60] before_wal_bytes=411 after_segment_ids=[62] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=64 before_segment_ids=[62] before_wal_bytes=411 after_segment_ids=[64] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=8/16 records=64 before_segment_ids=[64] before_wal_bytes=36 after_segment_ids=[64] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=66 before_segment_ids=[64] before_wal_bytes=411 after_segment_ids=[66] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=68 before_segment_ids=[66] before_wal_bytes=411 after_segment_ids=[68] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=70 before_segment_ids=[68] before_wal_bytes=411 after_segment_ids=[70] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=72 before_segment_ids=[70] before_wal_bytes=411 after_segment_ids=[72] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=9/16 records=72 before_segment_ids=[72] before_wal_bytes=36 after_segment_ids=[72] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=74 before_segment_ids=[72] before_wal_bytes=411 after_segment_ids=[74] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=76 before_segment_ids=[74] before_wal_bytes=411 after_segment_ids=[76] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=78 before_segment_ids=[76] before_wal_bytes=411 after_segment_ids=[78] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=80 before_segment_ids=[78] before_wal_bytes=411 after_segment_ids=[80] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=10/16 records=80 before_segment_ids=[80] before_wal_bytes=36 after_segment_ids=[80] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=82 before_segment_ids=[80] before_wal_bytes=411 after_segment_ids=[82] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=84 before_segment_ids=[82] before_wal_bytes=411 after_segment_ids=[84] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=86 before_segment_ids=[84] before_wal_bytes=411 after_segment_ids=[86] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=88 before_segment_ids=[86] before_wal_bytes=411 after_segment_ids=[88] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=11/16 records=88 before_segment_ids=[88] before_wal_bytes=36 after_segment_ids=[88] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=90 before_segment_ids=[88] before_wal_bytes=411 after_segment_ids=[90] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=92 before_segment_ids=[90] before_wal_bytes=411 after_segment_ids=[92] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=94 before_segment_ids=[92] before_wal_bytes=411 after_segment_ids=[94] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=96 before_segment_ids=[94] before_wal_bytes=411 after_segment_ids=[96] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=12/16 records=96 before_segment_ids=[96] before_wal_bytes=36 after_segment_ids=[96] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=98 before_segment_ids=[96] before_wal_bytes=411 after_segment_ids=[98] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=100 before_segment_ids=[98] before_wal_bytes=411 after_segment_ids=[100] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=102 before_segment_ids=[100] before_wal_bytes=411 after_segment_ids=[102] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=104 before_segment_ids=[102] before_wal_bytes=411 after_segment_ids=[104] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=13/16 records=104 before_segment_ids=[104] before_wal_bytes=36 after_segment_ids=[104] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=106 before_segment_ids=[104] before_wal_bytes=411 after_segment_ids=[106] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=108 before_segment_ids=[106] before_wal_bytes=411 after_segment_ids=[108] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=110 before_segment_ids=[108] before_wal_bytes=411 after_segment_ids=[110] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=112 before_segment_ids=[110] before_wal_bytes=411 after_segment_ids=[112] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=14/16 records=112 before_segment_ids=[112] before_wal_bytes=36 after_segment_ids=[112] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=114 before_segment_ids=[112] before_wal_bytes=411 after_segment_ids=[114] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=116 before_segment_ids=[114] before_wal_bytes=411 after_segment_ids=[116] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=118 before_segment_ids=[116] before_wal_bytes=411 after_segment_ids=[118] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=120 before_segment_ids=[118] before_wal_bytes=411 after_segment_ids=[120] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=15/16 records=120 before_segment_ids=[120] before_wal_bytes=36 after_segment_ids=[120] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=122 before_segment_ids=[120] before_wal_bytes=411 after_segment_ids=[122] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=124 before_segment_ids=[122] before_wal_bytes=411 after_segment_ids=[124] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=126 before_segment_ids=[124] before_wal_bytes=411 after_segment_ids=[126] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=128 before_segment_ids=[126] before_wal_bytes=411 after_segment_ids=[128] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=16/16 records=128 before_segment_ids=[128] before_wal_bytes=36 after_segment_ids=[128] after_wal_bytes=36
+sample 1/3
+e2e WAL checkpoint sample=0 record=2 before_segment_ids=[0] before_wal_bytes=411 after_segment_ids=[2] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=4 before_segment_ids=[2] before_wal_bytes=411 after_segment_ids=[4] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=6 before_segment_ids=[4] before_wal_bytes=411 after_segment_ids=[6] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=8 before_segment_ids=[6] before_wal_bytes=411 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=1/16 records=8 before_segment_ids=[8] before_wal_bytes=36 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=10 before_segment_ids=[8] before_wal_bytes=411 after_segment_ids=[10] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=12 before_segment_ids=[10] before_wal_bytes=411 after_segment_ids=[12] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=14 before_segment_ids=[12] before_wal_bytes=411 after_segment_ids=[14] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=16 before_segment_ids=[14] before_wal_bytes=411 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=2/16 records=16 before_segment_ids=[16] before_wal_bytes=36 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=18 before_segment_ids=[16] before_wal_bytes=411 after_segment_ids=[18] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=20 before_segment_ids=[18] before_wal_bytes=411 after_segment_ids=[20] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=22 before_segment_ids=[20] before_wal_bytes=411 after_segment_ids=[22] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=24 before_segment_ids=[22] before_wal_bytes=411 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=3/16 records=24 before_segment_ids=[24] before_wal_bytes=36 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=26 before_segment_ids=[24] before_wal_bytes=411 after_segment_ids=[26] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=28 before_segment_ids=[26] before_wal_bytes=411 after_segment_ids=[28] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=30 before_segment_ids=[28] before_wal_bytes=411 after_segment_ids=[30] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=32 before_segment_ids=[30] before_wal_bytes=411 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=4/16 records=32 before_segment_ids=[32] before_wal_bytes=36 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=34 before_segment_ids=[32] before_wal_bytes=411 after_segment_ids=[34] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=36 before_segment_ids=[34] before_wal_bytes=411 after_segment_ids=[36] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=38 before_segment_ids=[36] before_wal_bytes=411 after_segment_ids=[38] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=40 before_segment_ids=[38] before_wal_bytes=411 after_segment_ids=[40] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=5/16 records=40 before_segment_ids=[40] before_wal_bytes=36 after_segment_ids=[40] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=42 before_segment_ids=[40] before_wal_bytes=411 after_segment_ids=[42] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=44 before_segment_ids=[42] before_wal_bytes=411 after_segment_ids=[44] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=46 before_segment_ids=[44] before_wal_bytes=411 after_segment_ids=[46] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=48 before_segment_ids=[46] before_wal_bytes=411 after_segment_ids=[48] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=6/16 records=48 before_segment_ids=[48] before_wal_bytes=36 after_segment_ids=[48] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=50 before_segment_ids=[48] before_wal_bytes=411 after_segment_ids=[50] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=52 before_segment_ids=[50] before_wal_bytes=411 after_segment_ids=[52] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=54 before_segment_ids=[52] before_wal_bytes=411 after_segment_ids=[54] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=56 before_segment_ids=[54] before_wal_bytes=411 after_segment_ids=[56] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=7/16 records=56 before_segment_ids=[56] before_wal_bytes=36 after_segment_ids=[56] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=58 before_segment_ids=[56] before_wal_bytes=411 after_segment_ids=[58] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=60 before_segment_ids=[58] before_wal_bytes=411 after_segment_ids=[60] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=62 before_segment_ids=[60] before_wal_bytes=411 after_segment_ids=[62] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=64 before_segment_ids=[62] before_wal_bytes=411 after_segment_ids=[64] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=8/16 records=64 before_segment_ids=[64] before_wal_bytes=36 after_segment_ids=[64] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=66 before_segment_ids=[64] before_wal_bytes=411 after_segment_ids=[66] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=68 before_segment_ids=[66] before_wal_bytes=411 after_segment_ids=[68] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=70 before_segment_ids=[68] before_wal_bytes=411 after_segment_ids=[70] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=72 before_segment_ids=[70] before_wal_bytes=411 after_segment_ids=[72] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=9/16 records=72 before_segment_ids=[72] before_wal_bytes=36 after_segment_ids=[72] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=74 before_segment_ids=[72] before_wal_bytes=411 after_segment_ids=[74] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=76 before_segment_ids=[74] before_wal_bytes=411 after_segment_ids=[76] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=78 before_segment_ids=[76] before_wal_bytes=411 after_segment_ids=[78] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=80 before_segment_ids=[78] before_wal_bytes=411 after_segment_ids=[80] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=10/16 records=80 before_segment_ids=[80] before_wal_bytes=36 after_segment_ids=[80] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=82 before_segment_ids=[80] before_wal_bytes=411 after_segment_ids=[82] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=84 before_segment_ids=[82] before_wal_bytes=411 after_segment_ids=[84] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=86 before_segment_ids=[84] before_wal_bytes=411 after_segment_ids=[86] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=88 before_segment_ids=[86] before_wal_bytes=411 after_segment_ids=[88] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=11/16 records=88 before_segment_ids=[88] before_wal_bytes=36 after_segment_ids=[88] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=90 before_segment_ids=[88] before_wal_bytes=411 after_segment_ids=[90] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=92 before_segment_ids=[90] before_wal_bytes=411 after_segment_ids=[92] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=94 before_segment_ids=[92] before_wal_bytes=411 after_segment_ids=[94] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=96 before_segment_ids=[94] before_wal_bytes=411 after_segment_ids=[96] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=12/16 records=96 before_segment_ids=[96] before_wal_bytes=36 after_segment_ids=[96] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=98 before_segment_ids=[96] before_wal_bytes=411 after_segment_ids=[98] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=100 before_segment_ids=[98] before_wal_bytes=411 after_segment_ids=[100] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=102 before_segment_ids=[100] before_wal_bytes=411 after_segment_ids=[102] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=104 before_segment_ids=[102] before_wal_bytes=411 after_segment_ids=[104] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=13/16 records=104 before_segment_ids=[104] before_wal_bytes=36 after_segment_ids=[104] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=106 before_segment_ids=[104] before_wal_bytes=411 after_segment_ids=[106] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=108 before_segment_ids=[106] before_wal_bytes=411 after_segment_ids=[108] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=110 before_segment_ids=[108] before_wal_bytes=411 after_segment_ids=[110] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=112 before_segment_ids=[110] before_wal_bytes=411 after_segment_ids=[112] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=14/16 records=112 before_segment_ids=[112] before_wal_bytes=36 after_segment_ids=[112] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=114 before_segment_ids=[112] before_wal_bytes=411 after_segment_ids=[114] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=116 before_segment_ids=[114] before_wal_bytes=411 after_segment_ids=[116] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=118 before_segment_ids=[116] before_wal_bytes=411 after_segment_ids=[118] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=120 before_segment_ids=[118] before_wal_bytes=411 after_segment_ids=[120] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=15/16 records=120 before_segment_ids=[120] before_wal_bytes=36 after_segment_ids=[120] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=122 before_segment_ids=[120] before_wal_bytes=411 after_segment_ids=[122] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=124 before_segment_ids=[122] before_wal_bytes=411 after_segment_ids=[124] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=126 before_segment_ids=[124] before_wal_bytes=411 after_segment_ids=[126] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=128 before_segment_ids=[126] before_wal_bytes=411 after_segment_ids=[128] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=16/16 records=128 before_segment_ids=[128] before_wal_bytes=36 after_segment_ids=[128] after_wal_bytes=36
+sample 2/3
+e2e WAL checkpoint sample=1 record=2 before_segment_ids=[0] before_wal_bytes=411 after_segment_ids=[2] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=4 before_segment_ids=[2] before_wal_bytes=411 after_segment_ids=[4] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=6 before_segment_ids=[4] before_wal_bytes=411 after_segment_ids=[6] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=8 before_segment_ids=[6] before_wal_bytes=411 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=1/16 records=8 before_segment_ids=[8] before_wal_bytes=36 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=10 before_segment_ids=[8] before_wal_bytes=411 after_segment_ids=[10] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=12 before_segment_ids=[10] before_wal_bytes=411 after_segment_ids=[12] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=14 before_segment_ids=[12] before_wal_bytes=411 after_segment_ids=[14] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=16 before_segment_ids=[14] before_wal_bytes=411 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=2/16 records=16 before_segment_ids=[16] before_wal_bytes=36 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=18 before_segment_ids=[16] before_wal_bytes=411 after_segment_ids=[18] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=20 before_segment_ids=[18] before_wal_bytes=411 after_segment_ids=[20] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=22 before_segment_ids=[20] before_wal_bytes=411 after_segment_ids=[22] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=24 before_segment_ids=[22] before_wal_bytes=411 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=3/16 records=24 before_segment_ids=[24] before_wal_bytes=36 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=26 before_segment_ids=[24] before_wal_bytes=411 after_segment_ids=[26] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=28 before_segment_ids=[26] before_wal_bytes=411 after_segment_ids=[28] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=30 before_segment_ids=[28] before_wal_bytes=411 after_segment_ids=[30] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=32 before_segment_ids=[30] before_wal_bytes=411 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=4/16 records=32 before_segment_ids=[32] before_wal_bytes=36 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=34 before_segment_ids=[32] before_wal_bytes=411 after_segment_ids=[34] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=36 before_segment_ids=[34] before_wal_bytes=411 after_segment_ids=[36] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=38 before_segment_ids=[36] before_wal_bytes=411 after_segment_ids=[38] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=40 before_segment_ids=[38] before_wal_bytes=411 after_segment_ids=[40] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=5/16 records=40 before_segment_ids=[40] before_wal_bytes=36 after_segment_ids=[40] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=42 before_segment_ids=[40] before_wal_bytes=411 after_segment_ids=[42] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=44 before_segment_ids=[42] before_wal_bytes=411 after_segment_ids=[44] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=46 before_segment_ids=[44] before_wal_bytes=411 after_segment_ids=[46] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=48 before_segment_ids=[46] before_wal_bytes=411 after_segment_ids=[48] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=6/16 records=48 before_segment_ids=[48] before_wal_bytes=36 after_segment_ids=[48] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=50 before_segment_ids=[48] before_wal_bytes=411 after_segment_ids=[50] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=52 before_segment_ids=[50] before_wal_bytes=411 after_segment_ids=[52] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=54 before_segment_ids=[52] before_wal_bytes=411 after_segment_ids=[54] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=56 before_segment_ids=[54] before_wal_bytes=411 after_segment_ids=[56] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=7/16 records=56 before_segment_ids=[56] before_wal_bytes=36 after_segment_ids=[56] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=58 before_segment_ids=[56] before_wal_bytes=411 after_segment_ids=[58] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=60 before_segment_ids=[58] before_wal_bytes=411 after_segment_ids=[60] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=62 before_segment_ids=[60] before_wal_bytes=411 after_segment_ids=[62] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=64 before_segment_ids=[62] before_wal_bytes=411 after_segment_ids=[64] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=8/16 records=64 before_segment_ids=[64] before_wal_bytes=36 after_segment_ids=[64] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=66 before_segment_ids=[64] before_wal_bytes=411 after_segment_ids=[66] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=68 before_segment_ids=[66] before_wal_bytes=411 after_segment_ids=[68] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=70 before_segment_ids=[68] before_wal_bytes=411 after_segment_ids=[70] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=72 before_segment_ids=[70] before_wal_bytes=411 after_segment_ids=[72] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=9/16 records=72 before_segment_ids=[72] before_wal_bytes=36 after_segment_ids=[72] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=74 before_segment_ids=[72] before_wal_bytes=411 after_segment_ids=[74] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=76 before_segment_ids=[74] before_wal_bytes=411 after_segment_ids=[76] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=78 before_segment_ids=[76] before_wal_bytes=411 after_segment_ids=[78] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=80 before_segment_ids=[78] before_wal_bytes=411 after_segment_ids=[80] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=10/16 records=80 before_segment_ids=[80] before_wal_bytes=36 after_segment_ids=[80] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=82 before_segment_ids=[80] before_wal_bytes=411 after_segment_ids=[82] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=84 before_segment_ids=[82] before_wal_bytes=411 after_segment_ids=[84] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=86 before_segment_ids=[84] before_wal_bytes=411 after_segment_ids=[86] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=88 before_segment_ids=[86] before_wal_bytes=411 after_segment_ids=[88] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=11/16 records=88 before_segment_ids=[88] before_wal_bytes=36 after_segment_ids=[88] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=90 before_segment_ids=[88] before_wal_bytes=411 after_segment_ids=[90] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=92 before_segment_ids=[90] before_wal_bytes=411 after_segment_ids=[92] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=94 before_segment_ids=[92] before_wal_bytes=411 after_segment_ids=[94] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=96 before_segment_ids=[94] before_wal_bytes=411 after_segment_ids=[96] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=12/16 records=96 before_segment_ids=[96] before_wal_bytes=36 after_segment_ids=[96] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=98 before_segment_ids=[96] before_wal_bytes=411 after_segment_ids=[98] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=100 before_segment_ids=[98] before_wal_bytes=411 after_segment_ids=[100] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=102 before_segment_ids=[100] before_wal_bytes=411 after_segment_ids=[102] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=104 before_segment_ids=[102] before_wal_bytes=411 after_segment_ids=[104] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=13/16 records=104 before_segment_ids=[104] before_wal_bytes=36 after_segment_ids=[104] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=106 before_segment_ids=[104] before_wal_bytes=411 after_segment_ids=[106] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=108 before_segment_ids=[106] before_wal_bytes=411 after_segment_ids=[108] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=110 before_segment_ids=[108] before_wal_bytes=411 after_segment_ids=[110] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=112 before_segment_ids=[110] before_wal_bytes=411 after_segment_ids=[112] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=14/16 records=112 before_segment_ids=[112] before_wal_bytes=36 after_segment_ids=[112] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=114 before_segment_ids=[112] before_wal_bytes=411 after_segment_ids=[114] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=116 before_segment_ids=[114] before_wal_bytes=411 after_segment_ids=[116] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=118 before_segment_ids=[116] before_wal_bytes=411 after_segment_ids=[118] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=120 before_segment_ids=[118] before_wal_bytes=411 after_segment_ids=[120] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=15/16 records=120 before_segment_ids=[120] before_wal_bytes=36 after_segment_ids=[120] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=122 before_segment_ids=[120] before_wal_bytes=411 after_segment_ids=[122] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=124 before_segment_ids=[122] before_wal_bytes=411 after_segment_ids=[124] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=126 before_segment_ids=[124] before_wal_bytes=411 after_segment_ids=[126] after_wal_bytes=36
+e2e WAL checkpoint sample=1 record=128 before_segment_ids=[126] before_wal_bytes=411 after_segment_ids=[128] after_wal_bytes=36
+e2e WAL reclamation sample=1 cycle=16/16 records=128 before_segment_ids=[128] before_wal_bytes=36 after_segment_ids=[128] after_wal_bytes=36
+sample 3/3
+e2e WAL checkpoint sample=2 record=2 before_segment_ids=[0] before_wal_bytes=411 after_segment_ids=[2] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=4 before_segment_ids=[2] before_wal_bytes=411 after_segment_ids=[4] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=6 before_segment_ids=[4] before_wal_bytes=411 after_segment_ids=[6] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=8 before_segment_ids=[6] before_wal_bytes=411 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=1/16 records=8 before_segment_ids=[8] before_wal_bytes=36 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=10 before_segment_ids=[8] before_wal_bytes=411 after_segment_ids=[10] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=12 before_segment_ids=[10] before_wal_bytes=411 after_segment_ids=[12] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=14 before_segment_ids=[12] before_wal_bytes=411 after_segment_ids=[14] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=16 before_segment_ids=[14] before_wal_bytes=411 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=2/16 records=16 before_segment_ids=[16] before_wal_bytes=36 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=18 before_segment_ids=[16] before_wal_bytes=411 after_segment_ids=[18] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=20 before_segment_ids=[18] before_wal_bytes=411 after_segment_ids=[20] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=22 before_segment_ids=[20] before_wal_bytes=411 after_segment_ids=[22] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=24 before_segment_ids=[22] before_wal_bytes=411 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=3/16 records=24 before_segment_ids=[24] before_wal_bytes=36 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=26 before_segment_ids=[24] before_wal_bytes=411 after_segment_ids=[26] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=28 before_segment_ids=[26] before_wal_bytes=411 after_segment_ids=[28] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=30 before_segment_ids=[28] before_wal_bytes=411 after_segment_ids=[30] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=32 before_segment_ids=[30] before_wal_bytes=411 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=4/16 records=32 before_segment_ids=[32] before_wal_bytes=36 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=34 before_segment_ids=[32] before_wal_bytes=411 after_segment_ids=[34] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=36 before_segment_ids=[34] before_wal_bytes=411 after_segment_ids=[36] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=38 before_segment_ids=[36] before_wal_bytes=411 after_segment_ids=[38] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=40 before_segment_ids=[38] before_wal_bytes=411 after_segment_ids=[40] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=5/16 records=40 before_segment_ids=[40] before_wal_bytes=36 after_segment_ids=[40] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=42 before_segment_ids=[40] before_wal_bytes=411 after_segment_ids=[42] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=44 before_segment_ids=[42] before_wal_bytes=411 after_segment_ids=[44] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=46 before_segment_ids=[44] before_wal_bytes=411 after_segment_ids=[46] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=48 before_segment_ids=[46] before_wal_bytes=411 after_segment_ids=[48] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=6/16 records=48 before_segment_ids=[48] before_wal_bytes=36 after_segment_ids=[48] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=50 before_segment_ids=[48] before_wal_bytes=411 after_segment_ids=[50] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=52 before_segment_ids=[50] before_wal_bytes=411 after_segment_ids=[52] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=54 before_segment_ids=[52] before_wal_bytes=411 after_segment_ids=[54] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=56 before_segment_ids=[54] before_wal_bytes=411 after_segment_ids=[56] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=7/16 records=56 before_segment_ids=[56] before_wal_bytes=36 after_segment_ids=[56] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=58 before_segment_ids=[56] before_wal_bytes=411 after_segment_ids=[58] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=60 before_segment_ids=[58] before_wal_bytes=411 after_segment_ids=[60] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=62 before_segment_ids=[60] before_wal_bytes=411 after_segment_ids=[62] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=64 before_segment_ids=[62] before_wal_bytes=411 after_segment_ids=[64] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=8/16 records=64 before_segment_ids=[64] before_wal_bytes=36 after_segment_ids=[64] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=66 before_segment_ids=[64] before_wal_bytes=411 after_segment_ids=[66] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=68 before_segment_ids=[66] before_wal_bytes=411 after_segment_ids=[68] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=70 before_segment_ids=[68] before_wal_bytes=411 after_segment_ids=[70] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=72 before_segment_ids=[70] before_wal_bytes=411 after_segment_ids=[72] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=9/16 records=72 before_segment_ids=[72] before_wal_bytes=36 after_segment_ids=[72] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=74 before_segment_ids=[72] before_wal_bytes=411 after_segment_ids=[74] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=76 before_segment_ids=[74] before_wal_bytes=411 after_segment_ids=[76] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=78 before_segment_ids=[76] before_wal_bytes=411 after_segment_ids=[78] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=80 before_segment_ids=[78] before_wal_bytes=411 after_segment_ids=[80] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=10/16 records=80 before_segment_ids=[80] before_wal_bytes=36 after_segment_ids=[80] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=82 before_segment_ids=[80] before_wal_bytes=411 after_segment_ids=[82] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=84 before_segment_ids=[82] before_wal_bytes=411 after_segment_ids=[84] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=86 before_segment_ids=[84] before_wal_bytes=411 after_segment_ids=[86] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=88 before_segment_ids=[86] before_wal_bytes=411 after_segment_ids=[88] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=11/16 records=88 before_segment_ids=[88] before_wal_bytes=36 after_segment_ids=[88] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=90 before_segment_ids=[88] before_wal_bytes=411 after_segment_ids=[90] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=92 before_segment_ids=[90] before_wal_bytes=411 after_segment_ids=[92] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=94 before_segment_ids=[92] before_wal_bytes=411 after_segment_ids=[94] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=96 before_segment_ids=[94] before_wal_bytes=411 after_segment_ids=[96] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=12/16 records=96 before_segment_ids=[96] before_wal_bytes=36 after_segment_ids=[96] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=98 before_segment_ids=[96] before_wal_bytes=411 after_segment_ids=[98] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=100 before_segment_ids=[98] before_wal_bytes=411 after_segment_ids=[100] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=102 before_segment_ids=[100] before_wal_bytes=411 after_segment_ids=[102] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=104 before_segment_ids=[102] before_wal_bytes=411 after_segment_ids=[104] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=13/16 records=104 before_segment_ids=[104] before_wal_bytes=36 after_segment_ids=[104] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=106 before_segment_ids=[104] before_wal_bytes=411 after_segment_ids=[106] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=108 before_segment_ids=[106] before_wal_bytes=411 after_segment_ids=[108] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=110 before_segment_ids=[108] before_wal_bytes=411 after_segment_ids=[110] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=112 before_segment_ids=[110] before_wal_bytes=411 after_segment_ids=[112] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=14/16 records=112 before_segment_ids=[112] before_wal_bytes=36 after_segment_ids=[112] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=114 before_segment_ids=[112] before_wal_bytes=411 after_segment_ids=[114] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=116 before_segment_ids=[114] before_wal_bytes=411 after_segment_ids=[116] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=118 before_segment_ids=[116] before_wal_bytes=411 after_segment_ids=[118] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=120 before_segment_ids=[118] before_wal_bytes=411 after_segment_ids=[120] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=15/16 records=120 before_segment_ids=[120] before_wal_bytes=36 after_segment_ids=[120] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=122 before_segment_ids=[120] before_wal_bytes=411 after_segment_ids=[122] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=124 before_segment_ids=[122] before_wal_bytes=411 after_segment_ids=[124] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=126 before_segment_ids=[124] before_wal_bytes=411 after_segment_ids=[126] after_wal_bytes=36
+e2e WAL checkpoint sample=2 record=128 before_segment_ids=[126] before_wal_bytes=411 after_segment_ids=[128] after_wal_bytes=36
+e2e WAL reclamation sample=2 cycle=16/16 records=128 before_segment_ids=[128] before_wal_bytes=36 after_segment_ids=[128] after_wal_bytes=36
+saved benches/storage/results/2026-10-25T16-20-00Z-wal-reclamation-final/raw.json
+{
+  "configuration": {
+    "filter": "e2e/wal_checkpoint_reclamation",
+    "flush_bytes": 512,
+    "key_bytes": 20,
+    "records": 128,
+    "repetitions": 3,
+    "suite": "e2e",
+    "value_bytes": 256,
+    "wal_segment_bytes": 512,
+    "warmup_runs": 1
+  },
+  "metadata": {
+    "architecture": "x86_64",
+    "arguments": [
+      "/home/peacewalker/project/learn/wasm-kv/target/release/deps/storage-0df15882e746aa06",
+      "--run",
+      "--suite",
+      "e2e",
+      "--filter",
+      "e2e/wal_checkpoint_reclamation",
+      "--records",
+      "128",
+      "--value-bytes",
+      "256",
+      "--repetitions",
+      "3",
+      "--warmup-runs",
+      "1",
+      "--flush-bytes",
+      "512",
+      "--wal-segment-bytes",
+      "512",
+      "--data-dir",
+      "target/wal-reclamation-approved-data-20261025",
+      "--output",
+      "benches/storage/results/2026-10-25T16-20-00Z-wal-reclamation-final/raw.json",
+      "--bench"
+    ],
+    "available_parallelism": 8,
+    "cache_policy": "OS page cache is retained; no cold-cache claim",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "data_directory": "/home/peacewalker/project/learn/wasm-kv/target/wal-reclamation-approved-data-20261025",
+    "debug_assertions": false,
+    "filesystem_type": "btrfs",
+    "git_revision": "45f68b8180616dd14ae45527a1e9d5b9428bea45",
+    "latency_policy": "run timings and amortized costs; no request latency percentiles",
+    "os": "linux",
+    "runtime_workers": 2,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_qualification": "HEAD plus dirty worktree; the reported revision alone does not identify the complete build input",
+    "total_wall_seconds_including_setup_and_warmup": 36.0886565,
+    "tracked_changes": "M examples/fts_scale.rs\n M examples/fts_scale_assess.rs\n M src/main.rs\n M tests/integration/batches.rs",
+    "unix_time_seconds": 1792936283
+  },
+  "samples": [
+    {
+      "disk": null,
+      "elapsed_ns": 7744406393,
+      "logical_bytes": 35328,
+      "operations": 131,
+      "registered_sstable_count": null,
+      "sample": 0,
+      "scenario": "e2e/wal_checkpoint_reclamation"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 7703147949,
+      "logical_bytes": 35328,
+      "operations": 131,
+      "registered_sstable_count": null,
+      "sample": 1,
+      "scenario": "e2e/wal_checkpoint_reclamation"
+    },
+    {
+      "disk": null,
+      "elapsed_ns": 7742796963,
+      "logical_bytes": 35328,
+      "operations": 131,
+      "registered_sstable_count": null,
+      "sample": 2,
+      "scenario": "e2e/wal_checkpoint_reclamation"
+    }
+  ],
+  "schema_version": 1,
+  "summaries": [
+    {
+      "amortized_us_per_operation": 59008.52749363868,
+      "logical_mib_per_second": 0.00435846000867644,
+      "max_run_ms": 7744.406393,
+      "median_run_ms": 7742.796963,
+      "min_run_ms": 7703.147949,
+      "operations_per_second": 16.946703171127318,
+      "samples": 3,
+      "scenario": "e2e/wal_checkpoint_reclamation"
+    }
+  ]
+}
