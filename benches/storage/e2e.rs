@@ -42,6 +42,9 @@ pub async fn run(
     {
         checkpoints(config, sample, measurements).await?;
     }
+    if config.includes("e2e/wal_checkpoint_reclamation") {
+        wal_checkpoint_reclamation(config, sample, measurements).await?;
+    }
     if [
         "e2e/range_scan_after_flush_delete",
         "e2e/range_scan_after_flush_reinsert",
@@ -1203,6 +1206,100 @@ async fn checkpoints(
         )?;
     }
     Ok(())
+}
+
+async fn wal_checkpoint_reclamation(
+    config: &BenchConfig,
+    sample: usize,
+    measurements: &mut Vec<Measurement>,
+) -> BenchResult<()> {
+    let directory = config.temporary_directory()?;
+    let settings = storage_config(config, config.flush_bytes);
+    let mut engine = KV2::open(directory.path(), settings.clone()).await?;
+    let records_per_cycle = 8_u64;
+    let cycles = config.records.div_ceil(records_per_cycle);
+    let started = Instant::now();
+    let mut expected = Vec::new();
+
+    for cycle in 0..cycles {
+        let first = cycle * records_per_cycle;
+        let end = (first + records_per_cycle).min(config.records);
+        for index in first..end {
+            let key = config.key(index);
+            let value = config.value(index);
+            let before_put = DiskUsage::inspect(directory.path())?;
+            let before_segments = wal_segment_ids(&directory.path().join("wal"))?;
+            engine.put(key.clone(), value.clone()).await?;
+            let after_put = DiskUsage::inspect(directory.path())?;
+            let after_segments = wal_segment_ids(&directory.path().join("wal"))?;
+            if after_put.sstable_bytes > before_put.sstable_bytes {
+                eprintln!(
+                    "e2e WAL checkpoint sample={sample} record={} before_segment_ids={before_segments:?} before_wal_bytes={} after_segment_ids={after_segments:?} after_wal_bytes={}",
+                    index + 1,
+                    before_put.wal_bytes,
+                    after_put.wal_bytes,
+                );
+            }
+            expected.push((key, value));
+        }
+        verify(&engine, &expected, false).await?;
+        let before_reopen = DiskUsage::inspect(directory.path())?;
+        let before_segments = wal_segment_ids(&directory.path().join("wal"))?;
+        drop(engine);
+        engine = KV2::open(directory.path(), settings.clone()).await?;
+        verify(&engine, &expected, false).await?;
+        let after_reopen = DiskUsage::inspect(directory.path())?;
+        let after_segments = wal_segment_ids(&directory.path().join("wal"))?;
+        eprintln!(
+            "e2e WAL reclamation sample={sample} cycle={}/{} records={} before_segment_ids={before_segments:?} before_wal_bytes={} after_segment_ids={after_segments:?} after_wal_bytes={}",
+            cycle + 1,
+            cycles,
+            expected.len(),
+            before_reopen.wal_bytes,
+            after_reopen.wal_bytes,
+        );
+    }
+
+    let elapsed = started.elapsed();
+    for index in 0..2 {
+        let key = config.key(config.records + index);
+        let value = config.value(config.records + index);
+        engine.put(key.clone(), value.clone()).await?;
+        expected.push((key, value));
+    }
+    verify(&engine, &expected, false).await?;
+    drop(engine);
+    let mut engine = KV2::open(directory.path(), settings).await?;
+    verify(&engine, &expected, false).await?;
+    engine
+        .put(
+            config.key(config.records + 2),
+            config.value(config.records + 2),
+        )
+        .await?;
+    measurements.push(Measurement::new(
+        "e2e/wal_checkpoint_reclamation",
+        sample,
+        config.records + 3,
+        config.logical_bytes(),
+        elapsed,
+    ));
+    Ok(())
+}
+
+fn wal_segment_ids(directory: &Path) -> BenchResult<Vec<u64>> {
+    let mut ids: Vec<_> = std::fs::read_dir(directory)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            entry
+                .path()
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| stem.parse().ok())
+        })
+        .collect();
+    ids.sort_unstable();
+    Ok(ids)
 }
 
 async fn checkpoint_mutations(

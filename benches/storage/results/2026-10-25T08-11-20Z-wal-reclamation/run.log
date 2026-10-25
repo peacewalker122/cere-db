@@ -1,0 +1,22 @@
+sample 1/1
+e2e WAL checkpoint sample=0 record=2 before_segment_ids=[0] before_wal_bytes=411 after_segment_ids=[2] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=4 before_segment_ids=[2] before_wal_bytes=411 after_segment_ids=[4] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=6 before_segment_ids=[4] before_wal_bytes=411 after_segment_ids=[6] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=8 before_segment_ids=[6] before_wal_bytes=411 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=1/4 records=8 before_segment_ids=[8] before_wal_bytes=36 after_segment_ids=[8] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=10 before_segment_ids=[8] before_wal_bytes=411 after_segment_ids=[10] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=12 before_segment_ids=[10] before_wal_bytes=411 after_segment_ids=[12] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=14 before_segment_ids=[12] before_wal_bytes=411 after_segment_ids=[14] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=16 before_segment_ids=[14] before_wal_bytes=411 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=2/4 records=16 before_segment_ids=[16] before_wal_bytes=36 after_segment_ids=[16] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=18 before_segment_ids=[16] before_wal_bytes=411 after_segment_ids=[18] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=20 before_segment_ids=[18] before_wal_bytes=411 after_segment_ids=[20] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=22 before_segment_ids=[20] before_wal_bytes=411 after_segment_ids=[22] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=24 before_segment_ids=[22] before_wal_bytes=411 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=3/4 records=24 before_segment_ids=[24] before_wal_bytes=36 after_segment_ids=[24] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=26 before_segment_ids=[24] before_wal_bytes=411 after_segment_ids=[26] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=28 before_segment_ids=[26] before_wal_bytes=411 after_segment_ids=[28] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=30 before_segment_ids=[28] before_wal_bytes=411 after_segment_ids=[30] after_wal_bytes=36
+e2e WAL checkpoint sample=0 record=32 before_segment_ids=[30] before_wal_bytes=411 after_segment_ids=[32] after_wal_bytes=36
+e2e WAL reclamation sample=0 cycle=4/4 records=32 before_segment_ids=[32] before_wal_bytes=36 after_segment_ids=[32] after_wal_bytes=36
+saved benches/storage/results/2026-10-25T08-11-20Z-wal-reclamation/raw.json

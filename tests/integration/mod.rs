@@ -5,4 +5,5 @@ mod fts;
 mod batches;
 mod scan;
 mod tombstones;
+mod wal_reclamation;
 mod wal_recovery;

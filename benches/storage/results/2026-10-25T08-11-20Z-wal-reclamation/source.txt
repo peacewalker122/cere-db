@@ -1,0 +1,5 @@
+HEAD=cb0b62420c5b519f7cca25472a603ab2a24db2b0
+source_qualification=HEAD plus dirty worktree; benchmark source/docs and independent core checkpoint implementation/tests were dirty
+tracked_changes_at_run=M README.md; M benches/storage/README.md; M benches/storage/e2e.rs; M src/storage/kv2.rs; M src/storage/manifest_codec.rs; M src/storage/recovermanager/README.md; M src/storage/recovermanager/wal.rs; M src/storage/writemanager/write.rs; M tests/integration/batches.rs; M tests/integration/wal_recovery.rs
+current_task_did_not_rerun_core_tests=true
+benchmark_exit_code=0

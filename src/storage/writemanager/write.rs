@@ -16,7 +16,7 @@ use crate::storage::{
     bloom::BloomFilterWrapper,
     config::StorageConfig,
     index::SparseIndexEntry,
-    manifest_codec::{ManifestManager, SSTableMeta},
+    manifest_codec::{ManifestManager, RecoveryCheckpoint, SSTableMeta},
     record::{MemtableRecord, RecordType},
     recovermanager::log_store::LogCommand,
     recovermanager::wal::WALManager,
@@ -60,6 +60,7 @@ pub struct WriteComponent {
     memtable_size: Arc<std::sync::atomic::AtomicUsize>,
     sequence_number: Arc<std::sync::atomic::AtomicU64>,
     writer_lock: Arc<tokio::sync::Mutex<()>>,
+    checkpoint_owner: Option<Arc<crate::storage::recovermanager::wal::CheckpointOwner>>,
 
     sstable_dir: PathBuf,
     wal_manager: Arc<WALManager>,
@@ -74,6 +75,7 @@ impl Clone for WriteComponent {
             memtable_size: Arc::clone(&self.memtable_size),
             sequence_number: Arc::clone(&self.sequence_number),
             writer_lock: Arc::clone(&self.writer_lock),
+            checkpoint_owner: self.checkpoint_owner.clone(),
             sstable_dir: self.sstable_dir.clone(),
             wal_manager: Arc::clone(&self.wal_manager),
             manifest_manager: Arc::clone(&self.manifest_manager),
@@ -114,11 +116,13 @@ impl WriteComponent {
             sstable_dir.display()
         );
 
+        let checkpoint_owner = wal_manager.register_checkpoint_owner();
         Self {
             memtable: Arc::new(SkipMap::new()),
             memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(sequence_number)),
             writer_lock: Arc::new(tokio::sync::Mutex::new(())),
+            checkpoint_owner,
             sstable_dir,
             wal_manager,
             manifest_manager,
@@ -132,11 +136,13 @@ impl WriteComponent {
         manifest_manager: Arc<ManifestManager>,
         config: Arc<StorageConfig>,
     ) -> Self {
+        let checkpoint_owner = wal_manager.register_checkpoint_owner();
         Self {
             memtable: Arc::new(SkipMap::new()),
             memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             writer_lock: Arc::new(tokio::sync::Mutex::new(())),
+            checkpoint_owner,
             sstable_dir: PathBuf::from("data"),
             wal_manager,
             manifest_manager,
@@ -195,7 +201,9 @@ impl WriteComponent {
             };
             commands.push(command);
         }
-        self.wal_manager.write_transaction(commands.clone()).await?;
+        self.wal_manager
+            .write_engine_transaction(commands.clone(), self.checkpoint_owner.as_ref())
+            .await?;
         for command in commands {
             self.append_to_memtable(command.key, command.value, command.record_type, command.lsn);
         }
@@ -209,6 +217,7 @@ impl WriteComponent {
     /// This path intentionally does not write to WAL, because the entry is
     /// already durable via raft/WAL replication flow.
     pub async fn apply_replicated_command(&self, cmd: LogCommand) {
+        self.wal_manager.mark_untracked_mutation();
         let _writer = self.writer_lock.lock().await;
         let normalized_value = if cmd.record_type == RecordType::Delete {
             Vec::new()
@@ -224,6 +233,7 @@ impl WriteComponent {
 
     // the transtition were managed by the calller. WriteComponent only provide the lock_memtable function to return the current memtable for flushing, and create a new memtable for new writes. This design allows the caller to have more control over the transition process, such as when to trigger the flush and how to handle concurrent writes during the transition.
     pub async fn lock_memtable(&mut self) -> Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>> {
+        self.wal_manager.mark_untracked_mutation();
         // current memtable were full, we need to flush it to disk, so we need to create a new memtable and return the old memtable for flushing.
         let new_memtable = Arc::new(SkipMap::new());
 
@@ -240,7 +250,10 @@ impl WriteComponent {
         for entry in self.memtable.iter() {
             snapshot.insert(entry.key().clone(), entry.value().clone());
         }
-        let result = self.flush(Arc::clone(&snapshot)).await?;
+        let sequence = self.current_sequence_number();
+        let result = self
+            .flush_inner(Arc::clone(&snapshot), Some(sequence))
+            .await?;
         let mut removed_bytes = 0;
         for entry in snapshot.iter() {
             if let Some(removed) = self.memtable.remove(entry.key()) {
@@ -293,6 +306,14 @@ impl WriteComponent {
     pub async fn flush(
         &mut self,
         memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
+    ) -> Result<CheckpointResult, DBError> {
+        self.flush_inner(memtable, None).await
+    }
+
+    async fn flush_inner(
+        &mut self,
+        memtable: Arc<SkipMap<(Vec<u8>, u64), MemtableRecord>>,
+        trusted_sequence: Option<u64>,
     ) -> Result<CheckpointResult, DBError> {
         let mut valid_records: std::collections::BTreeMap<Vec<u8>, MemtableRecord> =
             std::collections::BTreeMap::new();
@@ -368,6 +389,31 @@ impl WriteComponent {
             index_block.extend_from_slice(&entry.encode());
         }
 
+        let mut serialized_keys = std::collections::BTreeSet::new();
+        for block in &block_entries {
+            for record in block.data.as_ref().into_iter().flatten() {
+                let Some(expected) = valid_records.get(&record.key) else {
+                    return Err(DBError::Corrupted(
+                        "SSTable block contains a record outside the flush snapshot".into(),
+                    ));
+                };
+                if !serialized_keys.insert(record.key.clone())
+                    || expected.lsn != record.lsn
+                    || expected.record_type != record.record_type
+                    || expected.value != record.value
+                {
+                    return Err(DBError::Corrupted(
+                        "SSTable block records do not cover the flush snapshot".into(),
+                    ));
+                }
+            }
+        }
+        if serialized_keys.len() != valid_records.len() {
+            return Err(DBError::Corrupted(
+                "SSTable blocks omit records from the flush snapshot".into(),
+            ));
+        }
+
         let codec = SSTableCodec::new(block_entries, sparse_index, bloom_filter.clone());
         let (encoded, footer) = codec.serialize();
 
@@ -378,7 +424,8 @@ impl WriteComponent {
 
         let record_count = valid_records.len();
 
-        tokio::fs::create_dir_all(self.sstable_dir.join("level-0")).await?;
+        crate::storage::durable_dir::create_dir_all_durable(&self.sstable_dir.join("level-0"))
+            .await?;
         let (file_id, file_path, mut file) = loop {
             let file_id = self.manifest_manager.allocate_file_id().await?;
             let file_path = self
@@ -424,6 +471,30 @@ impl WriteComponent {
         self.manifest_manager
             .mark_checkpoint(checkpoint_lsn, active_segment)
             .await?;
+        if let Some(committed_sequence) = trusted_sequence.filter(|_| {
+            self.wal_manager
+                .owns_recovery_checkpoints(self.checkpoint_owner.as_ref())
+        }) {
+            if let Some((replay_start_segment, next_physical_lsn)) =
+                self.wal_manager.trusted_recovery_position().await?
+            {
+                let checkpoint = RecoveryCheckpoint {
+                    replay_start_segment,
+                    next_physical_lsn,
+                    committed_sequence,
+                };
+                self.manifest_manager
+                    .publish_recovery_checkpoint(checkpoint)
+                    .await?;
+                if let Err(error) = self
+                    .wal_manager
+                    .reclaim_checkpointed_segments(checkpoint)
+                    .await
+                {
+                    log::warn!("WAL checkpoint reclamation will retry later: {error}");
+                }
+            }
+        }
 
         Ok(CheckpointResult {
             sstable_path: file_path.to_string_lossy().to_string(), // Will be set after flush_memtable
@@ -438,6 +509,7 @@ impl WriteComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::api::AsyncKVEngine;
     use crate::storage::{
         manifest_codec::ManifestManager,
         record::{MemtableRecord, RecordType},
@@ -450,7 +522,7 @@ mod tests {
         std::fs::create_dir_all(temp_dir.join("sstable/level-0")).unwrap();
         std::fs::create_dir_all(temp_dir.join("wal")).unwrap();
 
-        let wal_manager = WALManager::new(temp_dir.join("wal"), 1024 * 1024)
+        let wal_manager = WALManager::new_with_checkpoint(temp_dir.join("wal"), 1024 * 1024, None)
             .await
             .unwrap();
         let manifest_manager = Arc::new(
@@ -502,6 +574,235 @@ mod tests {
         component.flush_active_memtable().await.unwrap();
         assert!(reader.is_empty());
         assert_eq!(clone.memtable_size_bytes(), 0);
+    }
+
+    #[tokio::test]
+    async fn owner_clone_shares_checkpoint_authority_and_reclaims_wal() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut owner = build_write_component(directory.path()).await;
+        let clone = owner.clone();
+        clone
+            .put(b"cloned-write".to_vec(), b"durable".to_vec())
+            .await
+            .unwrap();
+        owner.flush_active_memtable().await.unwrap();
+
+        let checkpoint = owner
+            .manifest_manager
+            .snapshot()
+            .await
+            .recovery_checkpoint
+            .unwrap();
+        assert_eq!(checkpoint.committed_sequence, 1);
+        let segments = std::fs::read_dir(directory.path().join("wal"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".log"))
+            .count();
+        assert_eq!(segments, 1);
+    }
+
+    #[tokio::test]
+    async fn active_flush_publishes_trusted_checkpoint_but_public_flush_does_not() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut component = build_write_component(directory.path()).await;
+        component
+            .put(b"key".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        let partial = SkipMap::new();
+        partial.insert(
+            (b"partial".to_vec(), 999),
+            MemtableRecord::new(b"supplied".to_vec(), RecordType::Put, 999),
+        );
+        component.flush(Arc::new(partial)).await.unwrap();
+        assert!(
+            component
+                .manifest_manager
+                .snapshot()
+                .await
+                .recovery_checkpoint
+                .is_none()
+        );
+
+        component.flush_active_memtable().await.unwrap();
+        let checkpoint = component
+            .manifest_manager
+            .snapshot()
+            .await
+            .recovery_checkpoint
+            .unwrap();
+        assert_eq!(checkpoint.committed_sequence, 1);
+        assert_eq!(checkpoint.replay_start_segment, 2);
+        assert_eq!(checkpoint.next_physical_lsn, 3);
+    }
+
+    #[tokio::test]
+    async fn default_oversized_batch_is_fully_checkpointed_and_recovered() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut component = build_write_component(directory.path()).await;
+        let operations = (0..850)
+            .map(|index| BatchOperation::Put {
+                key: format!("k{index:04}").into_bytes(),
+                value: vec![(index % 251) as u8; 5000],
+            })
+            .collect();
+        component.write_batch(operations).await.unwrap();
+        assert_eq!(component.current_sequence_number(), 850);
+        let result = component.flush_active_memtable().await.unwrap();
+        assert_eq!(result.record_count, 850);
+
+        let segments = std::fs::read_dir(directory.path().join("wal"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".log"))
+            .count();
+        assert_eq!(segments, 1);
+        drop(component);
+
+        let database = crate::storage::kv2::KV2::open_with_defaults(directory.path())
+            .await
+            .unwrap();
+        for index in 0..850 {
+            assert_eq!(
+                database
+                    .get(format!("k{index:04}").as_bytes())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .as_ref(),
+                &vec![(index % 251) as u8; 5000]
+            );
+        }
+        assert_eq!(database.scan(..).await.unwrap().len(), 850);
+    }
+
+    #[tokio::test]
+    async fn oversized_records_at_block_boundaries_are_all_serialized() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut component = build_write_component(directory.path()).await;
+        component
+            .write_batch(vec![
+                BatchOperation::Put {
+                    key: b"00-large-first".to_vec(),
+                    value: vec![1; 5000],
+                },
+                BatchOperation::Put {
+                    key: b"01-small".to_vec(),
+                    value: b"small-a".to_vec(),
+                },
+                BatchOperation::Put {
+                    key: b"02-large-middle".to_vec(),
+                    value: vec![2; 5000],
+                },
+                BatchOperation::Put {
+                    key: b"03-small".to_vec(),
+                    value: b"small-b".to_vec(),
+                },
+                BatchOperation::Put {
+                    key: b"04-large-last".to_vec(),
+                    value: vec![3; 5000],
+                },
+            ])
+            .await
+            .unwrap();
+        let result = component.flush_active_memtable().await.unwrap();
+        assert_eq!(result.record_count, 5);
+        drop(component);
+
+        let database = crate::storage::kv2::KV2::open_with_defaults(directory.path())
+            .await
+            .unwrap();
+        for (key, expected) in [
+            (b"00-large-first".as_slice(), vec![1; 5000]),
+            (b"02-large-middle".as_slice(), vec![2; 5000]),
+            (b"04-large-last".as_slice(), vec![3; 5000]),
+        ] {
+            assert_eq!(
+                database.get(key).await.unwrap().unwrap().as_ref(),
+                &expected
+            );
+        }
+        assert_eq!(
+            database.get(b"01-small").await.unwrap().unwrap().as_ref(),
+            b"small-a"
+        );
+        assert_eq!(
+            database.get(b"03-small").await.unwrap().unwrap().as_ref(),
+            b"small-b"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_wal_mutation_prevents_checkpoint_publication() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut component = build_write_component(directory.path()).await;
+        component
+            .wal_manager
+            .write_log(
+                &b"external".to_vec(),
+                &b"not-in-memtable".to_vec(),
+                7,
+                RecordType::Put,
+            )
+            .await
+            .unwrap();
+        component
+            .put(b"engine".to_vec(), b"tracked".to_vec())
+            .await
+            .unwrap();
+        component.flush_active_memtable().await.unwrap();
+        assert!(
+            component
+                .manifest_manager
+                .snapshot()
+                .await
+                .recovery_checkpoint
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn standalone_wal_does_not_grant_engine_checkpoint_authority() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(directory.path().join("sstable/level-0")).unwrap();
+        std::fs::create_dir_all(directory.path().join("wal")).unwrap();
+        let wal_manager = Arc::new(
+            WALManager::new(directory.path().join("wal"), 1024 * 1024)
+                .await
+                .unwrap(),
+        );
+        let manifest_manager = Arc::new(
+            ManifestManager::load_or_create(directory.path().join("MANIFEST"))
+                .await
+                .unwrap(),
+        );
+        let mut component = WriteComponent::new(
+            directory.path().join("sstable"),
+            Arc::clone(&wal_manager),
+            Arc::clone(&manifest_manager),
+            0,
+            Arc::new(StorageConfig::default()),
+        );
+        component
+            .put(b"raft-log".to_vec(), b"retained".to_vec())
+            .await
+            .unwrap();
+        component.flush_active_memtable().await.unwrap();
+
+        assert!(
+            manifest_manager
+                .snapshot()
+                .await
+                .recovery_checkpoint
+                .is_none()
+        );
+        assert!(
+            directory
+                .path()
+                .join("wal/00000000000000000000.log")
+                .exists()
+        );
     }
 
     #[tokio::test]

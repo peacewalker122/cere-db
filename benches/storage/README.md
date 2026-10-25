@@ -118,11 +118,21 @@ These measurements establish a local baseline, not a performance guarantee.
 
 ## Current recovery scope
 
-WAL segments remain retained after checkpointing. Recovery therefore replays
-committed history, including flushed updates. Comparing before/after-checkpoint
-reopen time measures current behavior; it does not assume checkpointing shortens
-recovery. Raft consensus and multi-node networking are outside this standalone
-storage harness.
+KV2 checkpoints establish a trusted manifest checkpoint after SSTable
+publication and WAL rotation. On open, required SSTables are fully content-
+validated, along with WAL history from the replay floor, before covered earlier
+WAL segments are removed. SSTable preflight currently reads a whole table into
+memory, so startup validation memory can scale with the largest registered
+table. Missing/corrupt required files fail closed; covered-file cleanup failures
+are logged and retried on a subsequent startup after validation. Legacy
+informational manifest checkpoints do not authorize deletion. A public flush,
+foreign `WriteComponent`, standalone WAL, or raw append does not acquire KV2's
+trusted checkpoint authority. Physical segment IDs and WAL LSNs are distinct
+from the application's MVCC sequence. Reclamation follows checkpoint progress
+rather than a fixed ring capacity; a stalled checkpoint can allow WAL growth.
+`e2e/wal_checkpoint_reclamation` measures actual file counts and logical bytes
+around repeated public KV2 checkpoint cycles and reopen. Raft consensus and
+multi-node networking remain outside this storage harness.
 
 ## Scenario coverage
 
@@ -168,6 +178,12 @@ storage harness.
   configured flush threshold. At least one SSTable must be produced. Post-flush
   reads run before reopening and may span SSTables and a remaining memtable.
   This dataset contains puts only; it is distinct from the mutation workload.
+- `e2e/wal_checkpoint_reclamation` writes small groups through public `KV2`,
+  observes WAL `.log` filenames, segment IDs and logical bytes through filesystem metadata,
+  reopens between groups, and verifies all values after each reopen. It then
+  verifies new writes before and after another reopen. The checkpoint/reopen
+  behavior is observed; no private WAL deletion hook or disk-format parser is
+  used. This is a correctness-oriented lifecycle check, not a performance claim.
 - `e2e/range_scan_after_flush_delete` and
   `e2e/range_scan_after_flush_reinsert`: load and automatically flush data, delete
   even key indexes, then optionally reinsert them with new values. Only the final
@@ -269,3 +285,9 @@ with [raw JSON](results/2026-10-24T14-43-09Z-bm25-app-ranked/raw.json). The
 concurrent full-suite run is separately archived at
 [2026-10-24T14-35-00Z](results/2026-10-24T14-35-00Z-bm25-naive/raw.json); it
 was not modified as part of the app-ranked follow-up.
+
+The fresh one-sample 90-scenario release smoke run for checkpoint-based WAL
+reclamation is archived at
+[2026-10-25T08-31-34Z](results/2026-10-25T08-31-34Z-wal-reclamation-final/summary.md)
+with its [raw JSON](results/2026-10-25T08-31-34Z-wal-reclamation-final/raw.json).
+This is a correctness-oriented smoke run, not a performance baseline.

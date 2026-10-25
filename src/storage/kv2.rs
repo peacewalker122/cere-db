@@ -84,22 +84,41 @@ impl KV2 {
         let level0_dir = sstable_dir.join("level-0");
         let manifest_path = base_dir.join("MANIFEST");
 
-        tokio::fs::create_dir_all(&wal_dir).await?;
-        tokio::fs::create_dir_all(&level0_dir).await?;
+        crate::storage::durable_dir::create_dir_all_durable(&base_dir).await?;
+        crate::storage::durable_dir::create_dir_all_durable(&wal_dir).await?;
+        crate::storage::durable_dir::create_dir_all_durable(&level0_dir).await?;
 
         let cancel = tokio_util::sync::CancellationToken::new();
 
         let config = Arc::new(config);
 
-        let wal_manager =
-            Arc::new(WALManager::new(wal_dir.clone(), config.wal_segment_size).await?);
-        let recovered_wal_records = wal_manager.recover_records().await?;
-
-        let (recovered_memtable, recovered_sequence, recovered_memtable_size) =
-            Self::build_recovered_memtable(recovered_wal_records);
-
-        // Single ManifestManager as source of truth - shared with all components
         let manifest = Arc::new(ManifestManager::load_or_create(manifest_path.clone()).await?);
+        let manifest_snapshot = manifest.snapshot().await;
+        for table in manifest_snapshot.levels.values().flatten() {
+            Self::validate_manifest_sstable(table).await?;
+        }
+        let wal_manager = Arc::new(
+            WALManager::new_with_checkpoint(
+                wal_dir.clone(),
+                config.wal_segment_size,
+                manifest_snapshot.recovery_checkpoint,
+            )
+            .await?,
+        );
+        let recovered_wal_records = wal_manager.recover_records().await?;
+        if let Some(checkpoint) = manifest_snapshot.recovery_checkpoint {
+            if let Err(error) = wal_manager.reclaim_checkpointed_segments(checkpoint).await {
+                log::warn!("WAL checkpoint reclamation will retry later: {error}");
+            }
+        }
+
+        let (recovered_memtable, recovered_wal_sequence, recovered_memtable_size) =
+            Self::build_recovered_memtable(recovered_wal_records);
+        let recovered_sequence = recovered_wal_sequence.max(
+            manifest_snapshot
+                .recovery_checkpoint
+                .map_or(0, |checkpoint| checkpoint.committed_sequence),
+        );
 
         let mut write_component = WriteComponent::new(
             sstable_dir.clone(),
@@ -152,6 +171,116 @@ impl KV2 {
     /// Convenience wrapper for backward compatibility with existing code.
     pub async fn open_with_defaults(base_dir: impl AsRef<Path>) -> Result<Self, DBError> {
         Self::open(base_dir, StorageConfig::default()).await
+    }
+
+    async fn validate_manifest_sstable(
+        table: &crate::storage::manifest_codec::SSTableMeta,
+    ) -> Result<(), DBError> {
+        use tokio::io::{AsyncSeekExt, BufReader};
+
+        let mut file = tokio::fs::File::open(&table.path).await.map_err(|error| {
+            DBError::Corrupted(format!(
+                "cannot open manifest SSTable {}: {error}",
+                table.path
+            ))
+        })?;
+        let file_len = file.metadata().await?.len();
+        if file_len < crate::storage::footer::FOOTER_SIZE {
+            return Err(DBError::Corrupted(format!(
+                "manifest SSTable is shorter than its footer: {}",
+                table.path
+            )));
+        }
+
+        let footer =
+            crate::storage::sstable_codec::SSTableCodec::deserialize_footer(&mut file).await?;
+        if footer.data_block_start != 0
+            || footer.data_block_end != footer.index_block_start
+            || footer.index_block_start > footer.index_block_end
+            || footer.index_block_end != footer.bloom_block_start
+            || footer.bloom_block_start > footer.bloom_block_end
+            || footer
+                .bloom_block_end
+                .checked_add(crate::storage::footer::FOOTER_SIZE)
+                != Some(file_len)
+        {
+            return Err(DBError::Corrupted(format!(
+                "invalid SSTable section offsets: {}",
+                table.path
+            )));
+        }
+
+        let preflight_bytes = std::fs::read(&table.path)?;
+        crate::storage::sstable_preflight::validate(&preflight_bytes, &footer)?;
+
+        let mut checksum_file = std::fs::File::open(&table.path)?;
+        let checked_index =
+            crate::storage::footer::read_sstable_sparse_index(&mut checksum_file, &footer)?;
+        crate::storage::footer::read_sstable_bloom(&mut checksum_file, &footer)?;
+
+        file.seek(std::io::SeekFrom::Start(0)).await?;
+        let mut reader = BufReader::new(file);
+        let (decoded_footer, index, _) =
+            crate::storage::sstable_codec::SSTableCodec::deserialize_sections(&mut reader).await?;
+        let index_records = index
+            .iter()
+            .try_fold(0usize, |count, entry| {
+                count.checked_add(entry.record_count as usize)
+            })
+            .ok_or_else(|| DBError::Corrupted("SSTable record count overflow".into()))?;
+        if index.is_empty()
+            || checked_index.len() != index.len()
+            || index_records != table.record_count
+            || index
+                .first()
+                .is_none_or(|entry| entry.first_key != table.smallest_key)
+            || index
+                .last()
+                .is_none_or(|entry| entry.last_key != table.largest_key)
+        {
+            return Err(DBError::Corrupted(format!(
+                "SSTable index does not match manifest metadata: {}",
+                table.path
+            )));
+        }
+        let blocks = crate::storage::sstable_codec::SSTableCodec::get_all_blocks(
+            &mut reader,
+            &decoded_footer,
+            &index,
+        )
+        .await?;
+        let mut actual_count = 0usize;
+        for (entry, block) in index.iter().zip(blocks) {
+            let records = block.data.ok_or_else(|| {
+                DBError::Corrupted(format!("SSTable block has no records: {}", table.path))
+            })?;
+            if records.is_empty()
+                || records.len() != entry.record_count as usize
+                || records
+                    .first()
+                    .is_none_or(|record| record.key != entry.first_key)
+                || records
+                    .last()
+                    .is_none_or(|record| record.key != entry.last_key)
+                || block.first_key != entry.first_key
+                || block.last_key != entry.last_key
+            {
+                return Err(DBError::Corrupted(format!(
+                    "SSTable block does not match sparse index: {}",
+                    table.path
+                )));
+            }
+            actual_count = actual_count
+                .checked_add(records.len())
+                .ok_or_else(|| DBError::Corrupted("SSTable record count overflow".into()))?;
+        }
+        if actual_count != table.record_count {
+            return Err(DBError::Corrupted(format!(
+                "SSTable record count does not match manifest: {}",
+                table.path
+            )));
+        }
+        Ok(())
     }
 
     /// Blocking convenience wrapper for sync call sites with default config.
@@ -352,6 +481,26 @@ impl AsyncKVEngine for KV2 {
 mod tests {
     use super::KV2;
     use crate::api::api::AsyncKVEngine;
+    use crate::storage::record::{MemtableRecord, RecordType};
+    use crate::{BatchOperation, Bm25Config, DocumentId, FtsIndex, FtsQuery, StorageConfig};
+    use crossbeam_skiplist::SkipMap;
+    use std::sync::Arc;
+
+    async fn wal_files(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut entries = tokio::fs::read_dir(directory).await.unwrap();
+        let mut files = Vec::new();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(".log"))
+            {
+                files.push(entry.path());
+            }
+        }
+        files.sort();
+        files
+    }
 
     #[tokio::test]
     async fn open_initializes_storage_directories() {
@@ -419,6 +568,568 @@ mod tests {
         assert_eq!(value.unwrap().as_ref(), b"recovery-value");
 
         std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_trusted_checkpoints_reclaim_prefix_and_restore_sstable_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        engine
+            .put(b"keep".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        engine.wal_manager.rotate_wal_file().await.unwrap();
+        engine.wal_manager.rotate_wal_file().await.unwrap();
+        let before = wal_files(&engine.wal_dir).await;
+        let mut before_bytes = 0;
+        for path in &before {
+            before_bytes += tokio::fs::metadata(path).await.unwrap().len();
+        }
+        assert_eq!(before.len(), 3);
+        engine
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        let after_first_checkpoint = wal_files(&engine.wal_dir).await;
+        let after_first_bytes: u64 = {
+            let mut bytes = 0;
+            for path in &after_first_checkpoint {
+                bytes += tokio::fs::metadata(path).await.unwrap().len();
+            }
+            bytes
+        };
+        assert!(after_first_checkpoint.len() < before.len());
+        assert!(after_first_bytes < before_bytes);
+
+        for (key, value) in [
+            (b"replace".to_vec(), b"old".to_vec()),
+            (b"delete".to_vec(), b"gone".to_vec()),
+        ] {
+            engine.put(key, value).await.unwrap();
+            engine
+                .write_component
+                .flush_active_memtable()
+                .await
+                .unwrap();
+        }
+        assert_eq!(wal_files(&engine.wal_dir).await.len(), 1);
+        let retained = wal_files(&engine.wal_dir).await;
+        let retained_bytes = tokio::fs::metadata(&retained[0]).await.unwrap().len();
+        assert_eq!(
+            retained_bytes,
+            crate::storage::constant::WAL_HEADER_SIZE as u64
+        );
+        assert_eq!(
+            engine
+                .manifest
+                .snapshot()
+                .await
+                .recovery_checkpoint
+                .unwrap()
+                .replay_start_segment,
+            5
+        );
+
+        engine
+            .put(b"replace".to_vec(), b"new".to_vec())
+            .await
+            .unwrap();
+        engine.delete(b"delete".to_vec()).await.unwrap();
+        engine
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        assert_eq!(wal_files(&engine.wal_dir).await.len(), 1);
+        drop(engine);
+
+        let mut engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        assert_eq!(engine.write_component.current_sequence_number(), 5);
+        assert_eq!(
+            engine.get(b"keep").await.unwrap().unwrap().as_ref(),
+            b"value"
+        );
+        assert_eq!(
+            engine.get(b"replace").await.unwrap().unwrap().as_ref(),
+            b"new"
+        );
+        assert!(engine.get(b"delete").await.unwrap().is_none());
+        engine
+            .write_batch(vec![
+                BatchOperation::Put {
+                    key: b"after-reopen".to_vec(),
+                    value: b"next".to_vec(),
+                },
+                BatchOperation::Put {
+                    key: b"batch-second".to_vec(),
+                    value: b"second".to_vec(),
+                },
+            ])
+            .await
+            .unwrap();
+        assert_eq!(engine.write_component.current_sequence_number(), 7);
+        engine
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        drop(engine);
+
+        let engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        assert_eq!(engine.write_component.current_sequence_number(), 7);
+        assert_eq!(
+            engine.get(b"after-reopen").await.unwrap().unwrap().as_ref(),
+            b"next"
+        );
+        assert_eq!(
+            engine.get(b"batch-second").await.unwrap().unwrap().as_ref(),
+            b"second"
+        );
+        assert_eq!(wal_files(&directory.path().join("wal")).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_reopen_retries_stale_prefix_cleanup_and_ignores_covered_corruption() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        for sequence in 1..=2 {
+            engine
+                .put(vec![b'k', sequence], vec![b'v', sequence])
+                .await
+                .unwrap();
+            engine
+                .write_component
+                .flush_active_memtable()
+                .await
+                .unwrap();
+        }
+        let checkpoint = engine
+            .manifest
+            .snapshot()
+            .await
+            .recovery_checkpoint
+            .unwrap();
+        assert_eq!(checkpoint.replay_start_segment, 2);
+        let old_file = engine.wal_dir.join("00000000000000000000.log");
+        let blocked_file = engine.wal_dir.join("00000000000000000001.log");
+        tokio::fs::write(&old_file, b"covered corrupt WAL")
+            .await
+            .unwrap();
+        tokio::fs::create_dir(&blocked_file).await.unwrap();
+        drop(engine);
+
+        let engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        assert_eq!(
+            engine.get(&[b'k', 1]).await.unwrap().unwrap().as_ref(),
+            &[b'v', 1]
+        );
+        assert!(!old_file.exists());
+        assert!(blocked_file.is_dir());
+        drop(engine);
+
+        tokio::fs::remove_dir(&blocked_file).await.unwrap();
+        let engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        assert!(wal_files(&engine.wal_dir).await.iter().all(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".log"))
+                .and_then(|id| id.parse::<u64>().ok())
+                .is_none_or(|id| id >= checkpoint.replay_start_segment)
+        }));
+    }
+
+    #[tokio::test]
+    async fn partial_flush_and_untracked_append_preserve_post_checkpoint_wal() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        engine
+            .put(b"base".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        engine
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        let checkpoint = engine
+            .manifest
+            .snapshot()
+            .await
+            .recovery_checkpoint
+            .unwrap();
+        assert_eq!(checkpoint.replay_start_segment, 1);
+
+        engine
+            .wal_manager
+            .write_log(
+                &b"untracked".to_vec(),
+                &b"raw".to_vec(),
+                100,
+                RecordType::Put,
+            )
+            .await
+            .unwrap();
+        engine
+            .put(b"engine".to_vec(), b"tracked".to_vec())
+            .await
+            .unwrap();
+        engine
+            .write_component
+            .flush(Arc::new({
+                let partial = SkipMap::new();
+                partial.insert(
+                    (b"provided".to_vec(), 101),
+                    MemtableRecord::new(b"partial".to_vec(), RecordType::Put, 101),
+                );
+                partial
+            }))
+            .await
+            .unwrap();
+
+        assert!(engine.wal_dir.join("00000000000000000001.log").exists());
+        assert_eq!(
+            engine
+                .manifest
+                .snapshot()
+                .await
+                .recovery_checkpoint
+                .unwrap(),
+            checkpoint
+        );
+    }
+
+    #[tokio::test]
+    async fn public_partial_flush_does_not_authorize_wal_reclamation() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        engine
+            .put(b"engine".to_vec(), b"tracked".to_vec())
+            .await
+            .unwrap();
+        let partial = SkipMap::new();
+        partial.insert(
+            (b"provided".to_vec(), 100),
+            MemtableRecord::new(b"partial".to_vec(), RecordType::Put, 100),
+        );
+        engine
+            .write_component
+            .flush(Arc::new(partial))
+            .await
+            .unwrap();
+        assert!(engine.wal_dir.join("00000000000000000000.log").exists());
+        assert!(
+            engine
+                .manifest
+                .snapshot()
+                .await
+                .recovery_checkpoint
+                .is_none()
+        );
+
+        engine
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        assert_eq!(wal_files(&engine.wal_dir).await.len(), 1);
+        assert!(!engine.wal_dir.join("00000000000000000000.log").exists());
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_checkpoint_publication_leaves_reopenable_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        engine
+            .put(b"durable".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        engine
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        let checkpoint = engine
+            .manifest
+            .snapshot()
+            .await
+            .recovery_checkpoint
+            .unwrap();
+        let covered = engine
+            .wal_dir
+            .join(format!("{:020}.log", checkpoint.replay_start_segment - 1));
+        tokio::fs::write(&covered, b"leftover covered segment")
+            .await
+            .unwrap();
+
+        let wal_manager = Arc::clone(&engine.wal_manager);
+        let mut cleanup = Box::pin(wal_manager.reclaim_checkpointed_segments(checkpoint));
+        let mut cleanup_was_pending = false;
+        let mut cleanup_completed = false;
+        for _ in 0..3 {
+            let result = std::future::poll_fn(|context| {
+                match std::future::Future::poll(cleanup.as_mut(), context) {
+                    std::task::Poll::Pending => std::task::Poll::Ready(None),
+                    std::task::Poll::Ready(result) => std::task::Poll::Ready(Some(result)),
+                }
+            })
+            .await;
+            if let Some(result) = result {
+                result.unwrap();
+                cleanup_completed = true;
+                break;
+            }
+            cleanup_was_pending = true;
+        }
+        assert!(cleanup_was_pending && !cleanup_completed);
+        drop(cleanup);
+        drop(engine);
+
+        let engine = KV2::open_with_defaults(directory.path()).await.unwrap();
+        assert_eq!(
+            engine.get(b"durable").await.unwrap().unwrap().as_ref(),
+            b"value"
+        );
+        let checkpoint = engine
+            .manifest
+            .snapshot()
+            .await
+            .recovery_checkpoint
+            .unwrap();
+        assert!(!covered.exists());
+        assert!(wal_files(&engine.wal_dir).await.iter().all(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".log"))
+                .and_then(|id| id.parse::<u64>().ok())
+                .is_none_or(|id| id >= checkpoint.replay_start_segment)
+        }));
+    }
+
+    #[tokio::test]
+    async fn reclaimed_wal_reopens_fts_values_and_bm25_from_sstables() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = StorageConfig {
+            memtable_size_threshold: usize::MAX as u64,
+            ..StorageConfig::default()
+        };
+        let engine = KV2::open(directory.path(), config.clone()).await.unwrap();
+        let mut index = FtsIndex::open(engine).await.unwrap();
+        index
+            .put_document(DocumentId::new("alpha").unwrap(), b"rare common".to_vec())
+            .await
+            .unwrap();
+        index
+            .put_document(
+                DocumentId::new("beta").unwrap(),
+                b"rare rare common".to_vec(),
+            )
+            .await
+            .unwrap();
+        index
+            .put_document(DocumentId::new("alpha").unwrap(), b"fresh rare".to_vec())
+            .await
+            .unwrap();
+        index
+            .delete_document(&DocumentId::new("beta").unwrap())
+            .await
+            .unwrap();
+        let mut engine = index.into_inner();
+        engine
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        assert_eq!(wal_files(&engine.wal_dir).await.len(), 1);
+        drop(engine);
+
+        let engine = KV2::open(directory.path(), config).await.unwrap();
+        let index = FtsIndex::open(engine).await.unwrap();
+        assert_eq!(
+            index
+                .get_document(&DocumentId::new("alpha").unwrap())
+                .await
+                .unwrap()
+                .unwrap(),
+            b"fresh rare"
+        );
+        assert!(
+            index
+                .get_document(&DocumentId::new("beta").unwrap())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let ranked = index
+            .search_ranked(FtsQuery::Or(vec!["rare".into()]), 10, Bm25Config::default())
+            .await
+            .unwrap();
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].id.as_str(), "alpha");
+        assert!(ranked[0].score.is_finite());
+    }
+
+    #[tokio::test]
+    async fn reopen_uses_checkpoint_for_disk_values_tombstones_and_sequence() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        {
+            let mut database = KV2::open_with_defaults(temp_dir.path()).await.unwrap();
+            database
+                .put(b"kept".to_vec(), b"value".to_vec())
+                .await
+                .unwrap();
+            database
+                .put(b"gone".to_vec(), b"old".to_vec())
+                .await
+                .unwrap();
+            database.delete(b"gone".to_vec()).await.unwrap();
+            database
+                .write_component
+                .flush_active_memtable()
+                .await
+                .unwrap();
+            let checkpoint = database
+                .manifest
+                .snapshot()
+                .await
+                .recovery_checkpoint
+                .unwrap();
+            assert_eq!(checkpoint.committed_sequence, 3);
+        }
+        let mut database = KV2::open_with_defaults(temp_dir.path()).await.unwrap();
+        assert_eq!(database.write_component.current_sequence_number(), 3);
+        assert_eq!(
+            database.get(b"kept").await.unwrap().unwrap().as_ref(),
+            b"value"
+        );
+        assert!(database.get(b"gone").await.unwrap().is_none());
+        database
+            .put(b"next".to_vec(), b"write".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(database.write_component.current_sequence_number(), 4);
+        let checkpoint = database
+            .manifest
+            .snapshot()
+            .await
+            .recovery_checkpoint
+            .unwrap();
+        let recovered = database.wal_manager.recover_records().await.unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].lsn, 4);
+        assert!(
+            checkpoint.next_physical_lsn
+                < database.wal_manager.recovery_position().await.unwrap().1
+        );
+    }
+
+    #[tokio::test]
+    async fn open_fails_closed_when_checkpoint_sstable_is_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut database = KV2::open_with_defaults(temp_dir.path()).await.unwrap();
+        database
+            .put(b"key".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        database
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        let path = database.manifest.snapshot().await.levels[&0][0]
+            .path
+            .clone();
+        drop(database);
+        tokio::fs::remove_file(path).await.unwrap();
+        assert!(KV2::open_with_defaults(temp_dir.path()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_checkpoint_sstable_preserves_restored_covered_wal() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut database = KV2::open_with_defaults(directory.path()).await.unwrap();
+        database
+            .put(b"checkpoint-key".to_vec(), b"checkpoint-value".to_vec())
+            .await
+            .unwrap();
+        let covered_wal = wal_files(&database.wal_dir).await[0].clone();
+        let covered_bytes = tokio::fs::read(&covered_wal).await.unwrap();
+        database.wal_manager.rotate_wal_file().await.unwrap();
+        database.wal_manager.rotate_wal_file().await.unwrap();
+        database
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        let table_path = database.manifest.snapshot().await.levels[&0][0]
+            .path
+            .clone();
+        drop(database);
+
+        tokio::fs::write(&covered_wal, &covered_bytes)
+            .await
+            .unwrap();
+        tokio::fs::write(&table_path, []).await.unwrap();
+
+        assert!(KV2::open_with_defaults(directory.path()).await.is_err());
+        assert_eq!(tokio::fs::read(covered_wal).await.unwrap(), covered_bytes);
+    }
+
+    #[tokio::test]
+    async fn valid_checkpoint_sstable_still_reopens() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut database = KV2::open_with_defaults(directory.path()).await.unwrap();
+        database
+            .put(b"checkpoint-key".to_vec(), b"checkpoint-value".to_vec())
+            .await
+            .unwrap();
+        database
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        drop(database);
+
+        let reopened = KV2::open_with_defaults(directory.path()).await.unwrap();
+        assert_eq!(
+            reopened
+                .get(b"checkpoint-key")
+                .await
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            b"checkpoint-value"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_fails_closed_when_checkpoint_wal_segment_is_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut database = KV2::open_with_defaults(temp_dir.path()).await.unwrap();
+        database
+            .put(b"key".to_vec(), b"value".to_vec())
+            .await
+            .unwrap();
+        database
+            .write_component
+            .flush_active_memtable()
+            .await
+            .unwrap();
+        let checkpoint = database
+            .manifest
+            .snapshot()
+            .await
+            .recovery_checkpoint
+            .unwrap();
+        drop(database);
+        tokio::fs::remove_file(
+            temp_dir
+                .path()
+                .join(format!("wal/{:020}.log", checkpoint.replay_start_segment)),
+        )
+        .await
+        .unwrap();
+        assert!(KV2::open_with_defaults(temp_dir.path()).await.is_err());
     }
 
     #[tokio::test]
@@ -561,9 +1272,11 @@ mod tests {
             let scanned = kv2.read_manager.scan_range(.., watermark).await.unwrap();
             assert_eq!(scanned.len(), keys);
             let expected_generation = (watermark / keys as u64) - 1;
-            assert!(scanned
-                .iter()
-                .all(|(_, value)| { value == expected_generation.to_string().as_bytes() }));
+            assert!(
+                scanned
+                    .iter()
+                    .all(|(_, value)| { value == expected_generation.to_string().as_bytes() })
+            );
         }
 
         let sequences = writer_task.await.unwrap();
@@ -961,12 +1674,13 @@ mod raft_tests {
                 b"yes"
             );
         }
-        assert!(kv
-            .read_manager
-            .get(b"gone".to_vec(), 3)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            kv.read_manager
+                .get(b"gone".to_vec(), 3)
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(kv.write_handle.read().await.memtable_size_bytes(), 0);
         kv.raft_layer.shutdown().await;
     }

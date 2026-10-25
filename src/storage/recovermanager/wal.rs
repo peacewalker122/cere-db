@@ -1,7 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    sync::atomic::AtomicU64,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicU64},
+    },
 };
 
 use crossbeam_skiplist::SkipMap;
@@ -17,7 +20,7 @@ use super::{
 };
 use crate::{
     error::DBError,
-    storage::{constant::*, record::RecordType},
+    storage::{constant::*, manifest_codec::RecoveryCheckpoint, record::RecordType},
 };
 
 const LEGACY_WAL_VERSION: u64 = 1;
@@ -28,6 +31,14 @@ pub struct WALManager {
     state: Mutex<WriterState>,
     max_segment_size: u64,
     wal_dir: PathBuf,
+    raw_writes: std::sync::atomic::AtomicBool,
+    checkpoint_owner: bool,
+    checkpoint_owner_registered: AtomicBool,
+    checkpoint_token: OnceLock<Arc<CheckpointOwner>>,
+}
+
+pub(crate) struct CheckpointOwner {
+    _private: (),
 }
 
 struct WriterState {
@@ -37,6 +48,7 @@ struct WriterState {
     next_lsn: u64,
     poisoned: bool,
     sealed: BTreeSet<u64>,
+    checkpoint: Option<RecoveryCheckpoint>,
 }
 
 pub type FileWalStore = WALManager;
@@ -133,9 +145,36 @@ impl Analysis {
 
 impl WALManager {
     pub async fn new(wal_dir: PathBuf, max_segment_size: u64) -> Result<Self, DBError> {
-        tokio::fs::create_dir_all(&wal_dir).await?;
-        let paths = segment_paths(&wal_dir).await?;
+        Self::new_inner(wal_dir, max_segment_size, None, false).await
+    }
+
+    pub(crate) async fn new_with_checkpoint(
+        wal_dir: PathBuf,
+        max_segment_size: u64,
+        checkpoint: Option<RecoveryCheckpoint>,
+    ) -> Result<Self, DBError> {
+        Self::new_inner(wal_dir, max_segment_size, checkpoint, true).await
+    }
+
+    async fn new_inner(
+        wal_dir: PathBuf,
+        max_segment_size: u64,
+        checkpoint: Option<RecoveryCheckpoint>,
+        checkpoint_owner: bool,
+    ) -> Result<Self, DBError> {
+        crate::storage::durable_dir::create_dir_all_durable(&wal_dir).await?;
+        let paths = segment_paths(
+            &wal_dir,
+            checkpoint.map(|checkpoint| checkpoint.replay_start_segment),
+        )
+        .await?;
         let mut analysis = Analysis::default();
+        if let Some(checkpoint) = checkpoint {
+            analysis.latest_lsn = checkpoint
+                .next_physical_lsn
+                .checked_sub(1)
+                .ok_or_else(|| DBError::Corrupted("invalid checkpoint physical LSN".into()))?;
+        }
         let mut latest_version = WAL_VERSION;
         for (index, (_, path)) in paths.iter().enumerate() {
             latest_version = scan_segment(path, index + 1 == paths.len(), &mut analysis).await?;
@@ -163,9 +202,14 @@ impl WALManager {
                 next_lsn: analysis.latest_lsn + 1,
                 poisoned: false,
                 sealed,
+                checkpoint,
             }),
             max_segment_size,
             wal_dir,
+            raw_writes: std::sync::atomic::AtomicBool::new(false),
+            checkpoint_owner,
+            checkpoint_owner_registered: AtomicBool::new(false),
+            checkpoint_token: OnceLock::new(),
         })
     }
 
@@ -187,6 +231,27 @@ impl WALManager {
     }
 
     pub async fn write_transaction(&self, commands: Vec<LogCommand>) -> Result<(), DBError> {
+        self.raw_writes
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.write_transaction_inner(commands).await
+    }
+
+    pub(crate) async fn write_engine_transaction(
+        &self,
+        commands: Vec<LogCommand>,
+        owner: Option<&Arc<CheckpointOwner>>,
+    ) -> Result<(), DBError> {
+        let owns_checkpoint = self
+            .checkpoint_token
+            .get()
+            .is_some_and(|token| owner.is_some_and(|owner| Arc::ptr_eq(token, owner)));
+        if !owns_checkpoint {
+            self.mark_untracked_mutation();
+        }
+        self.write_transaction_inner(commands).await
+    }
+
+    async fn write_transaction_inner(&self, commands: Vec<LogCommand>) -> Result<(), DBError> {
         if commands.is_empty() {
             return Err(DBError::StorageError(
                 "WAL transaction must contain an update".into(),
@@ -251,10 +316,125 @@ impl WALManager {
         let state = self.state.lock().await;
         ensure_healthy(&state)?;
         let mut analysis = Analysis::default();
-        for (_, path) in segment_paths(&self.wal_dir).await? {
+        if let Some(checkpoint) = state.checkpoint {
+            analysis.latest_lsn = checkpoint
+                .next_physical_lsn
+                .checked_sub(1)
+                .ok_or_else(|| DBError::Corrupted("invalid checkpoint physical LSN".into()))?;
+        }
+        for (_, path) in segment_paths(
+            &self.wal_dir,
+            state
+                .checkpoint
+                .map(|checkpoint| checkpoint.replay_start_segment),
+        )
+        .await?
+        {
             scan_segment(&path, false, &mut analysis).await?;
         }
         Ok(analysis.redo())
+    }
+
+    pub(crate) async fn recovery_position(&self) -> Result<(u64, u64), DBError> {
+        let state = self.state.lock().await;
+        ensure_healthy(&state)?;
+        Ok((state.segment_id, state.next_lsn))
+    }
+
+    pub(crate) async fn trusted_recovery_position(&self) -> Result<Option<(u64, u64)>, DBError> {
+        let state = self.state.lock().await;
+        ensure_healthy(&state)?;
+        if self.raw_writes.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(None);
+        }
+        Ok(Some((state.segment_id, state.next_lsn)))
+    }
+
+    pub(crate) fn register_checkpoint_owner(&self) -> Option<Arc<CheckpointOwner>> {
+        if !self.checkpoint_owner
+            || self
+                .checkpoint_owner_registered
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_err()
+        {
+            return None;
+        }
+        let owner = Arc::new(CheckpointOwner { _private: () });
+        let _ = self.checkpoint_token.set(Arc::clone(&owner));
+        Some(owner)
+    }
+
+    pub(crate) fn owns_recovery_checkpoints(&self, owner: Option<&Arc<CheckpointOwner>>) -> bool {
+        self.checkpoint_owner
+            && self
+                .checkpoint_token
+                .get()
+                .is_some_and(|token| owner.is_some_and(|owner| Arc::ptr_eq(token, owner)))
+    }
+
+    pub(crate) fn mark_untracked_mutation(&self) {
+        self.raw_writes
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) async fn reclaim_checkpointed_segments(
+        &self,
+        checkpoint: RecoveryCheckpoint,
+    ) -> Result<(), DBError> {
+        if !self.checkpoint_owner {
+            return Err(DBError::StorageError(
+                "WAL manager has no engine checkpoint authority".into(),
+            ));
+        }
+        let mut state = self.state.lock().await;
+        ensure_healthy(&state)?;
+        if checkpoint.replay_start_segment > state.segment_id
+            || checkpoint.next_physical_lsn > state.next_lsn
+        {
+            return Err(DBError::StorageError(
+                "WAL checkpoint is ahead of the writer state".into(),
+            ));
+        }
+        state.checkpoint = Some(checkpoint);
+        let mut entries = tokio::fs::read_dir(&self.wal_dir).await?;
+        let mut covered = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let Some(id) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_suffix(".log"))
+                .and_then(|id| id.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            if id < checkpoint.replay_start_segment {
+                covered.push((id, entry.path(), entry.file_type().await?));
+            }
+        }
+        covered.sort_by_key(|(id, _, _)| *id);
+
+        let mut removed_any = false;
+        let mut cleanup_error = None;
+        for (id, path, file_type) in covered {
+            if file_type.is_symlink() || (!file_type.is_file() && !file_type.is_dir()) {
+                continue;
+            }
+            if let Err(error) = tokio::fs::remove_file(path).await {
+                cleanup_error = Some(DBError::IO(error));
+                break;
+            }
+            state.sealed.remove(&id);
+            removed_any = true;
+        }
+        if removed_any {
+            File::open(&self.wal_dir).await?.sync_all().await?;
+        }
+        cleanup_error.map_or(Ok(()), Err)
     }
 
     async fn rotate_locked(&self, state: &mut WriterState) -> Result<(), DBError> {
@@ -310,7 +490,10 @@ fn segment_path(directory: &Path, id: u64) -> PathBuf {
     directory.join(format!("{id:020}.log"))
 }
 
-async fn segment_paths(directory: &Path) -> Result<Vec<(u64, PathBuf)>, DBError> {
+async fn segment_paths(
+    directory: &Path,
+    floor: Option<u64>,
+) -> Result<Vec<(u64, PathBuf)>, DBError> {
     let mut entries = tokio::fs::read_dir(directory).await?;
     let mut paths = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
@@ -320,6 +503,9 @@ async fn segment_paths(directory: &Path) -> Result<Vec<(u64, PathBuf)>, DBError>
             .and_then(|name| name.strip_suffix(".log"))
             .and_then(|id| id.parse::<u64>().ok())
         {
+            if floor.is_some_and(|floor| id < floor) {
+                continue;
+            }
             if !entry.file_type().await?.is_file() {
                 return Err(DBError::Corrupted(
                     "WAL segment is not a regular file".into(),
@@ -329,6 +515,11 @@ async fn segment_paths(directory: &Path) -> Result<Vec<(u64, PathBuf)>, DBError>
         }
     }
     paths.sort_by_key(|(id, _)| *id);
+    let first = floor.unwrap_or_else(|| paths.first().map_or(0, |(id, _)| *id));
+    paths.retain(|(id, _)| *id >= first);
+    if floor.is_some() && paths.first().map(|(id, _)| *id) != floor {
+        return Err(DBError::Corrupted("Missing WAL checkpoint segment".into()));
+    }
     if paths
         .windows(2)
         .any(|pair| pair[0].0 == pair[1].0 || pair[0].0.checked_add(1) != Some(pair[1].0))
@@ -740,6 +931,76 @@ mod test {
 
         // Clean up
         std::fs::remove_dir_all(wal_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn checkpoint_replay_ignores_retained_prefix_and_preserves_physical_lsn() {
+        let directory = tempfile::tempdir().unwrap();
+        let wal_dir = directory.path().to_path_buf();
+        let wal = WALManager::new(wal_dir.clone(), 1024 * 1024).await.unwrap();
+        wal.write_log(&b"old".to_vec(), &b"prefix".to_vec(), 1, RecordType::Put)
+            .await
+            .unwrap();
+        wal.rotate_wal_file().await.unwrap();
+        let (replay_start_segment, next_physical_lsn) = wal.recovery_position().await.unwrap();
+        drop(wal);
+        tokio::fs::write(segment_path(&wal_dir, 0), b"corrupted retained prefix")
+            .await
+            .unwrap();
+
+        let checkpoint = RecoveryCheckpoint {
+            replay_start_segment,
+            next_physical_lsn,
+            committed_sequence: 1,
+        };
+        let wal = WALManager::new_with_checkpoint(wal_dir.clone(), 1024 * 1024, Some(checkpoint))
+            .await
+            .unwrap();
+        assert!(wal.recover_records().await.unwrap().is_empty());
+        wal.write_log(
+            &b"new".to_vec(),
+            &b"after-checkpoint".to_vec(),
+            2,
+            RecordType::Put,
+        )
+        .await
+        .unwrap();
+        assert_eq!(wal.state.lock().await.next_lsn, next_physical_lsn + 2);
+        assert_eq!(wal.recover_records().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_replay_rejects_missing_segment_after_floor() {
+        let directory = tempfile::tempdir().unwrap();
+        let wal_dir = directory.path().to_path_buf();
+        let wal = WALManager::new(wal_dir.clone(), 1024 * 1024).await.unwrap();
+        wal.write_log(&b"base".to_vec(), &b"value".to_vec(), 1, RecordType::Put)
+            .await
+            .unwrap();
+        wal.rotate_wal_file().await.unwrap();
+        let (replay_start_segment, next_physical_lsn) = wal.recovery_position().await.unwrap();
+        let checkpoint = RecoveryCheckpoint {
+            replay_start_segment,
+            next_physical_lsn,
+            committed_sequence: 1,
+        };
+        wal.write_log(&b"one".to_vec(), &b"value".to_vec(), 2, RecordType::Put)
+            .await
+            .unwrap();
+        wal.rotate_wal_file().await.unwrap();
+        wal.write_log(&b"two".to_vec(), &b"value".to_vec(), 3, RecordType::Put)
+            .await
+            .unwrap();
+        wal.rotate_wal_file().await.unwrap();
+        drop(wal);
+        tokio::fs::remove_file(segment_path(&wal_dir, replay_start_segment + 1))
+            .await
+            .unwrap();
+        assert!(
+            WALManager::new_with_checkpoint(wal_dir, 1024 * 1024, Some(checkpoint))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -1,0 +1,1 @@
+/home/peacewalker/.cargo/bin/cargo bench --bench storage -- --run --suite all --records 32 --value-bytes 256 --repetitions 1 --warmup-runs 0 --flush-bytes 512 --wal-segment-bytes 1 --data-dir target/wal-reclamation-final-data --output benches/storage/results/2026-10-25T08-31-34Z-wal-reclamation-final/raw.json

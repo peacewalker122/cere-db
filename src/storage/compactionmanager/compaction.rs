@@ -142,7 +142,7 @@ pub async fn compaction(
     let (output_path, mut output_file) = loop {
         let path = build_compaction_output_path(&current_level_files[0].path, next_level, file_id);
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+            crate::storage::durable_dir::create_dir_all_durable(parent).await?;
         }
         match tokio::fs::OpenOptions::new()
             .write(true)

@@ -12,12 +12,13 @@ use tokio::{
 };
 
 use crate::error::DBError;
-use crate::storage::bloom::BloomFilterWrapper;
+use crate::storage::{bloom::BloomFilterWrapper, durable_dir};
 
 const ENTRY_KIND_ADD: u8 = 1;
 const ENTRY_KIND_REMOVE: u8 = 2;
 const ENTRY_KIND_CHECKPOINT: u8 = 3;
 const ENTRY_KIND_COMPACTION: u8 = 4;
+const ENTRY_KIND_RECOVERY_CHECKPOINT: u8 = 5;
 
 const MANIFEST_VERSION: u32 = 1;
 
@@ -135,7 +136,15 @@ pub struct ManifestSnapshot {
     pub version: u32,
     pub next_file_id: u64,
     pub active_wal_segment: u64,
+    pub recovery_checkpoint: Option<RecoveryCheckpoint>,
     pub levels: HashMap<u32, Vec<SSTableMeta>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecoveryCheckpoint {
+    pub replay_start_segment: u64,
+    pub next_physical_lsn: u64,
+    pub committed_sequence: u64,
 }
 
 #[derive(Debug)]
@@ -144,6 +153,7 @@ struct ManifestState {
     next_file_id: u64,
     checkpoint_lsn: u64,
     active_wal_segment: u64,
+    recovery_checkpoint: Option<RecoveryCheckpoint>,
     levels: HashMap<u32, BTreeMap<u64, SSTableMeta>>,
 }
 
@@ -154,6 +164,7 @@ impl Default for ManifestState {
             next_file_id: 1,
             checkpoint_lsn: 0,
             active_wal_segment: 0,
+            recovery_checkpoint: None,
             levels: HashMap::new(),
         }
     }
@@ -174,13 +185,15 @@ pub struct ManifestManager {
 impl ManifestManager {
     pub async fn load_or_create(manifest_path: PathBuf) -> Result<Self, DBError> {
         if let Some(parent) = manifest_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+            durable_dir::create_dir_all_durable(parent).await?;
         }
 
         let bytes = match tokio::fs::read(&manifest_path).await {
             Ok(content) => content,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                tokio::fs::File::create(&manifest_path).await?;
+                let file = tokio::fs::File::create(&manifest_path).await?;
+                file.sync_all().await?;
+                durable_dir::sync_parent(&manifest_path).await?;
                 Vec::new()
             }
             Err(err) => return Err(DBError::IO(err)),
@@ -305,6 +318,22 @@ impl ManifestManager {
         Ok(())
     }
 
+    pub(crate) async fn publish_recovery_checkpoint(
+        &self,
+        checkpoint: RecoveryCheckpoint,
+    ) -> Result<(), DBError> {
+        let mut state = self.state.lock().await;
+        let mut payload = Vec::with_capacity(24);
+        payload.extend_from_slice(&checkpoint.replay_start_segment.to_be_bytes());
+        payload.extend_from_slice(&checkpoint.next_physical_lsn.to_be_bytes());
+        payload.extend_from_slice(&checkpoint.committed_sequence.to_be_bytes());
+        let entry = encode_entry(ENTRY_KIND_RECOVERY_CHECKPOINT, &payload)?;
+        append_manifest_entry(&self.manifest_path, &entry).await?;
+        state.active_wal_segment = checkpoint.replay_start_segment;
+        state.recovery_checkpoint = Some(checkpoint);
+        Ok(())
+    }
+
     // Get a consistent snapshot of the manifest state for external use (e.g. compaction).
     pub async fn snapshot(&self) -> ManifestSnapshot {
         let state = self.state.lock().await;
@@ -312,6 +341,7 @@ impl ManifestManager {
             version: state.version,
             next_file_id: state.next_file_id,
             active_wal_segment: state.active_wal_segment,
+            recovery_checkpoint: state.recovery_checkpoint,
             levels: state
                 .levels
                 .iter()
@@ -371,6 +401,7 @@ async fn append_manifest_entry(path: &PathBuf, entry: &[u8]) -> Result<(), DBErr
     writer.write_all(entry).await?;
     writer.flush().await?;
     writer.into_inner().sync_data().await?;
+    durable_dir::sync_parent(path).await?;
     Ok(())
 }
 
@@ -407,8 +438,22 @@ fn replay_manifest(data: &[u8]) -> Result<ManifestState, DBError> {
                 apply_compaction(&mut state, &removals, output);
             }
             ENTRY_KIND_CHECKPOINT => {
-                let (checkpoint_lsn, active_wal_segment) = decode_checkpoint_payload(payload)?;
+                let (_checkpoint_lsn, active_wal_segment) = decode_checkpoint_payload(payload)?;
                 state.active_wal_segment = active_wal_segment;
+            }
+            ENTRY_KIND_RECOVERY_CHECKPOINT => {
+                if payload.len() != 24 {
+                    return Err(DBError::Corrupted(
+                        "recovery checkpoint payload length must be 24 bytes".into(),
+                    ));
+                }
+                let checkpoint = RecoveryCheckpoint {
+                    replay_start_segment: u64::from_be_bytes(payload[0..8].try_into().unwrap()),
+                    next_physical_lsn: u64::from_be_bytes(payload[8..16].try_into().unwrap()),
+                    committed_sequence: u64::from_be_bytes(payload[16..24].try_into().unwrap()),
+                };
+                state.active_wal_segment = checkpoint.replay_start_segment;
+                state.recovery_checkpoint = Some(checkpoint);
             }
             _ => {
                 return Err(DBError::Corrupted(format!(
@@ -774,6 +819,32 @@ mod tests {
         assert_eq!(snapshot.next_file_id, file_id_2 + 1);
 
         std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_checkpoint_remains_informational_and_recovery_checkpoint_replays() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = ManifestManager::load_or_create(directory.path().join("MANIFEST"))
+            .await
+            .unwrap();
+        manager.mark_checkpoint(77, 3).await.unwrap();
+        assert!(manager.snapshot().await.recovery_checkpoint.is_none());
+        let checkpoint = RecoveryCheckpoint {
+            replay_start_segment: 4,
+            next_physical_lsn: 91,
+            committed_sequence: 12,
+        };
+        manager
+            .publish_recovery_checkpoint(checkpoint)
+            .await
+            .unwrap();
+        let reopened = ManifestManager::load_or_create(directory.path().join("MANIFEST"))
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.snapshot().await.recovery_checkpoint,
+            Some(checkpoint)
+        );
     }
 
     #[test]

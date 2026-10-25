@@ -35,10 +35,16 @@ async fn flush_and_rotation_preserve_updates_and_tombstones_after_repeated_resta
     );
     assert!(database.get(b"remove").await.unwrap().is_none());
     assert!(
-        directory
+        !directory
             .path()
             .join("wal/00000000000000000000.log")
             .exists()
+    );
+    assert_eq!(
+        std::fs::read_dir(directory.path().join("wal"))
+            .unwrap()
+            .count(),
+        1
     );
 }
 

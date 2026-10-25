@@ -71,7 +71,8 @@ impl BlockBuilder {
     /// The consumer need the offset of the block to know where to write the block in the SSTable file, so we need to pass the offset when create the BlockBuilder
     pub fn add_record(&mut self, key: &Vec<u8>, record: &MemtableRecord) -> BlockBuilderState {
         // Check if adding this record would exceed block size
-        if self.data_size + record.record_length(key) > SSTABLE_BLOCK_SIZE {
+        if !self.data.is_empty() && self.data_size + record.record_length(key) > SSTABLE_BLOCK_SIZE
+        {
             let records = std::mem::take(&mut self.data);
 
             let block = Block {

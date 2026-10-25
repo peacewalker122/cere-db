@@ -1,0 +1,1 @@
+PATH=/home/peacewalker/.cargo/bin:$PATH cargo bench --bench storage -- --run --suite all --records 32 --value-bytes 256 --repetitions 1 --warmup-runs 0 --flush-bytes 512 --wal-segment-bytes 512 --data-dir target/wal-reclamation-smoke-data --output benches/storage/results/2026-10-25T08-11-20Z-wal-reclamation/raw.json

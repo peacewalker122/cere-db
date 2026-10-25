@@ -63,18 +63,39 @@ transactional records. Completion appends the missing suffix and syncs the file
 and parent directory before use, so another interruption remains recoverable.
 Malformed prefixes, corrupt complete headers, and incomplete sealed headers fail
 without repair. Existing complete segments are never overwritten. Rotation
-syncs and seals the old segment without deleting or recycling it.
+syncs and seals the old segment. It does not by itself delete or recycle it.
 `mark_reserved` validates a sealed segment and marks it in memory; it does not
-reclaim its bytes.
+authorize reclamation.
 
-Flush persists and syncs the SSTable and its directory before registering it in
-the manifest, rotating the WAL, and recording checkpoint metadata. The manifest
-checkpoint uses the flushed application's maximum sequence and the active
-segment ID, not a physical redo frontier. WAL header checkpoint fields remain
-zero. Recovery conservatively replays retained WAL history, including already
-flushed commands. WAL disk usage and recovery work therefore grow with history;
-there is no checkpoint-based reclamation or fuzzy-checkpoint optimization yet.
-Never delete retained segments manually as a routine restart/reset procedure.
+An engine checkpoint persists and syncs the SSTable and its directory before
+registering it in the manifest, rotating the WAL, and recording checkpoint
+metadata. Only this complete, trusted KV2 checkpoint path owns reclamation
+authority. A public `KV2::wal_manager()` handle comes from the engine-owned
+manager; standalone `WALManager::new` managers and public raw WAL appends do not
+provide engine-checkpoint ownership. A partial flush, standalone WAL operation,
+or raw append cannot authorize segment deletion. Legacy manifest checkpoint
+metadata remains informational, even if it has values matching the new format.
+
+The manifest checkpoint's committed sequence is the flushed application's
+MVCC sequence. Its replay start is a physical WAL segment ID, not an application
+sequence or a physical LSN. Physical LSNs advance over WAL updates and commit
+records, and segment IDs remain monotonic across reclamation; deleted IDs are
+not reused. Recovery uses registered SSTables plus committed WAL records from
+the physical replay floor onward, rather than replaying all pre-checkpoint
+history.
+
+Before covered segments are unlinked, open validates required registered
+SSTables and all required WAL segments at or beyond the replay floor, including
+full SSTable contents rather than only the footer or sparse metadata. Current
+SSTable preflight reads each complete file into memory before checking its
+sections and records; startup can therefore need memory proportional to the
+largest registered SSTable. Missing required files or invalid contents fail
+closed. Cleanup failures are logged while the committed open/write remains
+successful and are retried on a subsequent startup after the required SSTable
+and WAL validation. Checkpointed history is reclaimed only as checkpoint
+progress permits; this is not fixed-capacity ring-buffer reuse, and WAL size may
+grow when checkpoint progress stalls. Never delete retained segments manually
+as a routine restart/reset procedure.
 
 The engine flushes a snapshot of the shared active memtable. Failed or cancelled
 flushes retain its readable entries; successful flushes remove only snapshot
