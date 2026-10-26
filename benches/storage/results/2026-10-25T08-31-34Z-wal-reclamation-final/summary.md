@@ -69,9 +69,9 @@ results are separate from the 90 benchmark scenario samples.
 
 - One sample is a smoke check, not a stable timing estimate or comparison.
 - OS page cache was retained; this was not a cold-cache or process-crash test.
-- `--wal-segment-bytes 1` was passed as requested; the application validates
-  segment sizes with a 256 KiB minimum in normal storage configuration, so this
-  does not mean a one-byte physical segment size.
+- `--wal-segment-bytes 1` was passed through the benchmark configuration path
+  as requested. This archive does not claim an implementation minimum or infer
+  the configured value from physical segment observations.
 - The smoke fixture cannot establish a universal WAL byte/file bound or behavior
   under stalled checkpoint progress. The implementation is progress-based, not
   fixed-capacity ring reuse.

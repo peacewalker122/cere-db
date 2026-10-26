@@ -43,10 +43,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let count = low;
         let mut sample_ids = Vec::new();
-        for n in [0, 1, count / 2, count.saturating_sub(2), count.saturating_sub(1), count] {
+        for n in [
+            0,
+            1,
+            count / 2,
+            count.saturating_sub(2),
+            count.saturating_sub(1),
+            count,
+        ] {
             if n < 1_000_000 {
                 let id = ceredb::DocumentId::new(format!("doc{n:07}"))?;
-                sample_ids.push(json!({"id":id.as_str(),"present":index.get_document(&id).await?.is_some()}));
+                sample_ids.push(
+                    json!({"id":id.as_str(),"present":index.get_document(&id).await?.is_some()}),
+                );
             }
         }
         result["contiguous_id_count"] = json!(count);

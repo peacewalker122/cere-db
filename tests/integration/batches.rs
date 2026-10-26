@@ -1,4 +1,4 @@
-use ceredb::{api::api::AsyncKVEngine, storage::config::StorageConfig, BatchOperation, KV2};
+use ceredb::{BatchOperation, KV2, api::api::AsyncKVEngine, storage::config::StorageConfig};
 use tempfile::TempDir;
 
 async fn open() -> (KV2, TempDir) {
@@ -99,11 +99,13 @@ async fn batch_crossing_flush_threshold_is_fully_recovered() {
         .await
         .unwrap();
 
-    assert!(!std::fs::read_dir(directory.path().join("sstable/level-0"))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap()
-        .is_empty());
+    assert!(
+        !std::fs::read_dir(directory.path().join("sstable/level-0"))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .is_empty()
+    );
     drop(engine);
 
     let reopened = KV2::open_with_defaults(directory.path()).await.unwrap();
@@ -122,19 +124,21 @@ async fn oversized_later_operation_does_not_publish_earlier_operations() {
     let (mut engine, _directory) = open().await;
     let oversized_value = vec![0; 64 * 1024 * 1024 + 1];
 
-    assert!(engine
-        .write_batch(vec![
-            BatchOperation::Put {
-                key: b"must-not-appear".to_vec(),
-                value: b"first".to_vec(),
-            },
-            BatchOperation::Put {
-                key: b"oversized".to_vec(),
-                value: oversized_value,
-            },
-        ])
-        .await
-        .is_err());
+    assert!(
+        engine
+            .write_batch(vec![
+                BatchOperation::Put {
+                    key: b"must-not-appear".to_vec(),
+                    value: b"first".to_vec(),
+                },
+                BatchOperation::Put {
+                    key: b"oversized".to_vec(),
+                    value: oversized_value,
+                },
+            ])
+            .await
+            .is_err()
+    );
 
     assert!(engine.get(b"must-not-appear").await.unwrap().is_none());
     assert!(engine.scan(..).await.unwrap().is_empty());
@@ -154,13 +158,15 @@ async fn failed_rotation_does_not_publish_batch_or_damage_recovery() {
         .unwrap();
     let obstruction = directory.path().join("wal/00000000000000000001.log");
     std::fs::create_dir(&obstruction).unwrap();
-    assert!(engine
-        .write_batch(vec![BatchOperation::Put {
-            key: b"not-visible".to_vec(),
-            value: b"value".to_vec(),
-        }])
-        .await
-        .is_err());
+    assert!(
+        engine
+            .write_batch(vec![BatchOperation::Put {
+                key: b"not-visible".to_vec(),
+                value: b"value".to_vec(),
+            }])
+            .await
+            .is_err()
+    );
     assert!(engine.get(b"not-visible").await.unwrap().is_none());
     std::fs::remove_dir(obstruction).unwrap();
     drop(engine);
