@@ -1,10 +1,4 @@
-// what's the idea behind all of this?
-// the compaction is an action that will be happen when an level store is full, and we need to
-// merge the data within that level to 1 file, this action would be propagated when the level + 1
-// store is also full, and we need to merege the data within that level to 1 file, and so on, until we find a level that is not full, then we can stop the compaction action.
-//
-// Who would be the caller? The WriteManager... when it flushes and the level store threshold were
-// exceeded, it will trigger the compaction action, and the compaction manager will be responsible for managing the compaction action, and the compaction action will be responsible for merging the data within the level store to 1 file, and then it will return the result to the WriteManager, and the WriteManager will update the manifest file with the new level store information.
+//! Range-selected leveled compaction with atomic publication of partitioned outputs.
 
 use std::{io::Cursor, path::PathBuf, sync::Arc};
 
@@ -20,6 +14,75 @@ use crate::storage::{
     sstable_codec::SSTableCodec,
     writemanager::block::{Block, BlockBuilder, BlockBuilderState},
 };
+
+/// Coalesce queued L0 triggers and drain byte debt in deeper levels.
+pub(crate) async fn compact_levels(
+    manifest: Arc<ManifestManager>,
+    requested_level: u32,
+    config: Arc<StorageConfig>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<(), DBError> {
+    if config.target_sstable_bytes == 0
+        || config.level_base_bytes == 0
+        || config.level_size_multiplier < 2
+        || config.max_level0_files == 0
+    {
+        return Err(DBError::StorageError("invalid compaction targets".into()));
+    }
+    let mut requested = Some(requested_level);
+    loop {
+        if cancel.is_cancelled() {
+            return Err(DBError::StorageError("compaction cancelled".into()));
+        }
+        let snapshot = manifest.snapshot().await;
+        let mut pending = requested.take().filter(|level| {
+            snapshot.levels.get(level).is_some_and(|files| {
+                !files.is_empty() && (*level != 0 || files.len() >= config.max_level0_files)
+            })
+        });
+        // Relieve deeper debt before pushing more data out of L0/L1.
+        let mut levels: Vec<_> = snapshot
+            .levels
+            .keys()
+            .copied()
+            .filter(|level| *level > 0)
+            .collect();
+        levels.sort_unstable_by(|a, b| b.cmp(a));
+        if pending.is_none() {
+            for level in levels {
+                let target = config
+                    .level_base_bytes
+                    .saturating_mul(config.level_size_multiplier.saturating_pow(level - 1));
+                let mut bytes = 0u64;
+                for file in &snapshot.levels[&level] {
+                    bytes = bytes.saturating_add(tokio::fs::metadata(&file.path).await?.len());
+                }
+                if bytes > target {
+                    pending = Some(level);
+                    break;
+                }
+            }
+        }
+        if pending.is_none()
+            && snapshot
+                .levels
+                .get(&0)
+                .is_some_and(|files| files.len() >= config.max_level0_files)
+        {
+            pending = Some(0);
+        }
+        let Some(level) = pending else {
+            return Ok(());
+        };
+        compaction(
+            manifest.clone(),
+            level,
+            config.clone(),
+            cancel.child_token(),
+        )
+        .await?;
+    }
+}
 
 pub async fn compaction(
     manifest: Arc<ManifestManager>,
@@ -42,41 +105,59 @@ pub async fn compaction(
         )));
     }
 
-    let current_level_files = manifest_level.unwrap().clone();
-    if current_level_files.len() <= 1 {
-        log::warn!("Level {} is not full, no need to compact", level);
-        return Err(DBError::StorageError(format!(
-            "Level {} is not full, no need to compact",
-            level
-        )));
-    }
-
-    let next_level = level + 1;
+    let mut current_level_files = manifest_level.unwrap().clone();
+    current_level_files.sort_by_key(|meta| meta.file_id);
+    let next_level = level
+        .checked_add(1)
+        .ok_or_else(|| DBError::StorageError("compaction level overflow".into()))?;
     let next_level_files = snapshot
         .levels
         .get(&next_level)
         .cloned()
         .unwrap_or_default();
 
-    let current_level_range = compute_level_range(&current_level_files, &cancel)
+    // Oldest files first. Nonzero levels move one range at a time; L0 can
+    // coalesce a small group before closing overlaps in both levels.
+    let mut merge_candidates = Vec::new();
+    let mut input_bytes = 0u64;
+    for meta in &current_level_files {
+        if !merge_candidates.is_empty()
+            && (level != 0 || input_bytes >= config.target_sstable_bytes)
+        {
+            break;
+        }
+        input_bytes = input_bytes.saturating_add(tokio::fs::metadata(&meta.path).await?.len());
+        merge_candidates.push(meta.clone());
+    }
+    let mut selected_range = compute_level_range(&merge_candidates, &cancel)
         .await?
         .ok_or_else(|| DBError::Corrupted(format!("Level {} has no valid key range", level)))?;
 
-    let mut overlapping_next_level_files = Vec::new();
-    for candidate in next_level_files {
-        if cancel.is_cancelled() {
-            return Err(DBError::StorageError("compaction cancelled".to_string()));
-        }
-        if let Some(candidate_range) = compute_meta_range(&candidate, &cancel).await? {
-            if ranges_overlap(&current_level_range, &candidate_range) {
-                overlapping_next_level_files.push(candidate);
+    // A destination file can widen the range and reach more source files.
+    // Repeat to a fixed point so no older L0 record can shadow a newer L1
+    // record, and no output overlaps an untouched destination file.
+    loop {
+        let previous_count = merge_candidates.len();
+        for candidate in current_level_files.iter().chain(&next_level_files) {
+            if merge_candidates
+                .iter()
+                .any(|meta| meta.file_id == candidate.file_id)
+            {
+                continue;
+            }
+            let range = compute_meta_range(candidate, &cancel)
+                .await?
+                .ok_or_else(|| DBError::Corrupted("SSTable has no key range".into()))?;
+            if ranges_overlap(&selected_range, &range) {
+                selected_range.0 = selected_range.0.min(range.0);
+                selected_range.1 = selected_range.1.max(range.1);
+                merge_candidates.push(candidate.clone());
             }
         }
+        if previous_count == merge_candidates.len() {
+            break;
+        }
     }
-
-    // Merge entire current level with overlapping files from the next level.
-    let mut merge_candidates = current_level_files.clone();
-    merge_candidates.extend(overlapping_next_level_files.iter().cloned());
 
     let mut sstables = vec![];
     // provisioning the sstables, we need to read the sstables from the disk, and then we can merge them to 1 file, and then we can update the manifest file with the new level store information
@@ -118,29 +199,74 @@ pub async fn compaction(
         return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
 
-    if merged_sstable.blocks.is_empty() {
-        let _publication_lease = manifest.publication_lease().await;
+    let mut outputs = Vec::new();
+    for table in partition_output(&merged_sstable, &config) {
         if cancel.is_cancelled() {
-            return Err(DBError::StorageError("compaction cancelled".to_string()));
+            return Err(DBError::StorageError("compaction cancelled".into()));
         }
-        manifest
-            .publish_compaction(&snapshot, &merge_candidates, None)
-            .await?;
-        remove_compacted_files(&manifest, &merge_candidates).await;
-
-        return Ok(merged_sstable);
+        outputs.push(
+            write_compaction_output(&manifest, &current_level_files[0].path, next_level, &table)
+                .await?,
+        );
     }
 
-    let merged_range = range_from_blocks(&merged_sstable.blocks)
-        .ok_or_else(|| DBError::Corrupted("compaction output has no key range".to_string()))?;
-
-    let mut file_id = manifest.allocate_file_id().await?;
+    let _publication_lease = manifest.publication_lease().await;
     if cancel.is_cancelled() {
         return Err(DBError::StorageError("compaction cancelled".to_string()));
     }
+    manifest
+        .publish_compaction(&snapshot, &merge_candidates, outputs)
+        .await?;
+    remove_compacted_files(&manifest, &merge_candidates).await;
 
+    Ok(merged_sstable)
+}
+
+fn partition_output(merged: &SSTableCodec, config: &StorageConfig) -> Vec<SSTableCodec> {
+    let mut outputs = Vec::new();
+    let mut records = Vec::new();
+    let mut bytes = 0u64;
+    for record in merged
+        .blocks
+        .iter()
+        .flat_map(|block| block.data.iter().flatten())
+    {
+        let record_bytes = record.record_length(&record.key) as u64;
+        if !records.is_empty() && bytes.saturating_add(record_bytes) > config.target_sstable_bytes {
+            outputs.push(build_output(std::mem::take(&mut records), config));
+            bytes = 0;
+        }
+        records.push(record.clone());
+        bytes = bytes.saturating_add(record_bytes);
+    }
+    if !records.is_empty() {
+        outputs.push(build_output(records, config));
+    }
+    outputs
+}
+
+fn build_output(records: Vec<MemtableRecord>, config: &StorageConfig) -> SSTableCodec {
+    let mut builder = BlockBuilder::new(0);
+    let mut blocks = Vec::new();
+    let mut bloom = BloomFilterWrapper::with_rate(records.len(), config.bloom_false_positive_rate);
+    for record in records {
+        flush_winner(&mut builder, &mut blocks, &mut bloom, record);
+    }
+    if let Some((block, _)) = builder.build() {
+        blocks.push(block);
+    }
+    SSTableCodec::new(blocks, vec![], bloom)
+}
+
+async fn write_compaction_output(
+    manifest: &ManifestManager,
+    source_path: &str,
+    level: u32,
+    table: &SSTableCodec,
+) -> Result<SSTableMeta, DBError> {
+    let mut file_id = manifest.allocate_file_id().await?;
     let (output_path, mut output_file) = loop {
-        let path = build_compaction_output_path(&current_level_files[0].path, next_level, file_id);
+        let path = build_compaction_output_path(source_path, level, file_id);
         if let Some(parent) = path.parent() {
             crate::storage::durable_dir::create_dir_all_durable(parent).await?;
         }
@@ -157,7 +283,7 @@ pub async fn compaction(
             Err(error) => return Err(error.into()),
         }
     };
-    let (encoded, compaction_footer) = merged_sstable.serialize();
+    let (encoded, footer) = table.serialize();
     output_file.write_all(&encoded).await?;
     output_file.sync_all().await?;
     tokio::fs::File::open(output_path.parent().unwrap())
@@ -165,40 +291,24 @@ pub async fn compaction(
         .sync_all()
         .await?;
 
-    if cancel.is_cancelled() {
-        return Err(DBError::StorageError("compaction cancelled".to_string()));
-    }
-
-    let compacted_record_count = merged_sstable
+    let record_count = table
         .blocks
         .iter()
         .map(|block| block.record_count as usize)
         .sum();
 
-    let _publication_lease = manifest.publication_lease().await;
-    if cancel.is_cancelled() {
-        return Err(DBError::StorageError("compaction cancelled".to_string()));
-    }
-    manifest
-        .publish_compaction(
-            &snapshot,
-            &merge_candidates,
-            Some(SSTableMeta {
-                file_id,
-                level: next_level,
-                path: output_path.to_string_lossy().to_string(),
-                record_count: compacted_record_count,
-                bloom_offset: compaction_footer.bloom_block_start,
-                bloom_size: compaction_footer.bloom_block_end - compaction_footer.bloom_block_start,
-                smallest_key: merged_range.0,
-                largest_key: merged_range.1,
-            }),
-        )
-        .await?;
-
-    remove_compacted_files(&manifest, &merge_candidates).await;
-
-    Ok(merged_sstable)
+    let (smallest_key, largest_key) = range_from_blocks(&table.blocks)
+        .ok_or_else(|| DBError::Corrupted("compaction output has no key range".into()))?;
+    Ok(SSTableMeta {
+        file_id,
+        level,
+        path: output_path.to_string_lossy().into_owned(),
+        record_count,
+        bloom_offset: footer.bloom_block_start,
+        bloom_size: footer.bloom_block_end - footer.bloom_block_start,
+        smallest_key,
+        largest_key,
+    })
 }
 
 async fn remove_compacted_files(manifest: &ManifestManager, inputs: &[SSTableMeta]) {

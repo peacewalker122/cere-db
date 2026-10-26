@@ -1,0 +1,114 @@
+{
+  "amplification_note": "no lifetime write-amplification claim is made",
+  "benchmark": "selective_l0_to_l1_compaction",
+  "counterfactual_note": "selected_fraction_of_candidate_bytes is a whole-level byte-fraction comparison, not a measured speedup",
+  "fixture": {
+    "deletes": 8,
+    "keys": 2048,
+    "overwrite_range": [
+      960,
+      992
+    ],
+    "target_sstable_bytes": 32768,
+    "value_bytes": 256
+  },
+  "measured_samples": 3,
+  "median_elapsed_ms": 10.871812,
+  "runs": 4,
+  "samples": [
+    {
+      "all_candidate_bytes": 611092,
+      "baseline_l0_files": 1,
+      "baseline_l1_files": 18,
+      "elapsed_ms": 11.383928,
+      "kind": "warmup",
+      "new_output_file_ids": [
+        21
+      ],
+      "output_bytes": 31214,
+      "removed_input_file_ids": [
+        20,
+        10
+      ],
+      "removed_l0_files": 1,
+      "removed_l1_files": 1,
+      "sample": 0,
+      "selected_fraction_of_candidate_bytes": 0.06714864537581902,
+      "selected_input_bytes": 41034,
+      "untouched_files_byte_identical": true,
+      "untouched_l1_bytes": 570058,
+      "untouched_l1_files": 17
+    },
+    {
+      "all_candidate_bytes": 611092,
+      "baseline_l0_files": 1,
+      "baseline_l1_files": 18,
+      "elapsed_ms": 13.014773,
+      "kind": "measured",
+      "new_output_file_ids": [
+        21
+      ],
+      "output_bytes": 31214,
+      "removed_input_file_ids": [
+        20,
+        10
+      ],
+      "removed_l0_files": 1,
+      "removed_l1_files": 1,
+      "sample": 1,
+      "selected_fraction_of_candidate_bytes": 0.06714864537581902,
+      "selected_input_bytes": 41034,
+      "untouched_files_byte_identical": true,
+      "untouched_l1_bytes": 570058,
+      "untouched_l1_files": 17
+    },
+    {
+      "all_candidate_bytes": 611092,
+      "baseline_l0_files": 1,
+      "baseline_l1_files": 18,
+      "elapsed_ms": 10.783875,
+      "kind": "measured",
+      "new_output_file_ids": [
+        21
+      ],
+      "output_bytes": 31214,
+      "removed_input_file_ids": [
+        10,
+        20
+      ],
+      "removed_l0_files": 1,
+      "removed_l1_files": 1,
+      "sample": 2,
+      "selected_fraction_of_candidate_bytes": 0.06714864537581902,
+      "selected_input_bytes": 41034,
+      "untouched_files_byte_identical": true,
+      "untouched_l1_bytes": 570058,
+      "untouched_l1_files": 17
+    },
+    {
+      "all_candidate_bytes": 611092,
+      "baseline_l0_files": 1,
+      "baseline_l1_files": 18,
+      "elapsed_ms": 10.871812,
+      "kind": "measured",
+      "new_output_file_ids": [
+        21
+      ],
+      "output_bytes": 31214,
+      "removed_input_file_ids": [
+        20,
+        10
+      ],
+      "removed_l0_files": 1,
+      "removed_l1_files": 1,
+      "sample": 3,
+      "selected_fraction_of_candidate_bytes": 0.06714864537581902,
+      "selected_input_bytes": 41034,
+      "untouched_files_byte_identical": true,
+      "untouched_l1_bytes": 570058,
+      "untouched_l1_files": 17
+    }
+  ],
+  "status": "COMPLETE",
+  "warmups": 1
+}

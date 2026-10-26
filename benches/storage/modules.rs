@@ -1236,13 +1236,24 @@ async fn compact(
         snapshot.levels.get(&0).is_none_or(|files| files.is_empty()),
         "compaction left L0 files",
     )?;
-    let files = snapshot.levels.get(&1).ok_or("compaction missing L1")?;
-    require(files.len() == 1, "compaction L1 count mismatch")?;
-    validate_blocks(
-        &read_blocks(&files[0].path).await?,
-        config,
-        config.records + 1,
+    let mut files = snapshot
+        .levels
+        .get(&1)
+        .ok_or("compaction missing L1")?
+        .clone();
+    files.sort_by(|left, right| left.smallest_key.cmp(&right.smallest_key));
+    require(!files.is_empty(), "compaction produced no output")?;
+    require(
+        files
+            .windows(2)
+            .all(|pair| pair[0].largest_key < pair[1].smallest_key),
+        "compaction output ranges overlap",
     )?;
+    let mut blocks = Vec::new();
+    for file in &files {
+        blocks.extend(read_blocks(&file.path).await?);
+    }
+    validate_blocks(&blocks, config, config.records + 1)?;
     measurements.push(
         Measurement::new(
             "compaction/merge_l0",
@@ -1251,6 +1262,7 @@ async fn compact(
             config.logical_bytes().saturating_mul(2),
             elapsed,
         )
+        .with_registered_sstable_count(files.len())
         .with_disk(DiskUsage::inspect(directory.path())?),
     );
     Ok(())

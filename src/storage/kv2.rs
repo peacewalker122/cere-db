@@ -15,7 +15,7 @@ use crate::{
     api::api::{AsyncKVEngine, BatchOperation},
     error::DBError,
     storage::{
-        compactionmanager::compaction::compaction,
+        compactionmanager::compaction::compact_levels,
         config::StorageConfig,
         manifest_codec::ManifestManager,
         raft::{RaftConsensusLayer, RaftNodeConfig},
@@ -390,7 +390,7 @@ impl KV2 {
                                 let manifest_for_thread = Arc::clone(&manifest);
                                 let config_for_thread = Arc::clone(&config);
 
-                                if let Err(e) = compaction(manifest_for_thread, level, config_for_thread, cancel.child_token()).await {
+                                if let Err(e) = compact_levels(manifest_for_thread, level, config_for_thread, cancel.child_token()).await {
                                     log::error!("Compaction failed for level {}: {}", level, e);
                                 } else {
                                     log::info!("Compaction completed for level {}", level);
@@ -402,7 +402,7 @@ impl KV2 {
                         log::info!("Compaction worker received shutdown signal");
                         receiver.close();
                         while let Some(CompactionTrigger::CompactLevel { level }) = receiver.recv().await {
-                            if let Err(error) = compaction(
+                            if let Err(error) = compact_levels(
                                 Arc::clone(&manifest),
                                 level,
                                 Arc::clone(&config),
@@ -1434,7 +1434,7 @@ impl RaftKV2 {
                     Some(trigger) = receiver.recv() => {
                         if let CompactionTrigger::CompactLevel { level } = trigger {
                             log::info!("RaftKV2 compacting level {level}");
-                            if let Err(e) = compaction(
+                            if let Err(e) = compact_levels(
                                 Arc::clone(&manifest), level, Arc::clone(&config), cancel.child_token()
                             ).await {
                                 log::error!("RaftKV2 compaction failed: {e}");
@@ -1444,7 +1444,7 @@ impl RaftKV2 {
                     _ = worker_stop.cancelled() => {
                         receiver.close();
                         while let Some(CompactionTrigger::CompactLevel { level }) = receiver.recv().await {
-                            if let Err(error) = compaction(
+                            if let Err(error) = compact_levels(
                                 Arc::clone(&manifest),
                                 level,
                                 Arc::clone(&config),
@@ -1482,7 +1482,8 @@ impl RaftKV2 {
         if l0 >= self.config.max_level0_files {
             let _ = self
                 .compaction_sender
-                .send(CompactionTrigger::CompactLevel { level: 0 });
+                .send(CompactionTrigger::CompactLevel { level: 0 })
+                .await;
         }
         Ok(())
     }
@@ -1607,6 +1608,53 @@ mod raft_tests {
             http_bind: "127.0.0.1:0".parse().unwrap(),
             raft_dir: dir.path().join("raft"),
         }
+    }
+
+    #[tokio::test]
+    async fn raft_flush_triggers_single_file_promotion_into_deeper_levels() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = StorageConfig {
+            memtable_size_threshold: 1,
+            max_level0_files: 1,
+            target_sstable_bytes: 64,
+            level_base_bytes: 64,
+            level_size_multiplier: 2,
+            ..StorageConfig::default()
+        };
+        let mut database = RaftKV2::open(directory.path(), config, test_config(1, &directory))
+            .await
+            .unwrap();
+        database.raft_layer().initialize(&[1]).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !database.raft_layer().is_leader().await {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        database
+            .put(b"promoted".to_vec(), b"durable raft value".to_vec())
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), database.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        let snapshot = ManifestManager::load_or_create(directory.path().join("MANIFEST"))
+            .await
+            .unwrap()
+            .snapshot()
+            .await;
+        assert!(!snapshot.levels.contains_key(&0));
+        assert!(snapshot.levels.keys().any(|level| *level >= 2));
+        // Use a fresh disk reader after the Raft node has shut down.
+        let reopened = KV2::open(directory.path(), StorageConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.get(b"promoted").await.unwrap().unwrap().as_ref(),
+            b"durable raft value"
+        );
     }
 
     #[tokio::test]

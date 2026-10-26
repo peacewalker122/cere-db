@@ -57,6 +57,15 @@ pub struct StorageConfig {
     /// Range: 1 – 10
     pub max_level0_files: usize,
 
+    /// Target encoded record bytes per compaction output (metadata excluded).
+    /// A single record can exceed this target. Also bounds the initial L0 group;
+    /// correctness-required overlapping inputs can expand that group.
+    pub target_sstable_bytes: u64,
+    /// Target physical bytes in L1 before ranges are promoted into L2.
+    pub level_base_bytes: u64,
+    /// Size ratio between adjacent nonzero levels, at least two.
+    pub level_size_multiplier: u64,
+
     /// WAL segment size (bytes) before rotation to a new segment.
     ///
     /// Larger segments reduce WAL file count but increase recovery time.
@@ -91,6 +100,9 @@ impl Default for StorageConfig {
             memtable_size_threshold: 4 * 1024 * 1024, // 4 MB
             sstable_block_size: 4096,                 // 4 KB
             max_level0_files: 2,
+            target_sstable_bytes: 2 * 1024 * 1024,
+            level_base_bytes: 16 * 1024 * 1024,
+            level_size_multiplier: 10,
             wal_segment_size: 1024 * 1024,   // 1 MB
             bloom_false_positive_rate: 0.01, // 1%
             max_sstable_file_handles: 64,
@@ -134,6 +146,15 @@ impl StorageConfig {
             ));
         }
 
+        if self.target_sstable_bytes == 0
+            || self.level_base_bytes == 0
+            || self.level_size_multiplier < 2
+        {
+            return Err(DBError::StorageError(
+                "compaction byte targets must be positive and level_size_multiplier >= 2".into(),
+            ));
+        }
+
         if self.wal_segment_size < 256 * 1024 {
             return Err(DBError::StorageError(
                 "wal_segment_size must be >= 256 KB".to_string(),
@@ -167,6 +188,9 @@ pub struct StorageConfigBuilder {
     memtable_size_threshold: Option<u64>,
     sstable_block_size: Option<usize>,
     max_level0_files: Option<usize>,
+    target_sstable_bytes: Option<u64>,
+    level_base_bytes: Option<u64>,
+    level_size_multiplier: Option<u64>,
     wal_segment_size: Option<u64>,
     bloom_false_positive_rate: Option<f64>,
     max_sstable_file_handles: Option<usize>,
@@ -179,6 +203,9 @@ impl StorageConfigBuilder {
             memtable_size_threshold: None,
             sstable_block_size: None,
             max_level0_files: None,
+            target_sstable_bytes: None,
+            level_base_bytes: None,
+            level_size_multiplier: None,
             wal_segment_size: None,
             bloom_false_positive_rate: None,
             max_sstable_file_handles: None,
@@ -200,6 +227,21 @@ impl StorageConfigBuilder {
     /// Set the maximum number of Level 0 files.
     pub fn max_level0_files(mut self, count: usize) -> Self {
         self.max_level0_files = Some(count);
+        self
+    }
+
+    pub fn target_sstable_bytes(mut self, bytes: u64) -> Self {
+        self.target_sstable_bytes = Some(bytes);
+        self
+    }
+
+    pub fn level_base_bytes(mut self, bytes: u64) -> Self {
+        self.level_base_bytes = Some(bytes);
+        self
+    }
+
+    pub fn level_size_multiplier(mut self, multiplier: u64) -> Self {
+        self.level_size_multiplier = Some(multiplier);
         self
     }
 
@@ -232,6 +274,13 @@ impl StorageConfigBuilder {
                 .sstable_block_size
                 .unwrap_or(default.sstable_block_size),
             max_level0_files: self.max_level0_files.unwrap_or(default.max_level0_files),
+            target_sstable_bytes: self
+                .target_sstable_bytes
+                .unwrap_or(default.target_sstable_bytes),
+            level_base_bytes: self.level_base_bytes.unwrap_or(default.level_base_bytes),
+            level_size_multiplier: self
+                .level_size_multiplier
+                .unwrap_or(default.level_size_multiplier),
             wal_segment_size: self.wal_segment_size.unwrap_or(default.wal_segment_size),
             bloom_false_positive_rate: self
                 .bloom_false_positive_rate
@@ -268,6 +317,47 @@ mod tests {
             .max_level0_files(4)
             .build();
         assert!(config.is_ok());
+    }
+
+    #[test]
+    fn compaction_targets_are_configurable_and_reject_nonprogressing_levels() {
+        let config = StorageConfig::builder()
+            .target_sstable_bytes(128 * 1024)
+            .level_base_bytes(3 * 1024 * 1024)
+            .level_size_multiplier(4)
+            .build()
+            .unwrap();
+        assert_eq!(config.target_sstable_bytes, 128 * 1024);
+        assert_eq!(config.level_base_bytes, 3 * 1024 * 1024);
+        assert_eq!(config.level_size_multiplier, 4);
+        assert!(
+            StorageConfig::builder()
+                .target_sstable_bytes(0)
+                .build()
+                .is_err()
+        );
+        assert!(
+            StorageConfig::builder()
+                .level_base_bytes(0)
+                .build()
+                .is_err()
+        );
+        for multiplier in [0, 1] {
+            assert!(
+                StorageConfig::builder()
+                    .level_size_multiplier(multiplier)
+                    .build()
+                    .is_err()
+            );
+        }
+        assert!(
+            StorageConfig::builder()
+                .target_sstable_bytes(1)
+                .level_base_bytes(1)
+                .level_size_multiplier(2)
+                .build()
+                .is_ok()
+        );
     }
 
     #[test]

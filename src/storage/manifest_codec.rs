@@ -19,6 +19,7 @@ const ENTRY_KIND_REMOVE: u8 = 2;
 const ENTRY_KIND_CHECKPOINT: u8 = 3;
 const ENTRY_KIND_COMPACTION: u8 = 4;
 const ENTRY_KIND_RECOVERY_CHECKPOINT: u8 = 5;
+const ENTRY_KIND_COMPACTION_OUTPUTS: u8 = 6;
 
 const MANIFEST_VERSION: u32 = 1;
 
@@ -247,8 +248,9 @@ impl ManifestManager {
         self: &Arc<Self>,
         expected: &ManifestSnapshot,
         inputs: &[SSTableMeta],
-        output: Option<SSTableMeta>,
+        outputs: impl IntoIterator<Item = SSTableMeta>,
     ) -> Result<(), DBError> {
+        let outputs: Vec<_> = outputs.into_iter().collect();
         let mut state = self.state.lock().await;
         let levels: HashMap<_, Vec<_>> = state
             .levels
@@ -264,10 +266,23 @@ impl ManifestManager {
             .iter()
             .map(|meta| (meta.level, meta.file_id))
             .collect();
-        let payload = encode_compaction_payload(&removals, output.as_ref())?;
-        let entry = encode_entry(ENTRY_KIND_COMPACTION, &payload)?;
+        let entry = if outputs.len() <= 1 {
+            encode_entry(
+                ENTRY_KIND_COMPACTION,
+                &encode_compaction_payload(&removals, outputs.first())?,
+            )?
+        } else {
+            let mut payload = encode_compaction_payload(&removals, None)?;
+            let count = u32::try_from(outputs.len())
+                .map_err(|_| DBError::StorageError("too many compaction outputs".into()))?;
+            payload.extend_from_slice(&count.to_be_bytes());
+            for meta in &outputs {
+                push_bytes(&mut payload, &encode_add_payload(meta)?)?;
+            }
+            encode_entry(ENTRY_KIND_COMPACTION_OUTPUTS, &payload)?
+        };
         append_manifest_entry(&self.manifest_path, &entry).await?;
-        apply_compaction(&mut state, &removals, output);
+        apply_compaction(&mut state, &removals, outputs);
         Ok(())
     }
 
@@ -436,6 +451,10 @@ fn replay_manifest(data: &[u8]) -> Result<ManifestState, DBError> {
             ENTRY_KIND_COMPACTION => {
                 let (removals, output) = decode_compaction_payload(payload)?;
                 apply_compaction(&mut state, &removals, output);
+            }
+            ENTRY_KIND_COMPACTION_OUTPUTS => {
+                let (removals, outputs) = decode_compaction_outputs(payload)?;
+                apply_compaction(&mut state, &removals, outputs);
             }
             ENTRY_KIND_CHECKPOINT => {
                 let (_checkpoint_lsn, active_wal_segment) = decode_checkpoint_payload(payload)?;
@@ -610,10 +629,45 @@ fn decode_compaction_payload(
     Ok((removals, output))
 }
 
+fn decode_compaction_outputs(
+    payload: &[u8],
+) -> Result<(Vec<(u32, u64)>, Vec<SSTableMeta>), DBError> {
+    let mut cursor = Cursor::new(payload);
+    let count = read_u32(&mut cursor)? as usize;
+    if count > payload.len().saturating_sub(8) / 12 {
+        return Err(DBError::Corrupted("invalid compaction input count".into()));
+    }
+    let mut removals = Vec::with_capacity(count);
+    for _ in 0..count {
+        removals.push((read_u32(&mut cursor)?, read_u64(&mut cursor)?));
+    }
+    let count = read_u32(&mut cursor)? as usize;
+    if count > payload.len().saturating_sub(cursor.position() as usize) / 4 {
+        return Err(DBError::Corrupted("invalid compaction output count".into()));
+    }
+    let mut outputs = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = read_u32(&mut cursor)? as usize;
+        let start = cursor.position() as usize;
+        let end = start
+            .checked_add(len)
+            .filter(|end| *end <= payload.len())
+            .ok_or_else(|| DBError::Corrupted("truncated compaction output".into()))?;
+        outputs.push(decode_add_payload(&payload[start..end])?);
+        cursor.set_position(end as u64);
+    }
+    if cursor.position() as usize != payload.len() {
+        return Err(DBError::Corrupted(
+            "trailing compaction output bytes".into(),
+        ));
+    }
+    Ok((removals, outputs))
+}
+
 fn apply_compaction(
     state: &mut ManifestState,
     removals: &[(u32, u64)],
-    output: Option<SSTableMeta>,
+    outputs: impl IntoIterator<Item = SSTableMeta>,
 ) {
     for (level, file_id) in removals {
         if let Some(files) = state.levels.get_mut(level) {
@@ -623,7 +677,7 @@ fn apply_compaction(
             }
         }
     }
-    if let Some(meta) = output {
+    for meta in outputs {
         state.next_file_id = state.next_file_id.max(meta.file_id + 1);
         state
             .levels
@@ -1064,6 +1118,88 @@ mod tests {
                 .levels
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn multi_output_compaction_replays_atomically_after_legacy_single_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("MANIFEST");
+        let manager = Arc::new(ManifestManager::load_or_create(path.clone()).await.unwrap());
+        let input = SSTableMeta {
+            file_id: 1,
+            level: 0,
+            path: "input".into(),
+            record_count: 3,
+            smallest_key: b"a".to_vec(),
+            largest_key: b"z".to_vec(),
+            bloom_offset: 32,
+            bloom_size: 8,
+        };
+        manager.register_sstable(input.clone()).await.unwrap();
+        let single = SSTableMeta {
+            file_id: 2,
+            level: 1,
+            path: "single".into(),
+            ..input.clone()
+        };
+        manager
+            .publish_compaction(&manager.snapshot().await, &[input], Some(single.clone()))
+            .await
+            .unwrap();
+        let legacy = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(
+            ManifestManager::load_or_create(path.clone())
+                .await
+                .unwrap()
+                .snapshot()
+                .await
+                .levels[&1],
+            vec![single.clone()]
+        );
+
+        let outputs = vec![
+            SSTableMeta {
+                file_id: 3,
+                level: 2,
+                path: "left".into(),
+                record_count: 2,
+                largest_key: b"m".to_vec(),
+                ..single.clone()
+            },
+            SSTableMeta {
+                file_id: 4,
+                level: 2,
+                path: "right".into(),
+                record_count: 1,
+                smallest_key: b"n".to_vec(),
+                ..single.clone()
+            },
+        ];
+        manager
+            .publish_compaction(&manager.snapshot().await, &[single], outputs.clone())
+            .await
+            .unwrap();
+        let complete = tokio::fs::read(&path).await.unwrap();
+        let reopened = ManifestManager::load_or_create(path)
+            .await
+            .unwrap()
+            .snapshot()
+            .await;
+        assert_eq!(reopened.levels.len(), 1);
+        assert_eq!(reopened.levels[&2], outputs);
+        assert_eq!(reopened.next_file_id, 5);
+        // A torn replacement must fail closed, never expose just one output or
+        // removals without their replacements. Old manifests still reopen.
+        for end in legacy.len() + 1..complete.len() {
+            assert!(
+                replay_manifest(&complete[..end]).is_err(),
+                "accepted torn entry ending at {end}"
+            );
+        }
+        let mut corrupt = complete;
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 1;
+        assert!(replay_manifest(&corrupt).is_err());
     }
 
     #[test]
