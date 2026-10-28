@@ -1,0 +1,1 @@
+rocksdb crate 0.24.0 resolves librocksdb-sys 0.17.3+10.4.2; bundled native RocksDB source version 10.4.2.

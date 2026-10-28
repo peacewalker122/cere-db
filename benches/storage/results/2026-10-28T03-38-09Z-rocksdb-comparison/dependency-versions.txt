@@ -1,0 +1,5 @@
+RocksDB crate: rocksdb 0.24.0 (pinned exact in isolated manifest and lockfile)
+Native RocksDB: 10.4.2 (librocksdb-sys 0.17.3+10.4.2, build output)
+CereDB: workspace package ceredb 0.1.0
+rustc: rustc 1.97.1 (8bab26f4f 2026-07-14)
+cargo: cargo 1.97.1 (c980f4866 2026-06-30)

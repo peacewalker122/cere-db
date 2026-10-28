@@ -1,0 +1,9 @@
+Successful build invocation (earlier attempts and fixes are in build*.stderr):
+libdir="$PWD/target/rocksdb-compare-toolchain/libclang-18.1.1/libclang-18.1.1.data/platlib/clang/native"
+PATH="$HOME/.cargo/bin:$PATH" LIBCLANG_PATH="$libdir" LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" BINDGEN_EXTRA_CLANG_ARGS="-I/usr/lib/gcc/x86_64-redhat-linux/16/include" CARGO_TARGET_DIR="$PWD/target/rocksdb-compare" CARGO_BUILD_JOBS=2 cargo build --manifest-path tools/storage_compare/Cargo.toml --release --locked
+
+Benchmark invocation:
+PATH="$HOME/.cargo/bin:$PATH" LIBCLANG_PATH="$libdir" LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" target/rocksdb-compare/release/ceredb-rocksdb-compare /tmp/ceredb-rocksdb-compare-work
+
+Formatter check:
+PATH="$HOME/.cargo/bin:$PATH" cargo fmt --manifest-path tools/storage_compare/Cargo.toml --all -- --check

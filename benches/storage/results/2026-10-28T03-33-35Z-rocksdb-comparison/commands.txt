@@ -1,0 +1,1 @@
+build: PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_DIR="$PWD/target/rocksdb-compare" CARGO_BUILD_JOBS=2 cargo run --manifest-path tools/storage_compare/Cargo.toml --release --locked -- benches/storage/results/2026-10-28T03-33-35Z-rocksdb-comparison/work

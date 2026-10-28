@@ -1,0 +1,100 @@
+ Downloading crates ...
+  Downloaded tokio-macros v2.6.1
+  Downloaded openssl-probe v0.2.2
+  Downloaded rocksdb v0.24.0
+  Downloaded rustix v1.1.6
+  Downloaded bzip2-sys v0.1.13+1.0.8
+  Downloaded tokio v1.50.0
+  Downloaded libz-sys v1.1.30
+  Downloaded librocksdb-sys v0.17.3+10.4.2
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling libc v0.2.191
+   Compiling syn v2.0.119
+   Compiling syn v3.0.9
+   Compiling pin-project-lite v0.2.17
+   Compiling jobserver v0.1.35
+   Compiling synstructure v0.14.0
+   Compiling futures-core v0.3.34
+   Compiling find-msvc-tools v0.1.15
+   Compiling shlex v2.0.1
+   Compiling bytes v1.12.1
+   Compiling cc v1.10.0
+   Compiling once_cell v1.21.4
+   Compiling zerofrom-derive v0.1.8
+   Compiling memchr v2.8.3
+   Compiling zerofrom v0.1.8
+   Compiling yoke-derive v0.8.4
+   Compiling cfg-if v1.0.5
+   Compiling stable_deref_trait v1.2.1
+   Compiling itoa v1.0.18
+   Compiling log v0.4.34
+   Compiling yoke v0.8.4
+   Compiling futures-sink v0.3.34
+   Compiling zerovec-derive v0.11.7
+   Compiling tokio-macros v2.6.1
+   Compiling mio v1.2.4
+   Compiling socket2 v0.6.5
+   Compiling tokio v1.50.0
+   Compiling zerovec v0.11.9
+   Compiling cmake v0.1.58
+   Compiling tracing-core v0.1.36
+   Compiling displaydoc v0.2.7
+   Compiling tracing-attributes v0.1.31
+   Compiling pkg-config v0.3.34
+   Compiling fs_extra v1.3.0
+   Compiling dunce v1.0.5
+   Compiling serde_core v1.0.228
+   Compiling autocfg v1.5.1
+   Compiling slab v0.4.12
+   Compiling aws-lc-sys v0.46.0
+   Compiling tracing v0.1.44
+   Compiling futures-channel v0.3.34
+   Compiling http v1.5.0
+   Compiling futures-macro v0.3.34
+   Compiling futures-io v0.3.34
+   Compiling futures-task v0.3.34
+   Compiling smallvec v1.16.4
+   Compiling futures-util v0.3.34
+   Compiling tinystr v0.8.5
+   Compiling litemap v0.8.3
+   Compiling aws-lc-rs v1.18.2
+   Compiling writeable v0.6.4
+   Compiling serde v1.0.228
+   Compiling zeroize v1.9.1
+   Compiling zerocopy v0.8.63
+   Compiling icu_locale_core v2.4.0
+   Compiling http-body v1.1.0
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling serde_derive v1.0.228
+   Compiling icu_normalizer_data v2.4.0
+   Compiling glob v0.3.4
+   Compiling icu_properties_data v2.4.0
+   Compiling utf8_iter v1.0.4
+   Compiling percent-encoding v2.3.2
+   Compiling icu_collections v2.4.0
+   Compiling clang-sys v1.9.1
+   Compiling icu_provider v2.4.0
+   Compiling rustls-pki-types v1.15.1
+   Compiling hashbrown v0.17.1
+   Compiling equivalent v1.0.3
+   Compiling tower-service v0.3.3
+   Compiling httparse v1.10.1
+   Compiling indexmap v2.14.2
+   Compiling ppv-lite86 v0.2.21
+warning: clang-sys@1.9.1: could not execute `llvm-config` one or more times, if the LLVM_CONFIG_PATH environment variable is set to a full path to valid `llvm-config` executable it will be used to try to find an instance of `libclang` on your system: "couldn't execute `llvm-config --prefix` (path=llvm-config) (error: No such file or directory (os error 2))"
+error: failed to run custom build command for `clang-sys v1.9.1`
+
+Caused by:
+  process didn't exit successfully: `/home/peacewalker/project/learn/wasm-kv/target/rocksdb-compare/release/build/clang-sys-d1e9537d6d4c7b67/build-script-build` (exit status: 101)
+  --- stdout
+  cargo:warning=could not execute `llvm-config` one or more times, if the LLVM_CONFIG_PATH environment variable is set to a full path to valid `llvm-config` executable it will be used to try to find an instance of `libclang` on your system: "couldn't execute `llvm-config --prefix` (path=llvm-config) (error: No such file or directory (os error 2))"
+
+  --- stderr
+
+  thread 'main' (206959) panicked at /home/peacewalker/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.9.1/build/dynamic.rs:229:45:
+  called `Result::unwrap()` on an `Err` value: "couldn't find any valid shared libraries matching: ['libclang.so', 'libclang-*.so'], set the `LIBCLANG_PATH` environment variable to a path where one of these files can be found (invalid: [])"
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+warning: build failed, waiting for other jobs to finish...

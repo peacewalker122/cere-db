@@ -1,0 +1,229 @@
+{
+  "records": 1024,
+  "key_bytes": 20,
+  "value_bytes": 256,
+  "samples": 3,
+  "warmups": 1,
+  "wal": "enabled",
+  "sync": true,
+  "compression": "disabled on both (CereDB has no compression)",
+  "flush_threshold_bytes": 1048576,
+  "results": [
+    {
+      "engine": "CereDB",
+      "batch_size": 1,
+      "ordinal": 1,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 3138720495,
+      "ops_per_second": 326.24759089929734
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 1,
+      "ordinal": 1,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 2977729654,
+      "ops_per_second": 343.8861545488038
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 1,
+      "ordinal": 2,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 3071907000,
+      "ops_per_second": 333.3434247846696
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 1,
+      "ordinal": 2,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 3182603274,
+      "ops_per_second": 321.74918198742483
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 1,
+      "ordinal": 3,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 3123045755,
+      "ops_per_second": 327.88504566754256
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 1,
+      "ordinal": 3,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 3036882047,
+      "ops_per_second": 337.18793952223587
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 16,
+      "ordinal": 1,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 189269219,
+      "ops_per_second": 5410.282799338862
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 16,
+      "ordinal": 1,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 196681425,
+      "ops_per_second": 5206.388961235155
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 16,
+      "ordinal": 2,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 195972867,
+      "ops_per_second": 5225.213141368187
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 16,
+      "ordinal": 2,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 196613368,
+      "ops_per_second": 5208.191133778859
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 16,
+      "ordinal": 3,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 198457506,
+      "ops_per_second": 5159.7947623104765
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 16,
+      "ordinal": 3,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 195273948,
+      "ops_per_second": 5243.915076679865
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 64,
+      "ordinal": 1,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 46778435,
+      "ops_per_second": 21890.42878411815
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 64,
+      "ordinal": 1,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 49911086,
+      "ops_per_second": 20516.484053262237
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 64,
+      "ordinal": 2,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 50806375,
+      "ops_per_second": 20154.951027307103
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 64,
+      "ordinal": 2,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 53590806,
+      "ops_per_second": 19107.755162331392
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 64,
+      "ordinal": 3,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 53137176,
+      "ops_per_second": 19270.87732325105
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 64,
+      "ordinal": 3,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 103769055,
+      "ops_per_second": 9868.06712270821
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 256,
+      "ordinal": 1,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 25525128,
+      "ops_per_second": 40117.33065550151
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 256,
+      "ordinal": 1,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 27503270,
+      "ops_per_second": 37231.93642065107
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 256,
+      "ordinal": 2,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 27960125,
+      "ops_per_second": 36623.58447968312
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 256,
+      "ordinal": 2,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 26013251,
+      "ops_per_second": 39364.55308873158
+    },
+    {
+      "engine": "RocksDB",
+      "batch_size": 256,
+      "ordinal": 3,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 25758161,
+      "ops_per_second": 39754.390851117045
+    },
+    {
+      "engine": "CereDB",
+      "batch_size": 256,
+      "ordinal": 3,
+      "mutations": 1024,
+      "logical_bytes": 282624,
+      "elapsed_ns": 28082953,
+      "ops_per_second": 36463.40183669431
+    }
+  ]
+}

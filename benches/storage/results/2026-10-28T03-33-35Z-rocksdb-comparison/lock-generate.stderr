@@ -1,0 +1,12 @@
+    Updating crates.io index
+     Locking 298 packages to latest Rust 1.97.1 compatible versions
+      Adding anyhow v1.0.102 (available: v1.0.104)
+      Adding matchit v0.8.4 (available: v0.8.6)
+      Adding rocksdb v0.24.0 (available: v0.25.0)
+      Adding serde v1.0.228 (available: v1.0.229)
+      Adding serde_core v1.0.228 (available: v1.0.229)
+      Adding serde_derive v1.0.228 (available: v1.0.229)
+      Adding serde_json v1.0.149 (available: v1.0.154)
+      Adding tokio v1.50.0 (available: v1.54.1)
+      Adding tokio-macros v2.6.1 (available: v2.7.2)
+      Adding tokio-util v0.7.19 (available: v0.7.20)

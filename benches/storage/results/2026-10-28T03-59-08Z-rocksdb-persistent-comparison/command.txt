@@ -1,0 +1,1 @@
+target/rocksdb-compare/release/ceredb-rocksdb-compare '/home/peacewalker/project/learn/wasm-kv/target/rocksdb-compare-persistent-2026-10-28T03-59-08Z'
