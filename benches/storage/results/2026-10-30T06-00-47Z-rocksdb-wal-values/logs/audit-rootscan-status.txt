@@ -1,0 +1,3 @@
+audit_rootscan_start_utc=2026-10-30T06:01:51Z
+audit_rootscan_exit_status=0
+audit_rootscan_end_utc=2026-10-30T06:01:51Z

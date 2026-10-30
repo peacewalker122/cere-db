@@ -1,0 +1,9 @@
+captured_utc=2026-10-29T16:26:09Z
+rustc 1.97.1 (8bab26f4f 2026-07-14)
+cargo 1.97.1 (c980f4866 2026-06-30)
+kernel=7.1.13-200.fc44.x86_64 arch=x86_64
+cpu_model=11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz
+cpu_logical=8
+mem_total_kb=16075916
+cargo_profile=release
+harness_schema=ceredb-experimental-wal-comparison/2

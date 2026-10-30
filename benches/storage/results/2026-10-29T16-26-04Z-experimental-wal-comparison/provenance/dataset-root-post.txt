@@ -1,0 +1,6 @@
+captured_utc=2026-10-29T16:53:47Z
+canonical=/home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/measured
+/home /dev/nvme0n1p3[/home] btrfs rw,relatime,seclabel,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/home
+fs=btrfs bsize=4096 free_blocks=76106217
+dataset_bytes=189182153
+results_sha256=d431c7eeffb1daed3ddea4dbe32f71490a9a43775dc79ebcc4d98ce5fc990752

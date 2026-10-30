@@ -1,0 +1,15 @@
+# Final matched storage benchmark commands
+# No .envrc sourced; no dependencies installed.
+export PATH="/home/peacewalker/.cargo/bin:$PATH"
+libclang="$PWD/target/rocksdb-compare-toolchain/libclang-18.1.1/libclang-18.1.1.data/platlib/clang/native"
+export LIBCLANG_PATH="$libclang"
+export LD_LIBRARY_PATH="$libclang"
+export BINDGEN_EXTRA_CLANG_ARGS="-I/usr/lib/gcc/x86_64-redhat-linux/16/include"
+export CARGO_TARGET_DIR="$PWD/target/rocksdb-compare"
+rtk cargo build --manifest-path tools/storage_compare/Cargo.toml --release --locked --offline --bin wal_values
+
+# After build, run the exact freshly-built binary for the schema-2 pilot and full matrix.
+"$CARGO_TARGET_DIR/release/wal_values" --data-dir "$PWD/target/storage-compare-final-20261030T054701Z/pilot" --pilot
+"$CARGO_TARGET_DIR/release/wal_values" --data-dir "$PWD/target/storage-compare-final-20261030T054701Z/full"
+
+# findmnt -T each exact dataset root before and after each run; capture numeric exit status.

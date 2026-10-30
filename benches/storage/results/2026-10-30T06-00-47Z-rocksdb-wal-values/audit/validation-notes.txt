@@ -1,0 +1,8 @@
+Independent validation notes
+
+- Benchmark build, schema-2 pilot, and full matrix each completed with numeric process exit status 0. No benchmark process was restarted or duplicated.
+- First independent pilot hand-check had incorrect expected mutation bytes; corrected computation is 6 * (20-byte key + 4096-byte value) + 2 * 20-byte deletes = 24,736 bytes, and live bytes are 19 * 4,116 = 78,204. Corrected pilot assertions passed; comprehensive audit recomputed these values from case rows.
+- First filesystem-audit helper invocation hit a Python NameError while assembling case summaries, before modifying reports or databases. Helper was corrected; subsequent complete audits passed, including the post-capture final audit.
+- One binary hash comparison initially included different sha256sum filename spellings (absolute vs relative path), not a digest mismatch. Recaptured using identical absolute paths; all digest values match.
+- First archive checksum verification ran from repository root, so manifest-relative paths could not resolve; reran from archive root and verified all 44 checksum entries successfully.
+- No production, test, benchmark, manifest, lockfile, README, or documentation source files were edited during this task. Temporary audit helpers and outputs remained under target; archived artifact contains no database copies.

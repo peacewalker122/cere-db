@@ -13,6 +13,37 @@ static SYNCED_DIRECTORIES: std::sync::Mutex<Vec<std::path::PathBuf>> =
 #[cfg(test)]
 static TEST_HOOK_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[cfg(test)]
+std::thread_local! {
+    static TEST_HOOK_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+struct DirectoryTestHooks {
+    _guard: tokio::sync::MutexGuard<'static, ()>,
+    _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl DirectoryTestHooks {
+    async fn acquire() -> Self {
+        let guard = TEST_HOOK_LOCK.lock().await;
+        TEST_HOOK_ACTIVE.set(true);
+        Self {
+            _guard: guard,
+            _thread_bound: std::marker::PhantomData,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for DirectoryTestHooks {
+    fn drop(&mut self) {
+        TEST_HOOK_ACTIVE.set(false);
+        *FAIL_SYNC_ONCE.lock().unwrap() = None;
+    }
+}
+
 pub(crate) async fn create_dir_all_durable(path: &Path) -> Result<(), DBError> {
     if let Ok(metadata) = tokio::fs::metadata(path).await {
         if !metadata.is_dir() {
@@ -114,7 +145,9 @@ async fn resolved_sync_chain(path: &Path) -> Result<Vec<PathBuf>, DBError> {
 
 async fn sync_directory(path: &Path) -> Result<(), DBError> {
     #[cfg(test)]
-    if let Ok(mut failure) = FAIL_SYNC_ONCE.lock() {
+    if TEST_HOOK_ACTIVE.get()
+        && let Ok(mut failure) = FAIL_SYNC_ONCE.lock()
+    {
         if failure.as_deref() == Some(path) {
             *failure = None;
             return Err(std::io::Error::from(std::io::ErrorKind::Other).into());
@@ -122,10 +155,12 @@ async fn sync_directory(path: &Path) -> Result<(), DBError> {
     }
     tokio::fs::File::open(path).await?.sync_all().await?;
     #[cfg(test)]
-    SYNCED_DIRECTORIES
-        .lock()
-        .expect("sync trace mutex poisoned")
-        .push(path.to_path_buf());
+    if TEST_HOOK_ACTIVE.get() {
+        SYNCED_DIRECTORIES
+            .lock()
+            .expect("sync trace mutex poisoned")
+            .push(path.to_path_buf());
+    }
     Ok(())
 }
 
@@ -142,11 +177,36 @@ pub(crate) async fn sync_parent(path: &Path) -> Result<(), DBError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FAIL_SYNC_ONCE, SYNCED_DIRECTORIES, TEST_HOOK_LOCK, create_dir_all_durable};
+    use super::{DirectoryTestHooks, FAIL_SYNC_ONCE, SYNCED_DIRECTORIES, create_dir_all_durable};
+
+    #[tokio::test]
+    async fn unrelated_test_threads_do_not_consume_directory_hooks() {
+        let _hook_guard = DirectoryTestHooks::acquire().await;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("shared");
+        std::fs::create_dir_all(&path).unwrap();
+        *FAIL_SYNC_ONCE.lock().unwrap() = Some(path.clone());
+        SYNCED_DIRECTORIES.lock().unwrap().clear();
+        let other_path = path.clone();
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(create_dir_all_durable(&other_path))
+                .unwrap();
+        })
+        .join()
+        .unwrap();
+        assert_eq!(*FAIL_SYNC_ONCE.lock().unwrap(), Some(path.clone()));
+        assert!(SYNCED_DIRECTORIES.lock().unwrap().is_empty());
+        assert!(create_dir_all_durable(&path).await.is_err());
+        assert!(FAIL_SYNC_ONCE.lock().unwrap().is_none());
+    }
 
     #[tokio::test]
     async fn parent_traversal_detours_are_synced_and_retry_the_complete_chain() {
-        let _hook_guard = TEST_HOOK_LOCK.lock().await;
+        let _hook_guard = DirectoryTestHooks::acquire().await;
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("transit/deep/../../R/retry/a/b/db");
         let detour_parent = root.path().join("transit");
@@ -180,7 +240,7 @@ mod tests {
 
     #[tokio::test]
     async fn retry_syncs_existing_ancestors_after_initial_failure() {
-        let _hook_guard = TEST_HOOK_LOCK.lock().await;
+        let _hook_guard = DirectoryTestHooks::acquire().await;
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("retry/a/b/db");
         let failed_parent = root.path().join("retry/a");
@@ -201,7 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn relative_and_symlink_paths_sync_resolved_ancestry() {
-        let _hook_guard = TEST_HOOK_LOCK.lock().await;
+        let _hook_guard = DirectoryTestHooks::acquire().await;
         let root = tempfile::Builder::new().tempdir_in(".").unwrap();
         let relative = root.path().join("relative/a/b");
         let failed_parent = root
@@ -244,7 +304,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn nested_symlink_targets_and_dotdot_sync_every_alias_ancestry() {
-        let _hook_guard = TEST_HOOK_LOCK.lock().await;
+        let _hook_guard = DirectoryTestHooks::acquire().await;
         use std::os::unix::fs::symlink;
 
         let root = tempfile::tempdir().unwrap();

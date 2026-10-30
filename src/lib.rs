@@ -15,4 +15,5 @@ pub use fts::{
     MAX_DOCUMENT_BATCH_MUTATIONS, RankedSearchHit, SearchHit,
 };
 pub use storage::config::StorageConfig;
+pub use storage::experimental::{CleanStats, ExperimentalEngine};
 pub use storage::kv2::KV2;

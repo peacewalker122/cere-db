@@ -39,6 +39,19 @@ impl ReadManager {
         range: impl RangeBounds<Vec<u8>>,
         sequence_number: u64,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, DBError> {
+        Ok(self
+            .scan_records_range(range, sequence_number)
+            .await?
+            .into_iter()
+            .map(|(key, record)| (key, record.value))
+            .collect())
+    }
+
+    pub(crate) async fn scan_records_range(
+        &self,
+        range: impl RangeBounds<Vec<u8>>,
+        sequence_number: u64,
+    ) -> Result<Vec<(Vec<u8>, MemtableRecord)>, DBError> {
         let _read_lease = self.manifest.read_lease().await;
         // Collect entries from memtable
         let mut merged: HashMap<Vec<u8>, MemtableRecord> = HashMap::new();
@@ -68,10 +81,9 @@ impl ReadManager {
             .await?;
 
         // 3. Produce sorted output
-        let mut results: Vec<(Vec<u8>, Vec<u8>)> = merged
+        let mut results: Vec<(Vec<u8>, MemtableRecord)> = merged
             .into_iter()
             .filter(|(_, record)| record.record_type != RecordType::Delete)
-            .map(|(key, record)| (key, record.value))
             .collect();
         results.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(results)

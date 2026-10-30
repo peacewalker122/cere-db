@@ -1,0 +1,7 @@
+data-dir=/home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/pilot fstype=btrfs mount=/home profile=small-tables
+PILOT PASS reference writes/overwrites/deletes, full scan/get, shutdown, reopen, and bounded reads
+PILOT PASS experimental writes/overwrites/deletes, closed preclean recovery, clean, closed postclean recovery, and bounded reads
+PILOT PASS experimental mode guards and repeated clean
+PILOT PASS FTS put_documents, exact Boolean and ranked equivalence before and after experimental clean
+PILOT JSON /home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/pilot/pilot/results.json
+PILOT OK

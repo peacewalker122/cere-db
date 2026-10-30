@@ -1,0 +1,1426 @@
+[
+  {
+    "case": "raw64B/16384rec/batch1",
+    "value_bytes": 64,
+    "records": 16384,
+    "batch_size": 1,
+    "live_records": 15565,
+    "live_logical_bytes": 1369720,
+    "mutations": 22937,
+    "batches": 22937,
+    "input_bytes": 1913624,
+    "ref_ingest_median_ns": 96371349673,
+    "exp_ingest_median_ns": 122029362038,
+    "ref_mutate_median_ns": 46745045629,
+    "exp_mutate_median_ns": 56112639422,
+    "ref_settle_median_ns": 8171,
+    "exp_settle_median_ns": 1226280,
+    "ref_preclean_shutdown_median_ns": 82125,
+    "exp_preclean_shutdown_median_ns": 14788858,
+    "ref_preclean_reopen_median_ns": 90806841,
+    "exp_preclean_reopen_median_ns": 251210281,
+    "ref_final_shutdown_median_ns": 83635,
+    "exp_final_shutdown_median_ns": 197024,
+    "ref_phase_sum_median_ns": 142573802227,
+    "exp_phase_sum_median_ns": 184465794911,
+    "ref_point_get_median_ns": 6643620,
+    "exp_point_get_median_ns": 10367094,
+    "ref_scan_median_ns": 365697,
+    "exp_scan_median_ns": 20519215,
+    "exp_clean_pause_median_ns": 5539178786,
+    "exp_clean_elapsed_median_ns": 5559935889,
+    "exp_postclean_shutdown_median_ns": 138378,
+    "exp_postclean_reopen_median_ns": 80482756,
+    "ref_ingest_range_ns": [
+      85732596784,
+      115553481878
+    ],
+    "exp_ingest_range_ns": [
+      86349280339,
+      127916473517
+    ],
+    "ref_mutate_range_ns": [
+      46138428067,
+      49604467736
+    ],
+    "exp_mutate_range_ns": [
+      52751673144,
+      56873897071
+    ],
+    "ref_preclean_reopen_range_ns": [
+      63953051,
+      91760499
+    ],
+    "exp_preclean_reopen_range_ns": [
+      195272128,
+      260561222
+    ],
+    "ref_phase_sum_range_ns": [
+      135429029178,
+      162389528034
+    ],
+    "exp_phase_sum_range_ns": [
+      148060289554,
+      189857131982
+    ],
+    "ref_preclean_total_median": 3266360,
+    "exp_preclean_total_median": 6741180,
+    "ref_preclean_total_range": [
+      3266360,
+      3266360
+    ],
+    "exp_preclean_total_range": [
+      6741180,
+      6741180
+    ],
+    "ref_preclean_amp_range": [
+      2.384691761819934,
+      2.384691761819934
+    ],
+    "exp_preclean_amp_range": [
+      4.92157521245218,
+      4.92157521245218
+    ],
+    "ref_postclean_total_median": null,
+    "exp_postclean_total_median": 4743572,
+    "ref_postclean_total_range": null,
+    "exp_postclean_total_range": [
+      4743572,
+      4743572
+    ],
+    "ref_postclean_amp_range": null,
+    "exp_postclean_amp_range": [
+      3.463169114855591,
+      3.463169114855591
+    ],
+    "ref_final_total_median": 3266360,
+    "exp_final_total_median": 4743572,
+    "ref_final_total_range": [
+      3266360,
+      3266360
+    ],
+    "exp_final_total_range": [
+      4743572,
+      4743572
+    ],
+    "ref_final_amp_range": [
+      2.384691761819934,
+      2.384691761819934
+    ],
+    "exp_final_amp_range": [
+      3.463169114855591,
+      3.463169114855591
+    ],
+    "ref_preclean_breakdown_median": {
+      "total_bytes": 3266360,
+      "wal_bytes": 1956383,
+      "sstable_bytes": 1309648,
+      "metadata_bytes": 329,
+      "other_bytes": 0,
+      "file_count": 10
+    },
+    "exp_preclean_breakdown_median": {
+      "total_bytes": 6741180,
+      "wal_bytes": 4184999,
+      "sstable_bytes": 2492160,
+      "metadata_bytes": 64021,
+      "other_bytes": 0,
+      "file_count": 96
+    },
+    "exp_postclean_breakdown_median": {
+      "total_bytes": 4743572,
+      "wal_bytes": 2337403,
+      "sstable_bytes": 2405480,
+      "metadata_bytes": 689,
+      "other_bytes": 0,
+      "file_count": 19
+    },
+    "ref_preclean_levels": {
+      "compaction_observed": false,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        }
+      ],
+      "total_records": 11916,
+      "total_tables": 1
+    },
+    "exp_preclean_levels": {
+      "compaction_observed": true,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        },
+        {
+          "level": 1,
+          "tables": 4
+        },
+        {
+          "level": 2,
+          "tables": 15
+        },
+        {
+          "level": 3,
+          "tables": 54
+        }
+      ],
+      "total_records": 16010,
+      "total_tables": 74
+    },
+    "exp_postclean_levels": {
+      "compaction_observed": false,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        }
+      ],
+      "total_records": 15565,
+      "total_tables": 1
+    },
+    "ref_preclean_breakdown_range": {
+      "wal_bytes": [
+        1956383,
+        1956383
+      ],
+      "sstable_bytes": [
+        1309648,
+        1309648
+      ],
+      "metadata_bytes": [
+        329,
+        329
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_preclean_breakdown_range": {
+      "wal_bytes": [
+        4184999,
+        4184999
+      ],
+      "sstable_bytes": [
+        2492160,
+        2492160
+      ],
+      "metadata_bytes": [
+        64021,
+        64021
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_clean_median": {
+      "write_pause_ns": 5539178786,
+      "elapsed_ns": 5559935889,
+      "copied_payload_bytes": 996160,
+      "copied_transactions": 61,
+      "index_sstables_written": 1,
+      "total_root_bytes_before": 6741180,
+      "observed_peak_bytes": 11484703,
+      "total_root_bytes_after": 4743572,
+      "deferred_cleanup_bytes": 0,
+      "live_records": 15565,
+      "live_logical_bytes": 1369720
+    },
+    "ratios": {
+      "ingest_exp_over_ref_median": 1.266241081525379,
+      "mutate_exp_over_ref_median": 1.200397575121597,
+      "preclean_reopen_exp_over_ref_median": 2.7664246243297903,
+      "phase_sum_exp_over_ref_median": 1.2938267201242297,
+      "point_get_exp_over_ref_median": 1.5604586053988638,
+      "scan_exp_over_ref_median": 56.10988058419949,
+      "preclean_total_exp_over_ref_median": 2.0638202770055964,
+      "postclean_exp_over_ref_preclean_median": 1.452250211244321,
+      "final_total_exp_over_ref_median": 1.452250211244321
+    }
+  },
+  {
+    "case": "raw64B/16384rec/batch64",
+    "value_bytes": 64,
+    "records": 16384,
+    "batch_size": 64,
+    "live_records": 15565,
+    "live_logical_bytes": 1369720,
+    "mutations": 22937,
+    "batches": 359,
+    "input_bytes": 1913624,
+    "ref_ingest_median_ns": 1045421526,
+    "exp_ingest_median_ns": 1125128132,
+    "ref_mutate_median_ns": 394611975,
+    "exp_mutate_median_ns": 569684560,
+    "ref_settle_median_ns": 2033,
+    "exp_settle_median_ns": 8063,
+    "ref_preclean_shutdown_median_ns": 15160,
+    "exp_preclean_shutdown_median_ns": 2676636025,
+    "ref_preclean_reopen_median_ns": 38519489,
+    "exp_preclean_reopen_median_ns": 105263917,
+    "ref_final_shutdown_median_ns": 73606,
+    "exp_final_shutdown_median_ns": 247744,
+    "ref_phase_sum_median_ns": 1478613815,
+    "exp_phase_sum_median_ns": 10926603434,
+    "ref_point_get_median_ns": 5834605,
+    "exp_point_get_median_ns": 10429562,
+    "ref_scan_median_ns": 377860,
+    "exp_scan_median_ns": 17202979,
+    "exp_clean_pause_median_ns": 6404592118,
+    "exp_clean_elapsed_median_ns": 6420123212,
+    "exp_postclean_shutdown_median_ns": 75768,
+    "exp_postclean_reopen_median_ns": 66659448,
+    "ref_ingest_range_ns": [
+      987481148,
+      1103458508
+    ],
+    "exp_ingest_range_ns": [
+      1057632403,
+      1292515774
+    ],
+    "ref_mutate_range_ns": [
+      373783622,
+      405502012
+    ],
+    "exp_mutate_range_ns": [
+      535764116,
+      714949643
+    ],
+    "ref_preclean_reopen_range_ns": [
+      35916256,
+      44432107
+    ],
+    "exp_preclean_reopen_range_ns": [
+      65868516,
+      122423991
+    ],
+    "ref_phase_sum_range_ns": [
+      1397272134,
+      1553551021
+    ],
+    "exp_phase_sum_range_ns": [
+      10744540375,
+      12374985540
+    ],
+    "ref_preclean_total_median": 2862736,
+    "exp_preclean_total_median": 5925303,
+    "ref_preclean_total_range": [
+      2862736,
+      2862736
+    ],
+    "exp_preclean_total_range": [
+      5925303,
+      5925303
+    ],
+    "ref_preclean_amp_range": [
+      2.090015477615863,
+      2.090015477615863
+    ],
+    "exp_preclean_amp_range": [
+      4.325922816342026,
+      4.325922816342026
+    ],
+    "ref_postclean_total_median": null,
+    "exp_postclean_total_median": 4743573,
+    "ref_postclean_total_range": null,
+    "exp_postclean_total_range": [
+      4743573,
+      4743573
+    ],
+    "ref_postclean_amp_range": null,
+    "exp_postclean_amp_range": [
+      3.463169844931811,
+      3.463169844931811
+    ],
+    "ref_final_total_median": 2862736,
+    "exp_final_total_median": 4743573,
+    "ref_final_total_range": [
+      2862736,
+      2862736
+    ],
+    "exp_final_total_range": [
+      4743573,
+      4743573
+    ],
+    "ref_final_amp_range": [
+      2.090015477615863,
+      2.090015477615863
+    ],
+    "exp_final_amp_range": [
+      3.463169844931811,
+      3.463169844931811
+    ],
+    "ref_preclean_breakdown_median": {
+      "total_bytes": 2862736,
+      "wal_bytes": 1547098,
+      "sstable_bytes": 1315308,
+      "metadata_bytes": 330,
+      "other_bytes": 0,
+      "file_count": 8
+    },
+    "exp_preclean_breakdown_median": {
+      "total_bytes": 5925303,
+      "wal_bytes": 3349505,
+      "sstable_bytes": 2510604,
+      "metadata_bytes": 65194,
+      "other_bytes": 0,
+      "file_count": 94
+    },
+    "exp_postclean_breakdown_median": {
+      "total_bytes": 4743573,
+      "wal_bytes": 2337403,
+      "sstable_bytes": 2405480,
+      "metadata_bytes": 690,
+      "other_bytes": 0,
+      "file_count": 19
+    },
+    "ref_preclean_levels": {
+      "compaction_observed": false,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        }
+      ],
+      "total_records": 11968,
+      "total_tables": 1
+    },
+    "exp_preclean_levels": {
+      "compaction_observed": true,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        },
+        {
+          "level": 1,
+          "tables": 4
+        },
+        {
+          "level": 2,
+          "tables": 15
+        },
+        {
+          "level": 3,
+          "tables": 55
+        }
+      ],
+      "total_records": 16128,
+      "total_tables": 75
+    },
+    "exp_postclean_levels": {
+      "compaction_observed": false,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        }
+      ],
+      "total_records": 15565,
+      "total_tables": 1
+    },
+    "ref_preclean_breakdown_range": {
+      "wal_bytes": [
+        1547098,
+        1547098
+      ],
+      "sstable_bytes": [
+        1315308,
+        1315308
+      ],
+      "metadata_bytes": [
+        330,
+        330
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_preclean_breakdown_range": {
+      "wal_bytes": [
+        3349505,
+        3349505
+      ],
+      "sstable_bytes": [
+        2510604,
+        2510604
+      ],
+      "metadata_bytes": [
+        65194,
+        65194
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_clean_median": {
+      "write_pause_ns": 6404592118,
+      "elapsed_ns": 6420123212,
+      "copied_payload_bytes": 996160,
+      "copied_transactions": 61,
+      "index_sstables_written": 1,
+      "total_root_bytes_before": 5925303,
+      "observed_peak_bytes": 10668827,
+      "total_root_bytes_after": 4743573,
+      "deferred_cleanup_bytes": 0,
+      "live_records": 15565,
+      "live_logical_bytes": 1369720
+    },
+    "ratios": {
+      "ingest_exp_over_ref_median": 1.0762435094530471,
+      "mutate_exp_over_ref_median": 1.4436575575285062,
+      "preclean_reopen_exp_over_ref_median": 2.7327443777875664,
+      "phase_sum_exp_over_ref_median": 7.389761493605414,
+      "point_get_exp_over_ref_median": 1.7875352316052244,
+      "scan_exp_over_ref_median": 45.52738845074895,
+      "preclean_total_exp_over_ref_median": 2.0698042012955438,
+      "postclean_exp_over_ref_preclean_median": 1.6570067935010424,
+      "final_total_exp_over_ref_median": 1.6570067935010424
+    }
+  },
+  {
+    "case": "raw4096B/512rec/batch1",
+    "value_bytes": 4096,
+    "records": 512,
+    "batch_size": 1,
+    "live_records": 486,
+    "live_logical_bytes": 2002320,
+    "mutations": 716,
+    "batches": 716,
+    "input_bytes": 2741024,
+    "ref_ingest_median_ns": 1819608390,
+    "exp_ingest_median_ns": 1879217454,
+    "ref_mutate_median_ns": 1142980011,
+    "exp_mutate_median_ns": 810890812,
+    "ref_settle_median_ns": 2143,
+    "exp_settle_median_ns": 6619,
+    "ref_preclean_shutdown_median_ns": 2815394871,
+    "exp_preclean_shutdown_median_ns": 6999901,
+    "ref_preclean_reopen_median_ns": 43528333,
+    "exp_preclean_reopen_median_ns": 20697174,
+    "ref_final_shutdown_median_ns": 37794,
+    "exp_final_shutdown_median_ns": 124642,
+    "ref_phase_sum_median_ns": 5821551580,
+    "exp_phase_sum_median_ns": 3290420308,
+    "ref_point_get_median_ns": 84934092,
+    "exp_point_get_median_ns": 44568964,
+    "ref_scan_median_ns": 7563032,
+    "exp_scan_median_ns": 102261582,
+    "exp_clean_pause_median_ns": 541469303,
+    "exp_clean_elapsed_median_ns": 548699428,
+    "exp_postclean_shutdown_median_ns": 56263,
+    "exp_postclean_reopen_median_ns": 15975972,
+    "ref_ingest_range_ns": [
+      1805715697,
+      1882850561
+    ],
+    "exp_ingest_range_ns": [
+      1860501274,
+      2009973626
+    ],
+    "ref_mutate_range_ns": [
+      1116241668,
+      1181651869
+    ],
+    "exp_mutate_range_ns": [
+      652852125,
+      836427654
+    ],
+    "ref_preclean_reopen_range_ns": [
+      37162797,
+      62610136
+    ],
+    "exp_preclean_reopen_range_ns": [
+      16324989,
+      25283898
+    ],
+    "ref_phase_sum_range_ns": [
+      5192932069,
+      6043783303
+    ],
+    "exp_phase_sum_range_ns": [
+      3085878061,
+      3448165561
+    ],
+    "ref_preclean_total_median": 2917974,
+    "exp_preclean_total_median": 2812381,
+    "ref_preclean_total_range": [
+      2917974,
+      2917974
+    ],
+    "exp_preclean_total_range": [
+      2812381,
+      2812381
+    ],
+    "ref_preclean_amp_range": [
+      1.4572965360182188,
+      1.4572965360182188
+    ],
+    "exp_preclean_amp_range": [
+      1.4045612089975628,
+      1.4045612089975628
+    ],
+    "ref_postclean_total_median": null,
+    "exp_postclean_total_median": 2108392,
+    "ref_postclean_total_range": null,
+    "exp_postclean_total_range": [
+      2108392,
+      2108392
+    ],
+    "ref_postclean_amp_range": null,
+    "exp_postclean_amp_range": [
+      1.0529745495225538,
+      1.0529745495225538
+    ],
+    "ref_final_total_median": 2917974,
+    "exp_final_total_median": 2108392,
+    "ref_final_total_range": [
+      2917974,
+      2917974
+    ],
+    "exp_final_total_range": [
+      2108392,
+      2108392
+    ],
+    "ref_final_amp_range": [
+      1.4572965360182188,
+      1.4572965360182188
+    ],
+    "exp_final_amp_range": [
+      1.0529745495225538,
+      1.0529745495225538
+    ],
+    "ref_preclean_breakdown_median": {
+      "total_bytes": 2917974,
+      "wal_bytes": 660326,
+      "sstable_bytes": 2193598,
+      "metadata_bytes": 64050,
+      "other_bytes": 0,
+      "file_count": 90
+    },
+    "exp_preclean_breakdown_median": {
+      "total_bytes": 2812381,
+      "wal_bytes": 2812304,
+      "sstable_bytes": 0,
+      "metadata_bytes": 77,
+      "other_bytes": 0,
+      "file_count": 16
+    },
+    "exp_postclean_breakdown_median": {
+      "total_bytes": 2108392,
+      "wal_bytes": 2032634,
+      "sstable_bytes": 75228,
+      "metadata_bytes": 530,
+      "other_bytes": 0,
+      "file_count": 11
+    },
+    "ref_preclean_levels": {
+      "compaction_observed": true,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        },
+        {
+          "level": 1,
+          "tables": 5
+        },
+        {
+          "level": 2,
+          "tables": 20
+        },
+        {
+          "level": 3,
+          "tables": 60
+        }
+      ],
+      "total_records": 510,
+      "total_tables": 86
+    },
+    "exp_preclean_levels": {
+      "compaction_observed": false,
+      "levels": [],
+      "total_records": 0,
+      "total_tables": 0
+    },
+    "exp_postclean_levels": {
+      "compaction_observed": false,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        }
+      ],
+      "total_records": 486,
+      "total_tables": 1
+    },
+    "ref_preclean_breakdown_range": {
+      "wal_bytes": [
+        660326,
+        660326
+      ],
+      "sstable_bytes": [
+        2193598,
+        2193598
+      ],
+      "metadata_bytes": [
+        64050,
+        64050
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_preclean_breakdown_range": {
+      "wal_bytes": [
+        2812304,
+        2812304
+      ],
+      "sstable_bytes": [
+        0,
+        0
+      ],
+      "metadata_bytes": [
+        77,
+        77
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_clean_median": {
+      "write_pause_ns": 541469303,
+      "elapsed_ns": 548699428,
+      "copied_payload_bytes": 1990656,
+      "copied_transactions": 2,
+      "index_sstables_written": 1,
+      "total_root_bytes_before": 2812381,
+      "observed_peak_bytes": 4920724,
+      "total_root_bytes_after": 2108392,
+      "deferred_cleanup_bytes": 0,
+      "live_records": 486,
+      "live_logical_bytes": 2002320
+    },
+    "ratios": {
+      "ingest_exp_over_ref_median": 1.032759281792496,
+      "mutate_exp_over_ref_median": 0.7094531874538618,
+      "preclean_reopen_exp_over_ref_median": 0.47548740265334766,
+      "phase_sum_exp_over_ref_median": 0.5652136312429615,
+      "point_get_exp_over_ref_median": 0.524747636084695,
+      "scan_exp_over_ref_median": 13.52124148092987,
+      "preclean_total_exp_over_ref_median": 0.9638129058038214,
+      "postclean_exp_over_ref_preclean_median": 0.7225533880699416,
+      "final_total_exp_over_ref_median": 0.7225533880699416
+    }
+  },
+  {
+    "case": "raw4096B/512rec/batch64",
+    "value_bytes": 4096,
+    "records": 512,
+    "batch_size": 64,
+    "live_records": 486,
+    "live_logical_bytes": 2002320,
+    "mutations": 716,
+    "batches": 12,
+    "input_bytes": 2741024,
+    "ref_ingest_median_ns": 166713867,
+    "exp_ingest_median_ns": 89955142,
+    "ref_mutate_median_ns": 43786318,
+    "exp_mutate_median_ns": 38094247,
+    "ref_settle_median_ns": 14319,
+    "exp_settle_median_ns": 7484,
+    "ref_preclean_shutdown_median_ns": 2991671613,
+    "exp_preclean_shutdown_median_ns": 5989844,
+    "ref_preclean_reopen_median_ns": 37244604,
+    "exp_preclean_reopen_median_ns": 12089860,
+    "ref_final_shutdown_median_ns": 30468,
+    "exp_final_shutdown_median_ns": 91435,
+    "ref_phase_sum_median_ns": 3262980262,
+    "exp_phase_sum_median_ns": 646392367,
+    "ref_point_get_median_ns": 62301758,
+    "exp_point_get_median_ns": 38645057,
+    "ref_scan_median_ns": 6860487,
+    "exp_scan_median_ns": 100898719,
+    "exp_clean_pause_median_ns": 463677428,
+    "exp_clean_elapsed_median_ns": 469147333,
+    "exp_postclean_shutdown_median_ns": 44009,
+    "exp_postclean_reopen_median_ns": 18065621,
+    "ref_ingest_range_ns": [
+      152631282,
+      185841169
+    ],
+    "exp_ingest_range_ns": [
+      82271846,
+      101032351
+    ],
+    "ref_mutate_range_ns": [
+      41918447,
+      48196156
+    ],
+    "exp_mutate_range_ns": [
+      36124002,
+      40633810
+    ],
+    "ref_preclean_reopen_range_ns": [
+      36028554,
+      47423245
+    ],
+    "exp_preclean_reopen_range_ns": [
+      11406231,
+      12386842
+    ],
+    "ref_phase_sum_range_ns": [
+      3218724471,
+      3765001799
+    ],
+    "exp_phase_sum_range_ns": [
+      621914851,
+      743948337
+    ],
+    "ref_preclean_total_median": 2911893,
+    "exp_preclean_total_median": 2786333,
+    "ref_preclean_total_range": [
+      2911893,
+      2911893
+    ],
+    "exp_preclean_total_range": [
+      2786333,
+      2786333
+    ],
+    "ref_preclean_amp_range": [
+      1.4542595589116625,
+      1.4542595589116625
+    ],
+    "exp_preclean_amp_range": [
+      1.391552299332774,
+      1.391552299332774
+    ],
+    "ref_postclean_total_median": null,
+    "exp_postclean_total_median": 2108393,
+    "ref_postclean_total_range": null,
+    "exp_postclean_total_range": [
+      2108393,
+      2108393
+    ],
+    "ref_postclean_amp_range": null,
+    "exp_postclean_amp_range": [
+      1.052975048943226,
+      1.052975048943226
+    ],
+    "ref_final_total_median": 2911893,
+    "exp_final_total_median": 2108393,
+    "ref_final_total_range": [
+      2911893,
+      2911893
+    ],
+    "exp_final_total_range": [
+      2108393,
+      2108393
+    ],
+    "ref_final_amp_range": [
+      1.4542595589116625,
+      1.4542595589116625
+    ],
+    "exp_final_amp_range": [
+      1.052975048943226,
+      1.052975048943226
+    ],
+    "ref_preclean_breakdown_median": {
+      "total_bytes": 2911893,
+      "wal_bytes": 644488,
+      "sstable_bytes": 2202276,
+      "metadata_bytes": 65129,
+      "other_bytes": 0,
+      "file_count": 91
+    },
+    "exp_preclean_breakdown_median": {
+      "total_bytes": 2786333,
+      "wal_bytes": 2786256,
+      "sstable_bytes": 0,
+      "metadata_bytes": 77,
+      "other_bytes": 0,
+      "file_count": 16
+    },
+    "exp_postclean_breakdown_median": {
+      "total_bytes": 2108393,
+      "wal_bytes": 2032634,
+      "sstable_bytes": 75228,
+      "metadata_bytes": 531,
+      "other_bytes": 0,
+      "file_count": 11
+    },
+    "ref_preclean_levels": {
+      "compaction_observed": true,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        },
+        {
+          "level": 1,
+          "tables": 5
+        },
+        {
+          "level": 2,
+          "tables": 20
+        },
+        {
+          "level": 3,
+          "tables": 61
+        }
+      ],
+      "total_records": 512,
+      "total_tables": 87
+    },
+    "exp_preclean_levels": {
+      "compaction_observed": false,
+      "levels": [],
+      "total_records": 0,
+      "total_tables": 0
+    },
+    "exp_postclean_levels": {
+      "compaction_observed": false,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        }
+      ],
+      "total_records": 486,
+      "total_tables": 1
+    },
+    "ref_preclean_breakdown_range": {
+      "wal_bytes": [
+        644488,
+        644488
+      ],
+      "sstable_bytes": [
+        2202276,
+        2202276
+      ],
+      "metadata_bytes": [
+        65129,
+        65129
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_preclean_breakdown_range": {
+      "wal_bytes": [
+        2786256,
+        2786256
+      ],
+      "sstable_bytes": [
+        0,
+        0
+      ],
+      "metadata_bytes": [
+        77,
+        77
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_clean_median": {
+      "write_pause_ns": 463677428,
+      "elapsed_ns": 469147333,
+      "copied_payload_bytes": 1990656,
+      "copied_transactions": 2,
+      "index_sstables_written": 1,
+      "total_root_bytes_before": 2786333,
+      "observed_peak_bytes": 4894677,
+      "total_root_bytes_after": 2108393,
+      "deferred_cleanup_bytes": 0,
+      "live_records": 486,
+      "live_logical_bytes": 2002320
+    },
+    "ratios": {
+      "ingest_exp_over_ref_median": 0.5395780424192308,
+      "mutate_exp_over_ref_median": 0.8700034334926267,
+      "preclean_reopen_exp_over_ref_median": 0.3246070222682459,
+      "phase_sum_exp_over_ref_median": 0.19809876710801874,
+      "point_get_exp_over_ref_median": 0.6202883873678171,
+      "scan_exp_over_ref_median": 14.707223991532963,
+      "preclean_total_exp_over_ref_median": 0.9568802837192163,
+      "postclean_exp_over_ref_preclean_median": 0.7240626630168073,
+      "final_total_exp_over_ref_median": 0.7240626630168073
+    }
+  },
+  {
+    "case": "raw65536B/64rec/batch1",
+    "value_bytes": 65536,
+    "records": 64,
+    "batch_size": 1,
+    "live_records": 61,
+    "live_logical_bytes": 3999160,
+    "mutations": 89,
+    "batches": 89,
+    "input_bytes": 5441624,
+    "ref_ingest_median_ns": 1265952731,
+    "exp_ingest_median_ns": 699252050,
+    "ref_mutate_median_ns": 514705235,
+    "exp_mutate_median_ns": 236972368,
+    "ref_settle_median_ns": 2425,
+    "exp_settle_median_ns": 1745,
+    "ref_preclean_shutdown_median_ns": 5511454017,
+    "exp_preclean_shutdown_median_ns": 12762025,
+    "ref_preclean_reopen_median_ns": 34777226,
+    "exp_preclean_reopen_median_ns": 18205030,
+    "ref_final_shutdown_median_ns": 34195,
+    "exp_final_shutdown_median_ns": 114195,
+    "ref_phase_sum_median_ns": 7324977790,
+    "exp_phase_sum_median_ns": 1311121804,
+    "ref_point_get_median_ns": 99540040,
+    "exp_point_get_median_ns": 120784783,
+    "ref_scan_median_ns": 6652492,
+    "exp_scan_median_ns": 114563272,
+    "exp_clean_pause_median_ns": 322351003,
+    "exp_clean_elapsed_median_ns": 331464104,
+    "exp_postclean_shutdown_median_ns": 40835,
+    "exp_postclean_reopen_median_ns": 20764050,
+    "ref_ingest_range_ns": [
+      1221446053,
+      1283168931
+    ],
+    "exp_ingest_range_ns": [
+      680418950,
+      712958369
+    ],
+    "ref_mutate_range_ns": [
+      495530824,
+      514946443
+    ],
+    "exp_mutate_range_ns": [
+      227550673,
+      240619982
+    ],
+    "ref_preclean_reopen_range_ns": [
+      34375292,
+      51061146
+    ],
+    "exp_preclean_reopen_range_ns": [
+      16070220,
+      19144081
+    ],
+    "ref_phase_sum_range_ns": [
+      7260839854,
+      7442458698
+    ],
+    "exp_phase_sum_range_ns": [
+      1302183976,
+      1383585669
+    ],
+    "ref_preclean_total_median": 7640225,
+    "exp_preclean_total_median": 5451520,
+    "ref_preclean_total_range": [
+      7640225,
+      7640225
+    ],
+    "exp_preclean_total_range": [
+      5451520,
+      5451520
+    ],
+    "ref_preclean_amp_range": [
+      1.9104574460636734,
+      1.9104574460636734
+    ],
+    "exp_preclean_amp_range": [
+      1.3631662649156322,
+      1.3631662649156322
+    ],
+    "ref_postclean_total_median": null,
+    "exp_postclean_total_median": 4013218,
+    "ref_postclean_total_range": null,
+    "exp_postclean_total_range": [
+      4013218,
+      4013218
+    ],
+    "ref_postclean_amp_range": null,
+    "exp_postclean_amp_range": [
+      1.003515238200022,
+      1.003515238200022
+    ],
+    "ref_final_total_median": 7640225,
+    "exp_final_total_median": 4013218,
+    "ref_final_total_range": [
+      7640225,
+      7640225
+    ],
+    "exp_final_total_range": [
+      4013218,
+      4013218
+    ],
+    "ref_final_amp_range": [
+      1.9104574460636734,
+      1.9104574460636734
+    ],
+    "exp_final_amp_range": [
+      1.003515238200022,
+      1.003515238200022
+    ],
+    "ref_preclean_breakdown_median": {
+      "total_bytes": 7640225,
+      "wal_bytes": 197751,
+      "sstable_bytes": 7373744,
+      "metadata_bytes": 68730,
+      "other_bytes": 0,
+      "file_count": 114
+    },
+    "exp_preclean_breakdown_median": {
+      "total_bytes": 5451520,
+      "wal_bytes": 5451443,
+      "sstable_bytes": 0,
+      "metadata_bytes": 77,
+      "other_bytes": 0,
+      "file_count": 33
+    },
+    "exp_postclean_breakdown_median": {
+      "total_bytes": 4013218,
+      "wal_bytes": 4003051,
+      "sstable_bytes": 9656,
+      "metadata_bytes": 511,
+      "other_bytes": 0,
+      "file_count": 10
+    },
+    "ref_preclean_levels": {
+      "compaction_observed": true,
+      "levels": [
+        {
+          "level": 2,
+          "tables": 3
+        },
+        {
+          "level": 3,
+          "tables": 15
+        },
+        {
+          "level": 4,
+          "tables": 46
+        }
+      ],
+      "total_records": 64,
+      "total_tables": 64
+    },
+    "exp_preclean_levels": {
+      "compaction_observed": false,
+      "levels": [],
+      "total_records": 0,
+      "total_tables": 0
+    },
+    "exp_postclean_levels": {
+      "compaction_observed": false,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        }
+      ],
+      "total_records": 61,
+      "total_tables": 1
+    },
+    "ref_preclean_breakdown_range": {
+      "wal_bytes": [
+        197751,
+        197751
+      ],
+      "sstable_bytes": [
+        7373744,
+        7373744
+      ],
+      "metadata_bytes": [
+        68730,
+        68730
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_preclean_breakdown_range": {
+      "wal_bytes": [
+        5451443,
+        5451443
+      ],
+      "sstable_bytes": [
+        0,
+        0
+      ],
+      "metadata_bytes": [
+        77,
+        77
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_clean_median": {
+      "write_pause_ns": 322351003,
+      "elapsed_ns": 331464104,
+      "copied_payload_bytes": 3997696,
+      "copied_transactions": 1,
+      "index_sstables_written": 1,
+      "total_root_bytes_before": 5451520,
+      "observed_peak_bytes": 9464689,
+      "total_root_bytes_after": 4013218,
+      "deferred_cleanup_bytes": 0,
+      "live_records": 61,
+      "live_logical_bytes": 3999160
+    },
+    "ratios": {
+      "ingest_exp_over_ref_median": 0.5523524163873382,
+      "mutate_exp_over_ref_median": 0.46040403688530585,
+      "preclean_reopen_exp_over_ref_median": 0.5234756216611411,
+      "phase_sum_exp_over_ref_median": 0.17899328046972823,
+      "point_get_exp_over_ref_median": 1.213429118573792,
+      "scan_exp_over_ref_median": 17.22110631624961,
+      "preclean_total_exp_over_ref_median": 0.7135287246121679,
+      "postclean_exp_over_ref_preclean_median": 0.5252748446544441,
+      "final_total_exp_over_ref_median": 0.5252748446544441
+    }
+  },
+  {
+    "case": "raw65536B/64rec/batch16",
+    "value_bytes": 65536,
+    "records": 64,
+    "batch_size": 16,
+    "live_records": 61,
+    "live_logical_bytes": 3999160,
+    "mutations": 89,
+    "batches": 6,
+    "input_bytes": 5441624,
+    "ref_ingest_median_ns": 369563951,
+    "exp_ingest_median_ns": 78429533,
+    "ref_mutate_median_ns": 126298353,
+    "exp_mutate_median_ns": 51104003,
+    "ref_settle_median_ns": 1788,
+    "exp_settle_median_ns": 1940,
+    "ref_preclean_shutdown_median_ns": 6030140579,
+    "exp_preclean_shutdown_median_ns": 13041937,
+    "ref_preclean_reopen_median_ns": 45788816,
+    "exp_preclean_reopen_median_ns": 16438603,
+    "ref_final_shutdown_median_ns": 47942,
+    "exp_final_shutdown_median_ns": 75648,
+    "ref_phase_sum_median_ns": 6591352124,
+    "exp_phase_sum_median_ns": 545943587,
+    "ref_point_get_median_ns": 88164825,
+    "exp_point_get_median_ns": 114184910,
+    "ref_scan_median_ns": 6413044,
+    "exp_scan_median_ns": 119669449,
+    "exp_clean_pause_median_ns": 346880005,
+    "exp_clean_elapsed_median_ns": 354463667,
+    "exp_postclean_shutdown_median_ns": 36914,
+    "exp_postclean_reopen_median_ns": 20842843,
+    "ref_ingest_range_ns": [
+      357501126,
+      391218651
+    ],
+    "exp_ingest_range_ns": [
+      77691244,
+      95583499
+    ],
+    "ref_mutate_range_ns": [
+      111584059,
+      131694618
+    ],
+    "exp_mutate_range_ns": [
+      38779902,
+      57868092
+    ],
+    "ref_preclean_reopen_range_ns": [
+      38833184,
+      58364808
+    ],
+    "exp_preclean_reopen_range_ns": [
+      16324080,
+      18411911
+    ],
+    "ref_phase_sum_range_ns": [
+      6462569669,
+      7345926822
+    ],
+    "exp_phase_sum_range_ns": [
+      530144232,
+      554759887
+    ],
+    "ref_preclean_total_median": 5533351,
+    "exp_preclean_total_median": 5447657,
+    "ref_preclean_total_range": [
+      5533351,
+      5533351
+    ],
+    "exp_preclean_total_range": [
+      5447657,
+      5447657
+    ],
+    "ref_preclean_amp_range": [
+      1.3836283119455086,
+      1.3836283119455086
+    ],
+    "exp_preclean_amp_range": [
+      1.3622003120655337,
+      1.3622003120655337
+    ],
+    "ref_postclean_total_median": null,
+    "exp_postclean_total_median": 4013219,
+    "ref_postclean_total_range": null,
+    "exp_postclean_total_range": [
+      4013219,
+      4013219
+    ],
+    "ref_postclean_amp_range": null,
+    "exp_postclean_amp_range": [
+      1.003515488252533,
+      1.003515488252533
+    ],
+    "ref_final_total_median": 5533351,
+    "exp_final_total_median": 4013219,
+    "ref_final_total_range": [
+      5533351,
+      5533351
+    ],
+    "exp_final_total_range": [
+      4013219,
+      4013219
+    ],
+    "ref_final_amp_range": [
+      1.3836283119455086,
+      1.3836283119455086
+    ],
+    "exp_final_amp_range": [
+      1.003515488252533,
+      1.003515488252533
+    ],
+    "ref_preclean_breakdown_median": {
+      "total_bytes": 5533351,
+      "wal_bytes": 197455,
+      "sstable_bytes": 5266960,
+      "metadata_bytes": 68936,
+      "other_bytes": 0,
+      "file_count": 82
+    },
+    "exp_preclean_breakdown_median": {
+      "total_bytes": 5447657,
+      "wal_bytes": 5447580,
+      "sstable_bytes": 0,
+      "metadata_bytes": 77,
+      "other_bytes": 0,
+      "file_count": 11
+    },
+    "exp_postclean_breakdown_median": {
+      "total_bytes": 4013219,
+      "wal_bytes": 4003051,
+      "sstable_bytes": 9656,
+      "metadata_bytes": 512,
+      "other_bytes": 0,
+      "file_count": 10
+    },
+    "ref_preclean_levels": {
+      "compaction_observed": true,
+      "levels": [
+        {
+          "level": 2,
+          "tables": 3
+        },
+        {
+          "level": 3,
+          "tables": 15
+        },
+        {
+          "level": 4,
+          "tables": 46
+        }
+      ],
+      "total_records": 64,
+      "total_tables": 64
+    },
+    "exp_preclean_levels": {
+      "compaction_observed": false,
+      "levels": [],
+      "total_records": 0,
+      "total_tables": 0
+    },
+    "exp_postclean_levels": {
+      "compaction_observed": false,
+      "levels": [
+        {
+          "level": 0,
+          "tables": 1
+        }
+      ],
+      "total_records": 61,
+      "total_tables": 1
+    },
+    "ref_preclean_breakdown_range": {
+      "wal_bytes": [
+        197455,
+        197455
+      ],
+      "sstable_bytes": [
+        5266960,
+        5266960
+      ],
+      "metadata_bytes": [
+        68936,
+        68936
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_preclean_breakdown_range": {
+      "wal_bytes": [
+        5447580,
+        5447580
+      ],
+      "sstable_bytes": [
+        0,
+        0
+      ],
+      "metadata_bytes": [
+        77,
+        77
+      ],
+      "other_bytes": [
+        0,
+        0
+      ]
+    },
+    "exp_clean_median": {
+      "write_pause_ns": 346880005,
+      "elapsed_ns": 354463667,
+      "copied_payload_bytes": 3997696,
+      "copied_transactions": 1,
+      "index_sstables_written": 1,
+      "total_root_bytes_before": 5447657,
+      "observed_peak_bytes": 9460827,
+      "total_root_bytes_after": 4013219,
+      "deferred_cleanup_bytes": 0,
+      "live_records": 61,
+      "live_logical_bytes": 3999160
+    },
+    "ratios": {
+      "ingest_exp_over_ref_median": 0.21222181651586466,
+      "mutate_exp_over_ref_median": 0.40462921159391524,
+      "preclean_reopen_exp_over_ref_median": 0.35900913008975815,
+      "phase_sum_exp_over_ref_median": 0.08282725254688578,
+      "point_get_exp_over_ref_median": 1.295130002242958,
+      "scan_exp_over_ref_median": 18.660319342889274,
+      "preclean_total_exp_over_ref_median": 0.9845131819759853,
+      "postclean_exp_over_ref_preclean_median": 0.725278226521325,
+      "final_total_exp_over_ref_median": 0.725278226521325
+    }
+  }
+]

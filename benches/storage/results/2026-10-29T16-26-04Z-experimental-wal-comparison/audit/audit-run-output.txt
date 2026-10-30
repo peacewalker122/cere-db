@@ -1,0 +1,66 @@
+[OK]   schema
+[OK]   lifecycle_basis
+[OK]   git_head_matches_provenance
+[OK]   profile
+[OK]   repetitions
+[OK]   warmups
+[OK]   seed
+[OK]   mutation_percents
+[OK]   config.memtable_size_threshold
+[OK]   config.sstable_block_size
+[OK]   config.max_level0_files
+[OK]   config.target_sstable_bytes
+[OK]   config.level_base_bytes
+[OK]   config.level_size_multiplier
+[OK]   config.wal_segment_size
+[OK]   filesystem.persistent
+[OK]   filesystem.mount
+[OK]   filesystem.fresh
+[OK]   case_count
+[OK]   case_matrix
+[OK]   case_names
+[OK]   measured_samples_36
+[OK]   census_breakdown_sums
+[OK]   workload_identities
+[OK]   space_amplification_recompute
+[OK]   lifecycle_phase_sum_recompute
+[OK]   summary_stats_recompute
+[OK]   clean_stats_identities
+[OK]   generations_reclaimed
+[OK]   read_operation_counts
+[OK]   fts_present
+[OK]   fts_role
+[OK]   fts_equivalent
+[OK]   fts_documents
+[OK]   fts_documents_checked
+[OK]   fts_boolean_and
+[OK]   fts_boolean_or
+[OK]   fts_ranked_and
+[OK]   fts_ranked_or
+[OK]   fts_and_nonempty
+[OK]   fts_or_nonempty
+[OK]   sample_and_warmup_dirs_present
+[OK]   warmup_executions_12
+
+RECOMPUTED TABLE
+case | ingest x | mutate x | reopen x | phase x | preclean x | postclean/preclean_ref x | exp_amp_post | ref_amp_pre
+raw64B/16384rec/batch1 | 1.27 | 1.20 | 2.77 | 1.29 | 2.06 | 1.45 | 3.463 | 2.385
+raw64B/16384rec/batch64 | 1.08 | 1.44 | 2.73 | 7.39 | 2.07 | 1.66 | 3.463 | 2.090
+raw4096B/512rec/batch1 | 1.03 | 0.71 | 0.48 | 0.57 | 0.96 | 0.72 | 1.053 | 1.457
+raw4096B/512rec/batch64 | 0.54 | 0.87 | 0.32 | 0.20 | 0.96 | 0.72 | 1.053 | 1.454
+raw65536B/64rec/batch1 | 0.55 | 0.46 | 0.52 | 0.18 | 0.71 | 0.53 | 1.004 | 1.910
+raw65536B/64rec/batch16 | 0.21 | 0.40 | 0.36 | 0.08 | 0.98 | 0.73 | 1.004 | 1.384
+
+AUDIT RESULT: PASS
+[OK]   pilot_schema
+[OK]   pilot_flag
+[OK]   pilot_records
+[OK]   pilot_samples_2
+[OK]   pilot_engines
+[OK]   pilot_paths_mixed_engine_only
+[OK]   pilot_fts_equiv
+[OK]   pilot_fts_checked_pre
+[OK]   pilot_fts_checked_post
+[OK]   pilot_clean_generation
+[OK]   pilot_postclean_generations_1
+PILOT AUDIT RESULT: PASS

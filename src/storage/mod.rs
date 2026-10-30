@@ -5,6 +5,7 @@ pub mod compactionmanager;
 pub mod config;
 pub mod constant;
 pub(crate) mod durable_dir;
+pub mod experimental;
 pub mod footer;
 pub mod index;
 pub mod kv2;

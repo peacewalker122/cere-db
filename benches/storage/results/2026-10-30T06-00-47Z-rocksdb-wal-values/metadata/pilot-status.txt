@@ -1,0 +1,4 @@
+pilot_start_utc=2026-10-30T05:49:17Z
+command=/home/peacewalker/project/learn/wasm-kv/target/rocksdb-compare/release/wal_values --data-dir /home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/pilot --pilot
+pilot_exit_status=0
+pilot_end_utc=2026-10-30T05:49:17Z

@@ -1,0 +1,32 @@
+captured_utc=2026-10-30T05:47:30Z
+head=fa65cde5d1642a54a576b89f0f2c88dba8a13fb5
+compiler_inputs=rustc,cargo,cc,c++,libclang-18.1.1,rocksdb-crate-0.24.0,native-rocksdb-10.4.2
+rustc 1.97.1 (8bab26f4f 2026-07-14)
+binary: rustc
+commit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452
+commit-date: 2026-07-14
+host: x86_64-unknown-linux-gnu
+release: 1.97.1
+LLVM version: 22.1.6
+cargo 1.97.1 (c980f4866 2026-06-30)
+cc=cc (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)
+cxx=c++ (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)
+clang=not-installed
+Linux fedora 7.1.13-200.fc44.x86_64 #1 SMP PREEMPT_DYNAMIC Wed Sep  2 13:58:38 UTC 2026 x86_64 GNU/Linux
+Architecture:                            x86_64
+CPU(s):                                  8
+Model name:                              11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz
+Thread(s) per core:                      2
+Core(s) per socket:                      4
+Socket(s):                               1
+NUMA node(s):                            1
+MemTotal:       16075928 kB
+MemAvailable:    9854848 kB
+libclang_path=/home/peacewalker/project/learn/wasm-kv/target/rocksdb-compare-toolchain/libclang-18.1.1/libclang-18.1.1.data/platlib/clang/native
+PATH_prefix=/home/peacewalker/.cargo/bin:$PATH
+CARGO_TARGET_DIR=/home/peacewalker/project/learn/wasm-kv/target/rocksdb-compare
+LIBCLANG_PATH=/home/peacewalker/project/learn/wasm-kv/target/rocksdb-compare-toolchain/libclang-18.1.1/libclang-18.1.1.data/platlib/clang/native
+LD_LIBRARY_PATH=/home/peacewalker/project/learn/wasm-kv/target/rocksdb-compare-toolchain/libclang-18.1.1/libclang-18.1.1.data/platlib/clang/native
+BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-redhat-linux/16/include
+tools/storage_compare/Cargo.lock:librocksdb-sys=0.17.3+10.4.2
+tools/storage_compare/Cargo.lock:rocksdb=0.24.0

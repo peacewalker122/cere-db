@@ -1,6 +1,7 @@
 use ceredb::repl::run_repl_async;
+use ceredb::storage::experimental::{StorageKind, classify_storage_root};
 use ceredb::storage::kv2::RaftKV2;
-use ceredb::{Config, FtsIndex, KV2};
+use ceredb::{Config, ExperimentalEngine, FtsIndex, KV2};
 use clap::Parser;
 use log::info;
 
@@ -50,26 +51,74 @@ async fn main() {
 
         kv.raft_layer().shutdown().await;
     } else {
-        info!("Raft mode: disabled (single-node WAL mode)");
+        info!("Raft mode: disabled (single-node storage mode)");
 
-        let kv = match KV2::open(&config.data_dir, storage_config).await {
-            Ok(engine) => engine,
+        let storage_kind = match classify_storage_root(&config.data_dir).await {
+            Ok(kind) => kind,
             Err(err) => {
-                eprintln!("Failed to initialize KV2 engine: {err}");
+                eprintln!("Failed to select standalone storage engine: {err}");
                 return;
             }
         };
 
-        let mut kv = match FtsIndex::open(kv).await {
-            Ok(engine) => engine,
-            Err(err) => {
-                eprintln!("Failed to initialize FTS index: {err}");
-                return;
-            }
-        };
+        match storage_kind {
+            StorageKind::Experimental => {
+                let engine =
+                    match ExperimentalEngine::open_with_config(&config.data_dir, storage_config)
+                        .await
+                    {
+                        Ok(engine) => engine,
+                        Err(err) => {
+                            eprintln!("Failed to initialize ExperimentalEngine: {err}");
+                            return;
+                        }
+                    };
 
-        if let Err(err) = run_repl_async(&mut kv).await {
-            eprintln!("REPL error: {err}");
+                let mut index = match FtsIndex::open(engine).await {
+                    Ok(index) => index,
+                    Err(err) => {
+                        eprintln!("Failed to initialize FTS index: {err}");
+                        return;
+                    }
+                };
+
+                let repl_result = run_repl_async(&mut index).await;
+                let mut engine = index.into_inner();
+                let shutdown_result = engine.shutdown().await;
+                if let Err(err) = repl_result {
+                    eprintln!("REPL error: {err}");
+                }
+                if let Err(err) = shutdown_result {
+                    eprintln!("ExperimentalEngine shutdown error: {err}");
+                }
+            }
+            StorageKind::Kv2 => {
+                let engine = match KV2::open(&config.data_dir, storage_config).await {
+                    Ok(engine) => engine,
+                    Err(err) => {
+                        eprintln!("Failed to initialize KV2 engine: {err}");
+                        return;
+                    }
+                };
+
+                let mut index = match FtsIndex::open(engine).await {
+                    Ok(index) => index,
+                    Err(err) => {
+                        eprintln!("Failed to initialize FTS index: {err}");
+                        return;
+                    }
+                };
+
+                let repl_result = run_repl_async(&mut index).await;
+                let mut engine = index.into_inner();
+                let shutdown_result = engine.shutdown().await;
+                if let Err(err) = repl_result {
+                    eprintln!("REPL error: {err}");
+                }
+                if let Err(err) = shutdown_result {
+                    eprintln!("KV2 shutdown error: {err}");
+                }
+            }
         }
     }
 }

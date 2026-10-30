@@ -1,0 +1,43 @@
+benchmark archive: benches/storage/results/2026-10-29T16-26-04Z-experimental-wal-comparison
+repo cwd: /home/peacewalker/project/learn/wasm-kv
+executed_utc_window: 2026-10-29T16:27:24Z .. 2026-10-29T16:53:47Z
+PATH prefix: /home/peacewalker/.cargo/bin (explicit; RTK 0.50.0 used for cargo build)
+
+[1] provenance manifest (61 source paths)
+    bash benches/storage/results/2026-10-29T16-26-04Z-experimental-wal-comparison/provenance/source-manifest.sh > benches/storage/results/2026-10-29T16-26-04Z-experimental-wal-comparison/provenance/source-sha256.pre-build.txt
+    exit=0  manifest_sha256=e2d2cbc848183b2848e963f991d2357806d6d133c692d04f61c6138f90aa5951
+
+[2] release build (once)
+    rtk cargo build --release --example experimental_compare
+    exit=0  (log: logs/build-release.log; 0 errors, 38 pre-existing warnings)
+
+[3] binary identity
+    sha256sum target/release/examples/experimental_compare
+    pre-pilot=21684cbf8b48af86f3847cd713bcdacbe976981bcca06774231dc588447398a2
+    pre-measured=21684cbf8b48af86f3847cd713bcdacbe976981bcca06774231dc588447398a2
+    post-final=21684cbf8b48af86f3847cd713bcdacbe976981bcca06774231dc588447398a2
+
+[4] release functional pilot (32 records, 4 KiB, batch 8, 1 sample, 0 warmups)
+    ./target/release/examples/experimental_compare --pilot       --data-dir /home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/pilot
+    exit=0  (logs/pilot.stdout, logs/pilot.stderr 0 bytes)
+    start=start_utc=2026-10-29T16:27:02Z
+
+[5] matched default small-tables suite (36 measured samples + 12 warmup executions + FTS 128 docs)
+    ./target/release/examples/experimental_compare --profile small-tables       --repetitions 3 --warmups 1       --data-dir /home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/measured
+    exit_status_capture=not_direct (detached with nohup; see audit/audit.md)
+    success_evidence: logs/measured.stderr = 0 bytes; final stdout line `results=...`;
+      raw/results.json parses and contains 36 measured samples; FTS equivalence pass
+    start=2026-10-29T16:27:24Z  end=2026-10-29T16:53:47Z
+    wall=1583s  results=/home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/measured/results.json sha256=d431c7eeffb1daed3ddea4dbe32f71490a9a43775dc79ebcc4d98ce5fc990752
+
+[6] independent recomputation / artifact audit
+    python3 benches/storage/results/2026-10-29T16-26-04Z-experimental-wal-comparison/audit/recompute.py benches/storage/results/2026-10-29T16-26-04Z-experimental-wal-comparison/raw/results.json /home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/measured fa65cde5d1642a54a576b89f0f2c88dba8a13fb5
+    exit=0  43 checks PASS (audit/audit-run-output.txt)
+
+[7] source freeze verification
+    bash benches/storage/results/2026-10-29T16-26-04Z-experimental-wal-comparison/provenance/source-manifest.sh   (post-build, pre-measured, post-final)
+    pre_build == post_build == pre_measured == post_final  (SOURCE_STABLE=yes)
+
+[8] dataset mount + freshness checks (before pilot, before measured, after final)
+    findmnt -T <path> -o TARGET,SOURCE,FSTYPE,OPTIONS
+    canonical=/home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/measured

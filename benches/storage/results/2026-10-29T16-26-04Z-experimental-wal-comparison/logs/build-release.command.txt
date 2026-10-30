@@ -1,0 +1,3 @@
+cmd=cargo build --release --example experimental_compare
+exit=0
+cwd=/home/peacewalker/project/learn/wasm-kv

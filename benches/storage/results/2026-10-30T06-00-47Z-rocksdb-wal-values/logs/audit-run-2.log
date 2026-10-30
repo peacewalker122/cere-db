@@ -1,0 +1,15 @@
+{
+  "audit": "PASS",
+  "pilot_rows": 3,
+  "full_rows": 96,
+  "full_measured": 72,
+  "full_warmups": 24,
+  "source_hash_entries": 66,
+  "binary_sha256": "5b06ca38c67b4dd16a4336fe5b2fe70f196e79c8d2ba6d63f4e962ab3b71f6c3",
+  "experimental_remaining_generations": 32,
+  "actual_census_roots": 96,
+  "outputs": [
+    "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/audit.json",
+    "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/summary.md"
+  ]
+}

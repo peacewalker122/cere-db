@@ -16,11 +16,12 @@ use crate::error::DBError;
 use crate::storage::{
     bloom::BloomFilterWrapper,
     config::StorageConfig,
+    experimental::{ReferenceValue, RootLock},
     index::SparseIndexEntry,
     manifest_codec::{ManifestManager, RecoveryCheckpoint, SSTableMeta},
     record::{MemtableRecord, RecordType},
     recovermanager::log_store::LogCommand,
-    recovermanager::wal::WALManager,
+    recovermanager::wal::{WALManager, WalValueRef},
     sstable_codec::SSTableCodec,
     writemanager::block::{Block, BlockBuilder, BlockBuilderState},
 };
@@ -66,6 +67,7 @@ pub struct WriteComponent {
     writer_lock: Arc<tokio::sync::Mutex<()>>,
     admission: AdmissionQueue,
     checkpoint_owner: Option<Arc<crate::storage::recovermanager::wal::CheckpointOwner>>,
+    payload_mode: PayloadMode,
 
     sstable_dir: PathBuf,
     wal_manager: Arc<WALManager>,
@@ -82,12 +84,30 @@ impl Clone for WriteComponent {
             writer_lock: Arc::clone(&self.writer_lock),
             admission: self.admission.clone(),
             checkpoint_owner: self.checkpoint_owner.clone(),
+            payload_mode: self.payload_mode.clone(),
             sstable_dir: self.sstable_dir.clone(),
             wal_manager: Arc::clone(&self.wal_manager),
             manifest_manager: Arc::clone(&self.manifest_manager),
             config: Arc::clone(&self.config),
         }
     }
+}
+
+#[derive(Clone)]
+pub(crate) enum PayloadMode {
+    Inline,
+    WalReference {
+        generation: u64,
+        #[allow(dead_code)]
+        root_lock: Arc<RootLock>,
+    },
+}
+
+struct MemtableWrite {
+    key: Vec<u8>,
+    value: Vec<u8>,
+    record_type: RecordType,
+    lsn: u64,
 }
 
 impl WriteComponent {
@@ -121,20 +141,14 @@ impl WriteComponent {
             sequence_number,
             sstable_dir.display()
         );
-
-        let checkpoint_owner = wal_manager.register_checkpoint_owner();
-        Self {
-            memtable: Arc::new(SkipMap::new()),
-            memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(sequence_number)),
-            writer_lock: Arc::new(tokio::sync::Mutex::new(())),
-            admission: AdmissionQueue::new(),
-            checkpoint_owner,
+        Self::with_payload_mode(
             sstable_dir,
             wal_manager,
             manifest_manager,
+            sequence_number,
             config,
-        }
+            PayloadMode::Inline,
+        )
     }
 
     /// Create a new WriteComponent with default directory
@@ -143,15 +157,56 @@ impl WriteComponent {
         manifest_manager: Arc<ManifestManager>,
         config: Arc<StorageConfig>,
     ) -> Self {
+        Self::with_payload_mode(
+            PathBuf::from("data"),
+            wal_manager,
+            manifest_manager,
+            0,
+            config,
+            PayloadMode::Inline,
+        )
+    }
+
+    pub(crate) fn new_reference_index(
+        sstable_dir: PathBuf,
+        wal_manager: Arc<WALManager>,
+        manifest_manager: Arc<ManifestManager>,
+        sequence_number: u64,
+        config: Arc<StorageConfig>,
+        generation: u64,
+        root_lock: Arc<RootLock>,
+    ) -> Self {
+        Self::with_payload_mode(
+            sstable_dir,
+            wal_manager,
+            manifest_manager,
+            sequence_number,
+            config,
+            PayloadMode::WalReference {
+                generation,
+                root_lock,
+            },
+        )
+    }
+
+    fn with_payload_mode(
+        sstable_dir: PathBuf,
+        wal_manager: Arc<WALManager>,
+        manifest_manager: Arc<ManifestManager>,
+        sequence_number: u64,
+        config: Arc<StorageConfig>,
+        payload_mode: PayloadMode,
+    ) -> Self {
         let checkpoint_owner = wal_manager.register_checkpoint_owner();
         Self {
             memtable: Arc::new(SkipMap::new()),
             memtable_size: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            sequence_number: Arc::new(std::sync::atomic::AtomicU64::new(sequence_number)),
             writer_lock: Arc::new(tokio::sync::Mutex::new(())),
             admission: AdmissionQueue::new(),
             checkpoint_owner,
-            sstable_dir: PathBuf::from("data"),
+            payload_mode,
+            sstable_dir,
             wal_manager,
             manifest_manager,
             config,
@@ -233,23 +288,48 @@ impl WriteComponent {
             let result = if let Some(message) = build_error {
                 Err(DBError::StorageError(message))
             } else {
-                self.wal_manager
-                    .write_engine_transactions(groups.clone(), self.checkpoint_owner.as_ref())
-                    .await
-                    .map(|()| {
-                        for commands in groups {
-                            for command in commands {
+                match &self.payload_mode {
+                    PayloadMode::Inline => self
+                        .wal_manager
+                        .write_engine_transactions(groups.clone(), self.checkpoint_owner.as_ref())
+                        .await
+                        .map(|()| {
+                            for commands in groups {
+                                for command in commands {
+                                    self.append_to_memtable(
+                                        command.key,
+                                        command.value,
+                                        command.record_type,
+                                        command.lsn,
+                                    );
+                                }
+                            }
+                            self.sequence_number
+                                .store(next_lsn, std::sync::atomic::Ordering::SeqCst);
+                        }),
+                    PayloadMode::WalReference { generation, .. } => self
+                        .wal_manager
+                        .append_engine_transactions_with_receipts(
+                            groups.clone(),
+                            self.checkpoint_owner.as_ref(),
+                        )
+                        .await
+                        .and_then(|receipts| {
+                            encode_reference_writes(*generation, &groups, receipts)
+                        })
+                        .map(|writes| {
+                            for write in writes {
                                 self.append_to_memtable(
-                                    command.key,
-                                    command.value,
-                                    command.record_type,
-                                    command.lsn,
+                                    write.key,
+                                    write.value,
+                                    write.record_type,
+                                    write.lsn,
                                 );
                             }
-                        }
-                        self.sequence_number
-                            .store(next_lsn, std::sync::atomic::Ordering::SeqCst);
-                    })
+                            self.sequence_number
+                                .store(next_lsn, std::sync::atomic::Ordering::SeqCst);
+                        }),
+                }
             };
             for request in requests {
                 let request_result = result.as_ref().map(|()| ()).map_err(Self::clone_db_error);
@@ -571,6 +651,46 @@ impl WriteComponent {
             data: encoded,
         })
     }
+}
+
+fn encode_reference_writes(
+    generation: u64,
+    groups: &[Vec<LogCommand>],
+    receipts: Vec<Vec<WalValueRef>>,
+) -> Result<Vec<MemtableWrite>, DBError> {
+    if groups.len() != receipts.len() {
+        return Err(DBError::StorageError(
+            "WAL receipts do not match admitted groups".into(),
+        ));
+    }
+    let mut writes = Vec::new();
+    for (commands, references) in groups.iter().zip(receipts) {
+        if commands.len() != references.len() {
+            return Err(DBError::StorageError(
+                "WAL receipts do not match admitted commands".into(),
+            ));
+        }
+        for (command, reference) in commands.iter().zip(references) {
+            if reference.record_type != command.record_type
+                || reference.application_sequence != command.lsn
+            {
+                return Err(DBError::StorageError(
+                    "WAL receipt does not match its command".into(),
+                ));
+            }
+            let value = match command.record_type {
+                RecordType::Put => ReferenceValue::new(generation, reference).encode().to_vec(),
+                RecordType::Delete => Vec::new(),
+            };
+            writes.push(MemtableWrite {
+                key: command.key.clone(),
+                value,
+                record_type: command.record_type,
+                lsn: command.lsn,
+            });
+        }
+    }
+    Ok(writes)
 }
 
 fn validate_batch(operations: &[BatchOperation]) -> Result<usize, DBError> {
@@ -1398,5 +1518,74 @@ mod tests {
         }];
         assert!(validate_batch(&too_large).is_err());
         assert_eq!(validate_batch(&[]).unwrap(), 37);
+    }
+
+    fn receipt(
+        record_type: RecordType,
+        application_sequence: u64,
+        key: &[u8],
+        value: &[u8],
+    ) -> WalValueRef {
+        WalValueRef {
+            segment_id: 1,
+            transaction_id: application_sequence,
+            transaction_start_offset: 36,
+            commit_offset: 200,
+            commit_lsn: application_sequence + 2,
+            frame_offset: 36,
+            frame_length: 20 + 42 + key.len() as u32 + value.len() as u32,
+            physical_lsn: application_sequence,
+            application_sequence,
+            record_type,
+            key_length: key.len() as u32,
+            key_checksum: crc32fast::hash(key),
+            value_length: value.len() as u64,
+            value_checksum: crc32fast::hash(value),
+        }
+    }
+
+    #[test]
+    fn reference_writes_encode_puts_and_preserve_delete_tombstones() {
+        let commands = vec![
+            LogCommand::new(RecordType::Put, b"k".to_vec(), b"v".to_vec(), 1),
+            LogCommand::new(RecordType::Delete, b"d".to_vec(), Vec::new(), 2),
+        ];
+        let receipts = vec![vec![
+            receipt(RecordType::Put, 1, b"k", b"v"),
+            receipt(RecordType::Delete, 2, b"d", b""),
+        ]];
+        let writes = encode_reference_writes(5, &[commands], receipts).unwrap();
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0].record_type, RecordType::Put);
+        assert_eq!(writes[0].lsn, 1);
+        assert_eq!(
+            writes[0].value.len(),
+            crate::storage::experimental::REFERENCE_VALUE_ENCODED_SIZE
+        );
+        assert_eq!(
+            ReferenceValue::decode(&writes[0].value).unwrap().generation,
+            5
+        );
+        assert_eq!(writes[1].record_type, RecordType::Delete);
+        assert!(writes[1].value.is_empty());
+    }
+
+    #[test]
+    fn reference_writes_reject_mismatched_receipts() {
+        let commands = vec![LogCommand::new(
+            RecordType::Put,
+            b"k".to_vec(),
+            b"v".to_vec(),
+            1,
+        )];
+        assert!(encode_reference_writes(1, &[commands.clone()], vec![vec![]]).is_err());
+        assert!(
+            encode_reference_writes(
+                1,
+                &[commands],
+                vec![vec![receipt(RecordType::Delete, 1, b"k", b"")]],
+            )
+            .is_err()
+        );
     }
 }

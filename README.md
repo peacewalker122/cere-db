@@ -104,6 +104,37 @@ indexes before opening them; there is no automatic migration or data deletion.
 The library API allows search limits up to 1000; posting scans and ranked
 candidate materialization are not bounded by the result limit.
 
+## Experimental WAL value storage
+
+New standalone CLI databases use `ExperimentalEngine` by default. Existing KV2 roots keep
+their format and records without conversion; unknown or mixed roots are rejected before
+initialization. This CLI default does not change the `KV2` library API, and `--raft-mode`
+continues to use `RaftKV2`, which does not support this format.
+
+`ExperimentalEngine` is a format-incompatible alternative that keeps values in
+the retained WAL and stores fixed-size value references in the LSM index. It is
+single-node, has no Raft support, retains the full committed generation log (so reopen
+replays it), and reclaims space only through an explicit full-rewrite `clean()` whose
+stop-the-world pause, peak space, and rewrite bytes are part of its cost. The CLI does not
+run `clean()` automatically and has no clean command. Existing `KV2` data cannot be opened
+by it, and there is no migration.
+
+A 107-byte reference per live record is pure overhead and is larger than a 64-byte value,
+so small values can look worse. A point read re-reads and validates the whole referenced
+WAL transaction, so read cost scales with transaction bytes rather than value bytes. Any
+ingest or space benefit is a workload-dependent hypothesis, not a promise. See
+[experimental WAL value storage](docs/experimental-wal-storage.md) for the format, timing
+contract, matched comparison harness, and limitations.
+
+The comparison harness needs a fresh run directory (absent or empty) and never deletes or
+reuses existing paths:
+
+```bash
+cargo build --example experimental_compare
+./target/debug/examples/experimental_compare --pilot \
+  --data-dir target/bench-data/pilot-$(date +%s)
+```
+
 ## Benchmark
 
 Run the public storage-module and end-to-end benchmarks with:

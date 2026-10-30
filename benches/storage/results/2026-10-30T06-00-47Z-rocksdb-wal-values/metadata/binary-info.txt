@@ -1,0 +1,1 @@
+/home/peacewalker/project/learn/wasm-kv/target/rocksdb-compare/release/wal_values: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=5703e4165187736fbdf4eca6a43f5cd3a1f6a257, not stripped

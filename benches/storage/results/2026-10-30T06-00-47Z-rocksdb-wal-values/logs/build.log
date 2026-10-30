@@ -1,0 +1,313 @@
+warning: unused import: `io::Cursor`
+ --> /home/peacewalker/project/learn/wasm-kv/src/storage/compactionmanager/compaction.rs:3:11
+  |
+3 | use std::{io::Cursor, path::PathBuf, sync::Arc};
+  |           ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+warning: unused imports: `index::SparseIndexEntry` and `self`
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/compactionmanager/compaction.rs:9:13
+   |
+ 9 |     bloom::{self, BloomFilterWrapper},
+   |             ^^^^
+10 |     config::StorageConfig,
+11 |     index::SparseIndexEntry,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+warning: unused import: `super::footer::SSTableFooter`
+ --> /home/peacewalker/project/learn/wasm-kv/src/storage/index.rs:6:5
+  |
+6 | use super::footer::SSTableFooter;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+warning: unused import: `LogStore`
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/kv2.rs:26:37
+   |
+26 |             log_store::{LogCommand, LogStore},
+   |                                     ^^^^^^^^
+warning: unused import: `bloom::BloomFilterWrapper`
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/manifest_codec.rs:15:22
+   |
+15 | use crate::storage::{bloom::BloomFilterWrapper, durable_dir};
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+warning: unused import: `RaftTypeConfig`
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/raft/log_store.rs:11:83
+   |
+11 |     Entry, ErrorSubject, ErrorVerb, LogId, LogState, OptionalSend, RaftLogReader, RaftTypeConfig,
+   |                                                                                   ^^^^^^^^^^^^^^
+warning: unused import: `std::fmt::Debug`
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/raft/log_store.rs:18:5
+   |
+18 | use std::fmt::Debug;
+   |     ^^^^^^^^^^^^^^^
+warning: unused import: `openraft::OptionalSend`
+ --> /home/peacewalker/project/learn/wasm-kv/src/storage/raft/network.rs:8:5
+  |
+8 | use openraft::OptionalSend;
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+warning: unused import: `borrow::Cow`
+ --> /home/peacewalker/project/learn/wasm-kv/src/storage/writemanager/block.rs:2:5
+  |
+2 |     borrow::Cow,
+  |     ^^^^^^^^^^^
+warning: unused import: `Record`
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/writemanager/block.rs:14:34
+   |
+14 |         record::{MemtableRecord, Record},
+   |                                  ^^^^^^
+warning: variable does not need to be mutable
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/writemanager/block.rs:257:9
+    |
+257 |         mut data: &mut T,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+warning: unused variable: `first_key_len`
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/block.rs:149:13
+    |
+149 |         let first_key_len = u32::from_be_bytes(len_buf) as usize;
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_first_key_len`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+warning: unused variable: `num_bits`
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/bloom.rs:109:13
+    |
+109 |         let num_bits = u64::from_be_bytes(buf) as usize;
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_num_bits`
+warning: unused variable: `sequence_number`
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/readmanager/read.rs:263:9
+    |
+263 |         sequence_number: u64,
+    |         ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sequence_number`
+warning: unused variable: `sstable_dir`
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/kv2.rs:497:9
+    |
+497 |         sstable_dir: PathBuf,
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sstable_dir`
+warning: irrefutable `if let` pattern
+    --> /home/peacewalker/project/learn/wasm-kv/src/storage/kv2.rs:1558:28
+     |
+1558 |                         if let CompactionTrigger::CompactLevel { level } = trigger {
+     |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: this pattern will always match, so the `if let` is useless
+     = help: consider replacing the `if let` with a `let`
+     = note: `#[warn(irrefutable_let_patterns)]` on by default
+warning: unused variable: `sstable_dir`
+    --> /home/peacewalker/project/learn/wasm-kv/src/storage/kv2.rs:1549:9
+     |
+1549 |         sstable_dir: PathBuf,
+     |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sstable_dir`
+warning: unused variable: `footer`
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/sstable_codec.rs:159:14
+    |
+159 |         let (footer, index, bloom) = Self::deserialize_sections(reader).await?;
+    |              ^^^^^^ help: if this is intentional, prefix it with an underscore: `_footer`
+warning: variable does not need to be mutable
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/writemanager/block.rs:192:35
+    |
+192 |     pub fn decode<T: Read + Seek>(mut data: &mut T, offset: u64) -> Result<Self, DBError> {
+    |                                   ----^^^^
+    |                                   |
+    |                                   help: remove this `mut`
+warning: field `base_dir` is never read
+    --> /home/peacewalker/project/learn/wasm-kv/src/storage/kv2.rs:1427:5
+     |
+1426 | pub struct RaftKV2 {
+     |            ------- field in this struct
+1427 |     base_dir: PathBuf,
+     |     ^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+warning: associated function `build_recovered_memtable` is never used
+    --> /home/peacewalker/project/learn/wasm-kv/src/storage/kv2.rs:1520:8
+     |
+1443 | impl RaftKV2 {
+     | ------------ associated function in this implementation
+...
+1520 |     fn build_recovered_memtable(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+warning: struct `LogPosition` is never constructed
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/recovermanager/log_store.rs:68:12
+   |
+68 | pub struct LogPosition {
+   |            ^^^^^^^^^^^
+warning: trait `LogStore` is never used
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/recovermanager/log_store.rs:73:11
+   |
+73 | pub trait LogStore: Send + Sync {
+   |           ^^^^^^^^
+warning: type alias `FileWalStore` is never used
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/recovermanager/wal.rs:64:10
+   |
+64 | pub type FileWalStore = WALManager;
+   |          ^^^^^^^^^^^^
+warning: method `write_engine_transaction` is never used
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/recovermanager/wal.rs:432:25
+    |
+329 | impl WALManager {
+    | --------------- method in this implementation
+...
+432 |     pub(crate) async fn write_engine_transaction(
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^
+warning: function `decode_sparse_index` is never used
+   --> /home/peacewalker/project/learn/wasm-kv/src/storage/sstable_codec.rs:251:4
+    |
+251 | fn decode_sparse_index(index_block: &[u8]) -> Result<Vec<SparseIndexEntry>, DBError> {
+    |    ^^^^^^^^^^^^^^^^^^^
+warning: field `ticket` is never read
+  --> /home/peacewalker/project/learn/wasm-kv/src/storage/writemanager/admission.rs:40:16
+   |
+39 | pub(crate) struct Enqueued {
+   |                   -------- field in this struct
+40 |     pub(crate) ticket: u64,
+   |                ^^^^^^
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/api/api.rs:25:5
+   |
+25 |     async fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+   = note: `#[warn(async_fn_in_trait)]` on by default
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+25 -     async fn get(&self, key: &[u8]) -> Result<Option<Cow<'_, Vec<u8>>>, DBError>;
+25 +     fn get(&self, key: &[u8]) -> impl std::future::Future<Output = Result<Option<Cow<'_, Vec<u8>>>, DBError>> + Send;
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/api/api.rs:26:5
+   |
+26 |     async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+26 -     async fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<(), DBError>;
+26 +     fn put(&mut self, key: Vec<u8>, value: Vec<u8>) -> impl std::future::Future<Output = Result<(), DBError>> + Send;
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/api/api.rs:27:5
+   |
+27 |     async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+27 -     async fn delete(&mut self, key: Vec<u8>) -> Result<(), DBError>;
+27 +     fn delete(&mut self, key: Vec<u8>) -> impl std::future::Future<Output = Result<(), DBError>> + Send;
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/api/api.rs:28:5
+   |
+28 |     async fn write_batch(&mut self, _operations: Vec<BatchOperation>) -> Result<(), DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+28 ~     fn write_batch(&mut self, _operations: Vec<BatchOperation>) -> impl std::future::Future<Output = Result<(), DBError>> + Send {async {
+29 |         Err(unsupported_batch())
+30 ~     } }
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/api/api.rs:32:5
+   |
+32 |     async fn await_pending_writes(&self) -> Result<(), DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+32 ~     fn await_pending_writes(&self) -> impl std::future::Future<Output = Result<(), DBError>> + Send {async {
+33 |         Err(DBError::StorageError(
+34 |             "pending-write barriers are unsupported by this engine".into(),
+35 |         ))
+36 ~     } }
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/api/api.rs:59:5
+   |
+59 |     async fn scan(
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+59 ~     fn scan(
+60 |         &self,
+61 |         range: impl RangeBounds<Vec<u8>> + Send,
+62 ~     ) -> impl std::future::Future<Output = Result<Vec<(Vec<u8>, Vec<u8>)>, DBError>> + Send;
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/command.rs:8:5
+   |
+ 8 |     async fn put_document(&mut self, _id: DocumentId, _document: Vec<u8>) -> Result<(), DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+ 8 ~     fn put_document(&mut self, _id: DocumentId, _document: Vec<u8>) -> impl std::future::Future<Output = Result<(), DBError>> + Send {async {
+ 9 |         Err(unsupported_fts())
+10 ~     } }
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/command.rs:12:5
+   |
+12 |     async fn get_document(&self, _id: &DocumentId) -> Result<Option<Vec<u8>>, DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+12 ~     fn get_document(&self, _id: &DocumentId) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, DBError>> + Send {async {
+13 |         Err(unsupported_fts())
+14 ~     } }
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/command.rs:16:5
+   |
+16 |     async fn delete_document(&mut self, _id: &DocumentId) -> Result<bool, DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+16 ~     fn delete_document(&mut self, _id: &DocumentId) -> impl std::future::Future<Output = Result<bool, DBError>> + Send {async {
+17 |         Err(unsupported_fts())
+18 ~     } }
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/command.rs:20:5
+   |
+20 |     async fn search(&self, _query: FtsQuery, _limit: usize) -> Result<Vec<SearchHit>, DBError> {
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+20 ~     fn search(&self, _query: FtsQuery, _limit: usize) -> impl std::future::Future<Output = Result<Vec<SearchHit>, DBError>> + Send {async {
+21 |         Err(unsupported_fts())
+22 ~     } }
+   |
+warning: use of `async fn` in public traits is discouraged as auto trait bounds cannot be specified
+  --> /home/peacewalker/project/learn/wasm-kv/src/command.rs:24:5
+   |
+24 |     async fn search_ranked(
+   |     ^^^^^
+   |
+   = note: you can suppress this lint if you plan to use the trait only in your own code, or do not care about auto traits like `Send` on the `Future`
+help: you can alternatively desugar to a normal `fn` that returns `impl Future` and add any desired bounds such as `Send`, but these cannot be relaxed without a breaking API change
+   |
+24 ~     fn search_ranked(
+25 |         &self,
+...
+28 |         _config: Bm25Config,
+29 ~     ) -> impl std::future::Future<Output = Result<Vec<RankedSearchHit>, DBError>> + Send {async {
+30 |         Err(unsupported_fts())
+31 ~     } }
+   |
+cargo build: 0 errors, 38 warnings (2 crates)

@@ -1,0 +1,879 @@
+{
+  "config": {
+    "bloom_false_positive_rate": 0.01,
+    "level_base_bytes": 65536,
+    "level_size_multiplier": 4,
+    "max_level0_files": 2,
+    "max_sstable_file_handles": 64,
+    "memtable_size_threshold": 1048576,
+    "sstable_block_size": 4096,
+    "target_sstable_bytes": 16384,
+    "wal_segment_size": 262144
+  },
+  "filesystem": {
+    "existing_paths_deleted": false,
+    "fresh_run_root": true,
+    "fstype": "btrfs",
+    "mount_point": "/home",
+    "owner_file": ".harness-run-owner",
+    "path": "/home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/pilot",
+    "source": "/dev/nvme0n1p3",
+    "transient_rejected": [
+      "tmpfs",
+      "ramfs",
+      "devtmpfs"
+    ]
+  },
+  "fts": {
+    "baseline": {
+      "clean_elapsed_ns": null,
+      "clean_pause_ns": null,
+      "closed": {
+        "postclean": null,
+        "preclean": {
+          "generations": [],
+          "levels": {
+            "compaction_observed": false,
+            "levels": [],
+            "total_records": 0,
+            "total_tables": 0
+          },
+          "root": {
+            "file_count": 2,
+            "metadata_bytes": 0,
+            "os_allocated_bytes": 45056,
+            "other_bytes": 0,
+            "sstable_bytes": 0,
+            "total_bytes": 44133,
+            "wal_bytes": 44133
+          }
+        }
+      },
+      "documents": 16,
+      "engine": "reference-kv2",
+      "ingest_elapsed_ns": 7388243,
+      "postclean_observation": null,
+      "preclean_observation": {
+        "elapsed_ns": 1444374,
+        "observation": {
+          "boolean_and_ids": [
+            "doc-0000",
+            "doc-0013"
+          ],
+          "boolean_or_ids": [
+            "doc-0000",
+            "doc-0011",
+            "doc-0013"
+          ],
+          "documents_checked": 16,
+          "ranked_and": [
+            {
+              "id": "doc-0013",
+              "score_bits": 4611392035240735693
+            },
+            {
+              "id": "doc-0000",
+              "score_bits": 4611320696651140242
+            }
+          ],
+          "ranked_or": [
+            {
+              "id": "doc-0000",
+              "score_bits": 4615691776817521733
+            },
+            {
+              "id": "doc-0011",
+              "score_bits": 4611258421833267531
+            },
+            {
+              "id": "doc-0013",
+              "score_bits": 4611258421833267531
+            }
+          ]
+        }
+      },
+      "put_documents_chunk": 8,
+      "reopen_postclean_ns": null,
+      "reopen_preclean_ns": 21786428,
+      "root": {
+        "final": {
+          "file_count": 2,
+          "metadata_bytes": 0,
+          "os_allocated_bytes": 45056,
+          "other_bytes": 0,
+          "sstable_bytes": 0,
+          "total_bytes": 44133,
+          "wal_bytes": 44133
+        },
+        "postclean": null,
+        "preclean": {
+          "file_count": 2,
+          "metadata_bytes": 0,
+          "os_allocated_bytes": 45056,
+          "other_bytes": 0,
+          "sstable_bytes": 0,
+          "total_bytes": 44133,
+          "wal_bytes": 44133
+        }
+      },
+      "settle_elapsed_ns": 2726,
+      "shutdown_final_ns": 43936,
+      "shutdown_postclean_ns": null,
+      "shutdown_preclean_ns": 22421
+    },
+    "detail": "Boolean and ranked results match the reference engine after preclean and postclean",
+    "documents": 16,
+    "equivalent": true,
+    "experimental": {
+      "clean_elapsed_ns": 243189699,
+      "clean_pause_ns": 239328222,
+      "closed": {
+        "postclean": {
+          "generations": [
+            2
+          ],
+          "levels": {
+            "compaction_observed": false,
+            "levels": [
+              {
+                "level": 0,
+                "tables": 1
+              }
+            ],
+            "total_records": 320,
+            "total_tables": 1
+          },
+          "root": {
+            "file_count": 10,
+            "metadata_bytes": 490,
+            "os_allocated_bytes": 131072,
+            "other_bytes": 0,
+            "sstable_bytes": 53720,
+            "total_bytes": 96355,
+            "wal_bytes": 42145
+          }
+        },
+        "preclean": {
+          "generations": [
+            1
+          ],
+          "levels": {
+            "compaction_observed": false,
+            "levels": [],
+            "total_records": 0,
+            "total_tables": 0
+          },
+          "root": {
+            "file_count": 6,
+            "metadata_bytes": 77,
+            "os_allocated_bytes": 57344,
+            "other_bytes": 0,
+            "sstable_bytes": 0,
+            "total_bytes": 44210,
+            "wal_bytes": 44133
+          }
+        }
+      },
+      "documents": 16,
+      "engine": "experimental-wal",
+      "ingest_elapsed_ns": 11463421,
+      "postclean_observation": {
+        "elapsed_ns": 271468557,
+        "observation": {
+          "boolean_and_ids": [
+            "doc-0000",
+            "doc-0013"
+          ],
+          "boolean_or_ids": [
+            "doc-0000",
+            "doc-0011",
+            "doc-0013"
+          ],
+          "documents_checked": 16,
+          "ranked_and": [
+            {
+              "id": "doc-0013",
+              "score_bits": 4611392035240735693
+            },
+            {
+              "id": "doc-0000",
+              "score_bits": 4611320696651140242
+            }
+          ],
+          "ranked_or": [
+            {
+              "id": "doc-0000",
+              "score_bits": 4615691776817521733
+            },
+            {
+              "id": "doc-0011",
+              "score_bits": 4611258421833267531
+            },
+            {
+              "id": "doc-0013",
+              "score_bits": 4611258421833267531
+            }
+          ]
+        }
+      },
+      "preclean_observation": {
+        "elapsed_ns": 238998634,
+        "observation": {
+          "boolean_and_ids": [
+            "doc-0000",
+            "doc-0013"
+          ],
+          "boolean_or_ids": [
+            "doc-0000",
+            "doc-0011",
+            "doc-0013"
+          ],
+          "documents_checked": 16,
+          "ranked_and": [
+            {
+              "id": "doc-0013",
+              "score_bits": 4611392035240735693
+            },
+            {
+              "id": "doc-0000",
+              "score_bits": 4611320696651140242
+            }
+          ],
+          "ranked_or": [
+            {
+              "id": "doc-0000",
+              "score_bits": 4615691776817521733
+            },
+            {
+              "id": "doc-0011",
+              "score_bits": 4611258421833267531
+            },
+            {
+              "id": "doc-0013",
+              "score_bits": 4611258421833267531
+            }
+          ]
+        }
+      },
+      "put_documents_chunk": 8,
+      "reopen_postclean_ns": 10357151,
+      "reopen_preclean_ns": 11900213,
+      "root": {
+        "final": {
+          "file_count": 10,
+          "metadata_bytes": 490,
+          "os_allocated_bytes": 131072,
+          "other_bytes": 0,
+          "sstable_bytes": 53720,
+          "total_bytes": 96355,
+          "wal_bytes": 42145
+        },
+        "postclean": {
+          "file_count": 10,
+          "metadata_bytes": 490,
+          "os_allocated_bytes": 131072,
+          "other_bytes": 0,
+          "sstable_bytes": 53720,
+          "total_bytes": 96355,
+          "wal_bytes": 42145
+        },
+        "preclean": {
+          "file_count": 6,
+          "metadata_bytes": 77,
+          "os_allocated_bytes": 57344,
+          "other_bytes": 0,
+          "sstable_bytes": 0,
+          "total_bytes": 44210,
+          "wal_bytes": 44133
+        }
+      },
+      "settle_elapsed_ns": 20736,
+      "shutdown_final_ns": 55971,
+      "shutdown_postclean_ns": 50843,
+      "shutdown_preclean_ns": 6179341
+    },
+    "put_documents_chunk": 8,
+    "role": "functional_equivalence_only",
+    "samples": 1
+  },
+  "generated_unix_secs": 1793291224,
+  "git_head": "fa65cde5d1642a54a576b89f0f2c88dba8a13fb5",
+  "lifecycle_basis": "explicit_phase_sum",
+  "limitations": [
+    "pilot output validates the harness and correctness checks only; it is not a performance result",
+    "one sample, no warmup, 32 records, and 4 KiB values",
+    "the FTS case is functional equivalence only and is not part of the timed sample set"
+  ],
+  "pilot": true,
+  "records": 32,
+  "samples": [
+    {
+      "batch_size": 8,
+      "case": "raw4KiB",
+      "clean": null,
+      "closed": {
+        "postclean": null,
+        "preclean": {
+          "generations": [],
+          "levels": {
+            "compaction_observed": false,
+            "levels": [],
+            "total_records": 0,
+            "total_tables": 0
+          },
+          "root": {
+            "file_count": 2,
+            "metadata_bytes": 0,
+            "os_allocated_bytes": 172032,
+            "other_bytes": 0,
+            "sstable_bytes": 0,
+            "total_bytes": 171978,
+            "wal_bytes": 171978
+          }
+        }
+      },
+      "elapsed_ns": {
+        "clean_elapsed": null,
+        "clean_pause": null,
+        "ingest": 15160030,
+        "lifecycle_phase_sum": 44865674,
+        "mutate": 6883483,
+        "point_get": 15776,
+        "reopen_postclean": null,
+        "reopen_preclean": 22762088,
+        "scan": 34080,
+        "settle": 1879,
+        "shutdown_final": 37520,
+        "shutdown_postclean": null,
+        "shutdown_preclean": 20674
+      },
+      "engine": "reference-kv2",
+      "lifecycle_basis": "explicit_phase_sum",
+      "reads": {
+        "point_get_elapsed_ns": 15776,
+        "point_gets": 30,
+        "point_hits": 30,
+        "scan_elapsed_ns": 34080,
+        "scan_entries": 30
+      },
+      "records": 32,
+      "root": {
+        "final": {
+          "file_count": 2,
+          "metadata_bytes": 0,
+          "os_allocated_bytes": 172032,
+          "other_bytes": 0,
+          "sstable_bytes": 0,
+          "total_bytes": 171978,
+          "wal_bytes": 171978
+        },
+        "postclean": null,
+        "preclean": {
+          "file_count": 2,
+          "metadata_bytes": 0,
+          "os_allocated_bytes": 172032,
+          "other_bytes": 0,
+          "sstable_bytes": 0,
+          "total_bytes": 171978,
+          "wal_bytes": 171978
+        },
+        "space_amplification": {
+          "final": 1.3914077669902913,
+          "postclean": null,
+          "preclean": 1.3914077669902913
+        }
+      },
+      "sample_index": 0,
+      "seed": 7640891576956012809,
+      "value_bytes": 4096,
+      "warmup": false,
+      "workload": {
+        "append_mutations": 32,
+        "batches": 6,
+        "delete_mutations": 3,
+        "live_logical_bytes": 123600,
+        "live_records": 30,
+        "live_value_bytes": 122880,
+        "logical_input_bytes": 168992,
+        "mutations": 44,
+        "overwrite_mutations": 8,
+        "reinsert_mutations": 1
+      }
+    },
+    {
+      "batch_size": 8,
+      "case": "raw4KiB",
+      "clean": {
+        "copied_payload_bytes": 122880,
+        "copied_transactions": 1,
+        "deferred_cleanup_bytes": 0,
+        "elapsed_ns": 126451076,
+        "index_sstables_written": 1,
+        "live_logical_bytes": 123600,
+        "live_records": 30,
+        "new_generation": 2,
+        "observed_peak_bytes": 302949,
+        "old_generation": 1,
+        "root_bytes_sampling": "core_clean_snapshot_while_engine_live",
+        "total_root_bytes_after": 130943,
+        "total_root_bytes_before": 172055,
+        "write_pause_ns": 122116514
+      },
+      "closed": {
+        "postclean": {
+          "generations": [
+            2
+          ],
+          "levels": {
+            "compaction_observed": false,
+            "levels": [
+              {
+                "level": 0,
+                "tables": 1
+              }
+            ],
+            "total_records": 30,
+            "total_tables": 1
+          },
+          "root": {
+            "file_count": 10,
+            "metadata_bytes": 490,
+            "os_allocated_bytes": 163840,
+            "other_bytes": 0,
+            "sstable_bytes": 4884,
+            "total_bytes": 130943,
+            "wal_bytes": 125569
+          }
+        },
+        "preclean": {
+          "generations": [
+            1
+          ],
+          "levels": {
+            "compaction_observed": false,
+            "levels": [],
+            "total_records": 0,
+            "total_tables": 0
+          },
+          "root": {
+            "file_count": 6,
+            "metadata_bytes": 77,
+            "os_allocated_bytes": 184320,
+            "other_bytes": 0,
+            "sstable_bytes": 0,
+            "total_bytes": 172055,
+            "wal_bytes": 171978
+          }
+        }
+      },
+      "elapsed_ns": {
+        "clean_elapsed": 126451076,
+        "clean_pause": 122116514,
+        "ingest": 21207472,
+        "lifecycle_phase_sum": 198967728,
+        "mutate": 7555754,
+        "point_get": 4937971,
+        "reopen_postclean": 23292316,
+        "reopen_preclean": 13473966,
+        "scan": 5222348,
+        "settle": 5300,
+        "shutdown_final": 54808,
+        "shutdown_postclean": 44415,
+        "shutdown_preclean": 6882621
+      },
+      "engine": "experimental-wal",
+      "lifecycle_basis": "explicit_phase_sum",
+      "reads": {
+        "point_get_elapsed_ns": 4937971,
+        "point_gets": 30,
+        "point_hits": 30,
+        "scan_elapsed_ns": 5222348,
+        "scan_entries": 30
+      },
+      "records": 32,
+      "root": {
+        "final": {
+          "file_count": 10,
+          "metadata_bytes": 490,
+          "os_allocated_bytes": 163840,
+          "other_bytes": 0,
+          "sstable_bytes": 4884,
+          "total_bytes": 130943,
+          "wal_bytes": 125569
+        },
+        "postclean": {
+          "file_count": 10,
+          "metadata_bytes": 490,
+          "os_allocated_bytes": 163840,
+          "other_bytes": 0,
+          "sstable_bytes": 4884,
+          "total_bytes": 130943,
+          "wal_bytes": 125569
+        },
+        "preclean": {
+          "file_count": 6,
+          "metadata_bytes": 77,
+          "os_allocated_bytes": 184320,
+          "other_bytes": 0,
+          "sstable_bytes": 0,
+          "total_bytes": 172055,
+          "wal_bytes": 171978
+        },
+        "space_amplification": {
+          "final": 1.0594093851132687,
+          "postclean": 1.0594093851132687,
+          "preclean": 1.3920307443365696
+        }
+      },
+      "sample_index": 0,
+      "seed": 7640891576956012809,
+      "value_bytes": 4096,
+      "warmup": false,
+      "workload": {
+        "append_mutations": 32,
+        "batches": 6,
+        "delete_mutations": 3,
+        "live_logical_bytes": 123600,
+        "live_records": 30,
+        "live_value_bytes": 122880,
+        "logical_input_bytes": 168992,
+        "mutations": 44,
+        "overwrite_mutations": 8,
+        "reinsert_mutations": 1
+      }
+    }
+  ],
+  "schema": "ceredb-experimental-wal-comparison-pilot/2",
+  "summary": {
+    "experimental": {
+      "elapsed_ns": {
+        "clean_elapsed": {
+          "count": 1,
+          "max_ns": 126451076,
+          "median_ns": 126451076,
+          "min_ns": 126451076
+        },
+        "clean_pause": {
+          "count": 1,
+          "max_ns": 122116514,
+          "median_ns": 122116514,
+          "min_ns": 122116514
+        },
+        "ingest": {
+          "count": 1,
+          "max_ns": 21207472,
+          "median_ns": 21207472,
+          "min_ns": 21207472
+        },
+        "lifecycle_phase_sum": {
+          "count": 1,
+          "max_ns": 198967728,
+          "median_ns": 198967728,
+          "min_ns": 198967728
+        },
+        "mutate": {
+          "count": 1,
+          "max_ns": 7555754,
+          "median_ns": 7555754,
+          "min_ns": 7555754
+        },
+        "point_get": {
+          "count": 1,
+          "max_ns": 4937971,
+          "median_ns": 4937971,
+          "min_ns": 4937971
+        },
+        "reopen_postclean": {
+          "count": 1,
+          "max_ns": 23292316,
+          "median_ns": 23292316,
+          "min_ns": 23292316
+        },
+        "reopen_preclean": {
+          "count": 1,
+          "max_ns": 13473966,
+          "median_ns": 13473966,
+          "min_ns": 13473966
+        },
+        "scan": {
+          "count": 1,
+          "max_ns": 5222348,
+          "median_ns": 5222348,
+          "min_ns": 5222348
+        },
+        "settle": {
+          "count": 1,
+          "max_ns": 5300,
+          "median_ns": 5300,
+          "min_ns": 5300
+        },
+        "shutdown_final": {
+          "count": 1,
+          "max_ns": 54808,
+          "median_ns": 54808,
+          "min_ns": 54808
+        },
+        "shutdown_postclean": {
+          "count": 1,
+          "max_ns": 44415,
+          "median_ns": 44415,
+          "min_ns": 44415
+        },
+        "shutdown_preclean": {
+          "count": 1,
+          "max_ns": 6882621,
+          "median_ns": 6882621,
+          "min_ns": 6882621
+        }
+      },
+      "engine": "experimental-wal",
+      "level_evidence": {
+        "postclean_compaction_observed": false,
+        "postclean_max_level": 0,
+        "postclean_table_counts_last_sample": [
+          {
+            "level": 0,
+            "tables": 1
+          }
+        ],
+        "postclean_total_tables_last_sample": 1,
+        "preclean_compaction_observed": false,
+        "preclean_max_level": 0,
+        "preclean_table_counts_last_sample": [],
+        "preclean_total_tables_last_sample": 0
+      },
+      "lifecycle_basis": "explicit_phase_sum",
+      "recovery_phases": {
+        "experimental": [
+          "preclean_shutdown",
+          "preclean_reopen",
+          "postclean_shutdown",
+          "postclean_reopen",
+          "final_shutdown"
+        ],
+        "reference": [
+          "preclean_shutdown",
+          "preclean_reopen",
+          "final_shutdown"
+        ]
+      },
+      "rewrite_bytes": {
+        "copied_payload": {
+          "count": 1,
+          "max_ns": 122880,
+          "median_ns": 122880,
+          "min_ns": 122880
+        },
+        "logical_input": {
+          "count": 1,
+          "max_ns": 168992,
+          "median_ns": 168992,
+          "min_ns": 168992
+        }
+      },
+      "samples": 1,
+      "space": {
+        "final_total_bytes": {
+          "count": 1,
+          "max_ns": 130943,
+          "median_ns": 130943,
+          "min_ns": 130943
+        },
+        "live_logical_bytes": 123600,
+        "postclean_total_bytes": {
+          "count": 1,
+          "max_ns": 130943,
+          "median_ns": 130943,
+          "min_ns": 130943
+        },
+        "preclean_total_bytes": {
+          "count": 1,
+          "max_ns": 172055,
+          "median_ns": 172055,
+          "min_ns": 172055
+        },
+        "space_amplification_final": {
+          "count": 1,
+          "max": 1.0594093851132687,
+          "median": 1.0594093851132687,
+          "min": 1.0594093851132687
+        },
+        "space_amplification_postclean": {
+          "count": 1,
+          "max": 1.0594093851132687,
+          "median": 1.0594093851132687,
+          "min": 1.0594093851132687
+        },
+        "space_amplification_preclean": {
+          "count": 1,
+          "max": 1.3920307443365696,
+          "median": 1.3920307443365696,
+          "min": 1.3920307443365696
+        }
+      }
+    },
+    "reference": {
+      "elapsed_ns": {
+        "clean_elapsed": {
+          "count": 0,
+          "max_ns": null,
+          "median_ns": null,
+          "min_ns": null
+        },
+        "clean_pause": {
+          "count": 0,
+          "max_ns": null,
+          "median_ns": null,
+          "min_ns": null
+        },
+        "ingest": {
+          "count": 1,
+          "max_ns": 15160030,
+          "median_ns": 15160030,
+          "min_ns": 15160030
+        },
+        "lifecycle_phase_sum": {
+          "count": 1,
+          "max_ns": 44865674,
+          "median_ns": 44865674,
+          "min_ns": 44865674
+        },
+        "mutate": {
+          "count": 1,
+          "max_ns": 6883483,
+          "median_ns": 6883483,
+          "min_ns": 6883483
+        },
+        "point_get": {
+          "count": 1,
+          "max_ns": 15776,
+          "median_ns": 15776,
+          "min_ns": 15776
+        },
+        "reopen_postclean": {
+          "count": 0,
+          "max_ns": null,
+          "median_ns": null,
+          "min_ns": null
+        },
+        "reopen_preclean": {
+          "count": 1,
+          "max_ns": 22762088,
+          "median_ns": 22762088,
+          "min_ns": 22762088
+        },
+        "scan": {
+          "count": 1,
+          "max_ns": 34080,
+          "median_ns": 34080,
+          "min_ns": 34080
+        },
+        "settle": {
+          "count": 1,
+          "max_ns": 1879,
+          "median_ns": 1879,
+          "min_ns": 1879
+        },
+        "shutdown_final": {
+          "count": 1,
+          "max_ns": 37520,
+          "median_ns": 37520,
+          "min_ns": 37520
+        },
+        "shutdown_postclean": {
+          "count": 0,
+          "max_ns": null,
+          "median_ns": null,
+          "min_ns": null
+        },
+        "shutdown_preclean": {
+          "count": 1,
+          "max_ns": 20674,
+          "median_ns": 20674,
+          "min_ns": 20674
+        }
+      },
+      "engine": "reference-kv2",
+      "level_evidence": {
+        "postclean_compaction_observed": false,
+        "postclean_max_level": 0,
+        "postclean_table_counts_last_sample": null,
+        "postclean_total_tables_last_sample": null,
+        "preclean_compaction_observed": false,
+        "preclean_max_level": 0,
+        "preclean_table_counts_last_sample": [],
+        "preclean_total_tables_last_sample": 0
+      },
+      "lifecycle_basis": "explicit_phase_sum",
+      "recovery_phases": {
+        "experimental": [
+          "preclean_shutdown",
+          "preclean_reopen",
+          "postclean_shutdown",
+          "postclean_reopen",
+          "final_shutdown"
+        ],
+        "reference": [
+          "preclean_shutdown",
+          "preclean_reopen",
+          "final_shutdown"
+        ]
+      },
+      "rewrite_bytes": {
+        "copied_payload": {
+          "count": 0,
+          "max_ns": null,
+          "median_ns": null,
+          "min_ns": null
+        },
+        "logical_input": {
+          "count": 1,
+          "max_ns": 168992,
+          "median_ns": 168992,
+          "min_ns": 168992
+        }
+      },
+      "samples": 1,
+      "space": {
+        "final_total_bytes": {
+          "count": 1,
+          "max_ns": 171978,
+          "median_ns": 171978,
+          "min_ns": 171978
+        },
+        "live_logical_bytes": 123600,
+        "postclean_total_bytes": {
+          "count": 0,
+          "max_ns": null,
+          "median_ns": null,
+          "min_ns": null
+        },
+        "preclean_total_bytes": {
+          "count": 1,
+          "max_ns": 171978,
+          "median_ns": 171978,
+          "min_ns": 171978
+        },
+        "space_amplification_final": {
+          "count": 1,
+          "max": 1.3914077669902913,
+          "median": 1.3914077669902913,
+          "min": 1.3914077669902913
+        },
+        "space_amplification_postclean": {
+          "count": 0,
+          "max": null,
+          "median": null,
+          "min": null
+        },
+        "space_amplification_preclean": {
+          "count": 1,
+          "max": 1.3914077669902913,
+          "median": 1.3914077669902913,
+          "min": 1.3914077669902913
+        }
+      }
+    }
+  },
+  "value_bytes": 4096
+}

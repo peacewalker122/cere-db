@@ -17,6 +17,7 @@ use crate::{
     storage::{
         compactionmanager::compaction::compact_levels,
         config::StorageConfig,
+        experimental::{RootLock, ensure_not_experimental_storage},
         manifest_codec::ManifestManager,
         raft::{RaftConsensusLayer, RaftNodeConfig},
         readmanager::read::ReadManager,
@@ -33,6 +34,17 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum CompactionTrigger {
     CompactLevel { level: u32 },
+}
+
+pub(crate) struct ReferenceIndexOptions {
+    pub(crate) index_dir: PathBuf,
+    pub(crate) wal_dir: PathBuf,
+    pub(crate) wal_manager: Arc<WALManager>,
+    pub(crate) recovered_memtable: SkipMap<(Vec<u8>, u64), MemtableRecord>,
+    pub(crate) recovered_memtable_size: usize,
+    pub(crate) recovered_sequence: u64,
+    pub(crate) generation: u64,
+    pub(crate) root_lock: Arc<RootLock>,
 }
 
 /// KV2 is the frontline orchestrator for storage managers.
@@ -80,6 +92,7 @@ impl KV2 {
     /// - {base}/MANIFEST
     pub async fn open(base_dir: impl AsRef<Path>, config: StorageConfig) -> Result<Self, DBError> {
         let base_dir = base_dir.as_ref().to_path_buf();
+        ensure_not_experimental_storage(&base_dir)?;
         let wal_dir = base_dir.join("wal");
         let sstable_dir = base_dir.join("sstable");
         let level0_dir = sstable_dir.join("level-0");
@@ -148,6 +161,7 @@ impl KV2 {
             config_for_compaction,
             cancel.child_token(),
             worker_stop.clone(),
+            None,
         );
 
         Ok(Self {
@@ -167,6 +181,98 @@ impl KV2 {
         })
     }
 
+    pub(crate) async fn open_reference_index(
+        options: ReferenceIndexOptions,
+        config: StorageConfig,
+    ) -> Result<Self, DBError> {
+        config.validate()?;
+        let ReferenceIndexOptions {
+            index_dir,
+            wal_dir,
+            wal_manager,
+            recovered_memtable,
+            recovered_memtable_size,
+            recovered_sequence,
+            generation,
+            root_lock,
+        } = options;
+        let sstable_dir = index_dir.join("sstable");
+        let manifest_path = index_dir.join("MANIFEST");
+        let config = Arc::new(config);
+        let manifest = Arc::new(ManifestManager::load_or_create(manifest_path.clone()).await?);
+        for table in manifest.snapshot().await.levels.values().flatten() {
+            Self::validate_manifest_sstable(table).await?;
+        }
+
+        let mut write_component = WriteComponent::new_reference_index(
+            sstable_dir.clone(),
+            Arc::clone(&wal_manager),
+            Arc::clone(&manifest),
+            recovered_sequence,
+            Arc::clone(&config),
+            generation,
+            Arc::clone(&root_lock),
+        );
+        write_component.restore_memtable(recovered_memtable, recovered_memtable_size);
+        let read_manager = ReadManager::new(
+            write_component.active_memtable_handle(),
+            Arc::clone(&manifest),
+        );
+
+        let (compaction_sender, compaction_receiver) = tokio::sync::mpsc::channel(100);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let worker_stop = tokio_util::sync::CancellationToken::new();
+        let compaction_worker = Self::run_compaction_worker(
+            compaction_receiver,
+            Arc::clone(&manifest),
+            sstable_dir.clone(),
+            Arc::clone(&config),
+            cancel.child_token(),
+            worker_stop.clone(),
+            Some(root_lock),
+        );
+
+        Ok(Self {
+            base_dir: index_dir,
+            wal_dir,
+            sstable_dir,
+            manifest_path,
+            config,
+            wal_manager,
+            manifest,
+            write_component,
+            read_manager,
+            compaction_sender,
+            compaction_cancel: cancel,
+            worker_stop,
+            compaction_worker: Some(compaction_worker),
+        })
+    }
+
+    pub(crate) fn current_sequence_number(&self) -> u64 {
+        self.write_component.current_sequence_number()
+    }
+
+    pub(crate) async fn flush_reference_memtable(&mut self) -> Result<usize, DBError> {
+        let result = self.write_component.flush_active_memtable().await?;
+        Ok(result.record_count)
+    }
+
+    pub(crate) async fn get_record(&self, key: &[u8]) -> Result<Option<MemtableRecord>, DBError> {
+        let sequence_number = self.write_component.current_sequence_number();
+        self.read_manager.get(key.to_vec(), sequence_number).await
+    }
+
+    pub(crate) async fn scan_records(
+        &self,
+        range: impl RangeBounds<Vec<u8>> + Send,
+    ) -> Result<Vec<(Vec<u8>, MemtableRecord)>, DBError> {
+        let sequence_number = self.write_component.current_sequence_number();
+        self.read_manager
+            .scan_records_range(range, sequence_number)
+            .await
+    }
+
     /// Open KV2 with default configuration.
     ///
     /// Convenience wrapper for backward compatibility with existing code.
@@ -174,11 +280,25 @@ impl KV2 {
         Self::open(base_dir, StorageConfig::default()).await
     }
 
-    async fn validate_manifest_sstable(
+    pub(crate) async fn validate_manifest_sstable(
         table: &crate::storage::manifest_codec::SSTableMeta,
     ) -> Result<(), DBError> {
         use tokio::io::{AsyncSeekExt, BufReader};
 
+        let metadata = tokio::fs::symlink_metadata(&table.path)
+            .await
+            .map_err(|error| {
+                DBError::Corrupted(format!(
+                    "cannot inspect manifest SSTable {}: {error}",
+                    table.path
+                ))
+            })?;
+        if !metadata.file_type().is_file() {
+            return Err(DBError::Corrupted(format!(
+                "manifest SSTable is not a regular file: {}",
+                table.path
+            )));
+        }
         let mut file = tokio::fs::File::open(&table.path).await.map_err(|error| {
             DBError::Corrupted(format!(
                 "cannot open manifest SSTable {}: {error}",
@@ -378,8 +498,10 @@ impl KV2 {
         config: Arc<StorageConfig>,
         cancel: tokio_util::sync::CancellationToken,
         worker_stop: tokio_util::sync::CancellationToken,
+        root_lock: Option<Arc<RootLock>>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
+            let _root_lock = root_lock;
             loop {
                 tokio::select! {
                     Some(trigger) = receiver.recv() =>  {
@@ -1326,6 +1448,7 @@ impl RaftKV2 {
         raft_config: RaftNodeConfig,
     ) -> Result<Self, DBError> {
         let base_dir = base_dir.as_ref().to_path_buf();
+        ensure_not_experimental_storage(&base_dir)?;
         let sstable_dir = base_dir.join("sstable");
         let level0_dir = sstable_dir.join("level-0");
         let manifest_path = base_dir.join("MANIFEST");

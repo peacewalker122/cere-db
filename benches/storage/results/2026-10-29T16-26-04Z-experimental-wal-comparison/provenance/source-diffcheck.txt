@@ -1,0 +1,18 @@
+== git diff --check (tracked source) ==
+diff-check-status=clean
+== untracked source paths (filtered) ==
+docs/adr/0001-shared-memtable-read-write.md
+docs/adr/0002-versioned-memtable-composite-key.md
+docs/adr/0003-async-compaction-trigger.md
+docs/adr/0004-page-cache.md
+docs/architecture/impact-wal-to-raft-log.md
+docs/btree-page.md
+docs/development-changes.md
+docs/experimental-wal-storage.md
+docs/handling-large-data-in-btree.md
+docs/paged-btree-implementation-guide.md
+examples/experimental_compare.rs
+src/storage/experimental.rs
+tests/integration/experimental.rs
+== whitespace check on untracked rust source ==
+untracked-rust-whitespace=checked

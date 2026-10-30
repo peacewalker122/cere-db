@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     io::{Cursor, Read},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -211,6 +211,18 @@ impl ManifestManager {
         })
     }
 
+    pub(crate) async fn read_existing_snapshot(path: &Path) -> Result<ManifestSnapshot, DBError> {
+        let metadata = tokio::fs::symlink_metadata(path).await?;
+        if !metadata.file_type().is_file() {
+            return Err(DBError::Corrupted(format!(
+                "manifest is not a regular file: {}",
+                path.display()
+            )));
+        }
+        let bytes = tokio::fs::read(path).await?;
+        Ok(snapshot_from_owned_state(replay_manifest(&bytes)?))
+    }
+
     pub async fn allocate_file_id(&self) -> Result<u64, DBError> {
         let mut state = self.state.lock().await;
         let file_id = state.next_file_id;
@@ -352,17 +364,7 @@ impl ManifestManager {
     // Get a consistent snapshot of the manifest state for external use (e.g. compaction).
     pub async fn snapshot(&self) -> ManifestSnapshot {
         let state = self.state.lock().await;
-        ManifestSnapshot {
-            version: state.version,
-            next_file_id: state.next_file_id,
-            active_wal_segment: state.active_wal_segment,
-            recovery_checkpoint: state.recovery_checkpoint,
-            levels: state
-                .levels
-                .iter()
-                .map(|(level, files)| (*level, files.values().cloned().collect()))
-                .collect(),
-        }
+        snapshot_from_state(&state)
     }
 
     pub(crate) async fn read_lease(&self) -> tokio::sync::RwLockReadGuard<'_, ()> {
@@ -403,6 +405,34 @@ impl ManifestManager {
     pub async fn file_cache_len(&self) -> usize {
         let cache = self.file_cache.lock().await;
         cache.len()
+    }
+}
+
+fn snapshot_from_owned_state(state: ManifestState) -> ManifestSnapshot {
+    ManifestSnapshot {
+        version: state.version,
+        next_file_id: state.next_file_id,
+        active_wal_segment: state.active_wal_segment,
+        recovery_checkpoint: state.recovery_checkpoint,
+        levels: state
+            .levels
+            .into_iter()
+            .map(|(level, files)| (level, files.into_values().collect()))
+            .collect(),
+    }
+}
+
+fn snapshot_from_state(state: &ManifestState) -> ManifestSnapshot {
+    ManifestSnapshot {
+        version: state.version,
+        next_file_id: state.next_file_id,
+        active_wal_segment: state.active_wal_segment,
+        recovery_checkpoint: state.recovery_checkpoint,
+        levels: state
+            .levels
+            .iter()
+            .map(|(level, files)| (*level, files.values().cloned().collect()))
+            .collect(),
     }
 }
 

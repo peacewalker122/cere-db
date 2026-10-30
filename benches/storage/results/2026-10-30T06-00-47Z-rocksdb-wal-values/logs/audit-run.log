@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/audit_benchmark.py", line 559, in <module>
+    full_case_summaries.append(summarize_case(case_id, case_rows))
+                               ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/audit_benchmark.py", line 363, in summarize_case
+    actual_bytes = [next(item for item in census_rows if item["case"] == case_id and item["engine"] == engine and not item["warmup"] and item["sample_ordinal"] == row["sample_ordinal"])["actual_final_filesystem_census_without_engine_open"]["total_file_logical_bytes"] for row in rows]
+                                          ^^^^^^^^^^^
+NameError: name 'census_rows' is not defined

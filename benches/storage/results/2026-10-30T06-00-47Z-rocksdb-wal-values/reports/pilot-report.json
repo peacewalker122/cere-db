@@ -1,0 +1,393 @@
+{
+  "schema_version": 2,
+  "mode": "functional_pilot",
+  "performance_result": false,
+  "seed_hex": "0x6c756e6177616c76",
+  "key_bytes": 20,
+  "measured_samples_per_engine_case": 1,
+  "warmups_per_engine_case": 0,
+  "expected_measured_executions": 3,
+  "expected_warmup_executions": 0,
+  "storage_config": {
+    "memtable_size_threshold_bytes": 1048576,
+    "wal_segment_size_bytes": 1048576,
+    "other_settings": "StorageConfig::default() for remaining CereDB settings"
+  },
+  "rocksdb_config": {
+    "crate_version": "0.24.0",
+    "native_version": "10.4.2",
+    "write_buffer_size_bytes": 1048576,
+    "wal_enabled": true,
+    "synchronous_writes": true,
+    "compression": "disabled"
+  },
+  "timing_boundaries": [
+    "Input values, keys, mutation plan, exact expected map, probes, and per-phase counts are built before timers.",
+    "Fresh open is timed separately and excluded from append and mutation timers.",
+    "Append and mutation timers include API-required copying/allocation and atomic batch construction; CereDB clones owned vectors while RocksDB receives borrowed slices.",
+    "CereDB barrier times await_pending_writes; RocksDB barrier times flush_wal(true) after sync writes.",
+    "Close timer includes CereDB shutdown or RocksDB drop; it starts immediately after the barrier.",
+    "Closed census and correctness verification are untimed; reopen is timed separately.",
+    "Separate warm get and scan timers include API calls and equality checks; identical workloads run before and after experimental cleaning, with calls and returned entries counted.",
+    "Lifecycle sum adds non-overlapping phase timers; CleanStats.write_pause is nested in cleaner elapsed and is not added twice."
+  ],
+  "caveats": [
+    "Pilot timings are functional evidence only, not a performance result.",
+    "Equal 1 MiB targets do not equalize memory accounting, flush triggers, compaction policy, or scheduling.",
+    "CereDB paths are public async APIs; RocksDB paths are synchronous APIs on the benchmark thread.",
+    "Experimental WAL reads validate the complete referenced transaction on each value read; exact scans are retained and extra point probes are capped at 16.",
+    "Census includes every file under each closed store root; st_blocks is informational and is not unique Btrfs physical usage.",
+    "Clean observed_peak_bytes is a sample before CURRENT publication, not a continuous peak; copied bytes are not lifetime write amplification.",
+    "Natural KV2 and RocksDB states are not force-flushed or compacted; level counts are observations, not equalized maintenance states.",
+    "RocksDB close cancels or unschedules pending jobs and waits for outstanding jobs; it does not establish that all maintenance finished.",
+    "No power-loss, external-service parity, or sustained-scalability claim is made."
+  ],
+  "mount_before": {
+    "dataset_path": "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/pilot",
+    "target": "/home",
+    "fstype": "btrfs",
+    "source": "/dev/nvme0n1p3[/home]",
+    "options": "rw,relatime,seclabel,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/home"
+  },
+  "mount_after": {
+    "dataset_path": "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/pilot",
+    "target": "/home",
+    "fstype": "btrfs",
+    "source": "/dev/nvme0n1p3[/home]",
+    "options": "rw,relatime,seclabel,compress=zstd:1,ssd,discard=async,space_cache=v2,subvolid=257,subvol=/home"
+  },
+  "executions": [
+    {
+      "case": {
+        "id": "v4096_n20_b1",
+        "records": 20,
+        "key_bytes": 20,
+        "value_bytes": 4096,
+        "batch_size": 1
+      },
+      "store_path": "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/pilot/samples/v4096_n20_b1/kv2_inline-sample-1",
+      "engine": "kv2_inline",
+      "execution_order": [
+        "kv2_inline",
+        "experimental_wal_values",
+        "rocks_db"
+      ],
+      "engine_position": 0,
+      "warmup": false,
+      "sample_ordinal": 1,
+      "append": {
+        "operations": 20,
+        "batch_calls": 20,
+        "logical_bytes": 82320
+      },
+      "mutations": {
+        "operations": 8,
+        "batch_calls": 8,
+        "logical_bytes": 24736
+      },
+      "overwrite_operations": 5,
+      "delete_operations": 2,
+      "reinsert_operations": 1,
+      "live_records": 19,
+      "live_key_value_logical_bytes": 78204,
+      "timings": {
+        "fresh_open_ns": 43870445,
+        "append_ns": 57010689,
+        "mutations_ns": 23162695,
+        "barrier_drain_ns": 2275,
+        "close_ns": 82850,
+        "reopen_uncleaned_ns": 13397299,
+        "warm_get_uncleaned_ns": 5175,
+        "warm_scan_uncleaned_ns": 9044,
+        "warm_get_post_clean_ns": null,
+        "warm_scan_post_clean_ns": null,
+        "barrier_after_clean_ns": null,
+        "close_after_clean_ns": null,
+        "reopen_post_clean_ns": null,
+        "close_after_verification_ns": 22115,
+        "close_post_clean_verification_ns": null,
+        "lifecycle_sum_ns": 137562587
+      },
+      "natural_closed": {
+        "census": {
+          "total_file_logical_bytes": 109864,
+          "file_count": 2,
+          "st_blocks_bytes_informational": 110592,
+          "categories": {
+            "manifest": {
+              "file_count": 1,
+              "logical_bytes": 0
+            },
+            "wal": {
+              "file_count": 1,
+              "logical_bytes": 109864
+            }
+          }
+        },
+        "live_key_value_logical_bytes": 78204,
+        "root_bytes_per_live_logical_byte": 1.4048386271801954,
+        "levels": {},
+        "level_evidence": "ceredb_public_manifest_snapshot_while_closed"
+      },
+      "clean": null,
+      "post_clean_closed": null,
+      "verification_uncleaned": {
+        "full_scan_entries": 19,
+        "deterministic_point_gets": 16,
+        "deleted_probe_missing": true,
+        "never_present_probe_missing": true
+      },
+      "verification_post_clean": null,
+      "warm_reads_natural": {
+        "get_calls": 8,
+        "get_entries": 8,
+        "scan_calls": 1,
+        "scan_entries": 8
+      },
+      "warm_reads_post_clean": null
+    },
+    {
+      "case": {
+        "id": "v4096_n20_b1",
+        "records": 20,
+        "key_bytes": 20,
+        "value_bytes": 4096,
+        "batch_size": 1
+      },
+      "store_path": "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/pilot/samples/v4096_n20_b1/experimental_wal_values-sample-1",
+      "engine": "experimental_wal_values",
+      "execution_order": [
+        "kv2_inline",
+        "experimental_wal_values",
+        "rocks_db"
+      ],
+      "engine_position": 1,
+      "warmup": false,
+      "sample_ordinal": 1,
+      "append": {
+        "operations": 20,
+        "batch_calls": 20,
+        "logical_bytes": 82320
+      },
+      "mutations": {
+        "operations": 8,
+        "batch_calls": 8,
+        "logical_bytes": 24736
+      },
+      "overwrite_operations": 5,
+      "delete_operations": 2,
+      "reinsert_operations": 1,
+      "live_records": 19,
+      "live_key_value_logical_bytes": 78204,
+      "timings": {
+        "fresh_open_ns": 59134606,
+        "append_ns": 59369622,
+        "mutations_ns": 23257771,
+        "barrier_drain_ns": 2453,
+        "close_ns": 5824998,
+        "reopen_uncleaned_ns": 6619629,
+        "warm_get_uncleaned_ns": 432014,
+        "warm_scan_uncleaned_ns": 426723,
+        "warm_get_post_clean_ns": 712469,
+        "warm_scan_post_clean_ns": 624412,
+        "barrier_after_clean_ns": 1000,
+        "close_after_clean_ns": 41961,
+        "reopen_post_clean_ns": 7237403,
+        "close_after_verification_ns": null,
+        "close_post_clean_verification_ns": 39222,
+        "lifecycle_sum_ns": 258988506
+      },
+      "natural_closed": {
+        "census": {
+          "total_file_logical_bytes": 109941,
+          "file_count": 6,
+          "st_blocks_bytes_informational": 122880,
+          "categories": {
+            "manifest": {
+              "file_count": 1,
+              "logical_bytes": 0
+            },
+            "metadata": {
+              "file_count": 4,
+              "logical_bytes": 77
+            },
+            "wal": {
+              "file_count": 1,
+              "logical_bytes": 109864
+            }
+          }
+        },
+        "live_key_value_logical_bytes": 78204,
+        "root_bytes_per_live_logical_byte": 1.4058232315482584,
+        "levels": {},
+        "level_evidence": "ceredb_public_manifest_snapshot_while_closed"
+      },
+      "clean": {
+        "old_generation": 1,
+        "new_generation": 2,
+        "live_records": 19,
+        "live_logical_bytes": 78204,
+        "copied_payload_bytes": 77824,
+        "copied_transactions": 1,
+        "index_sstables_written": 1,
+        "total_root_bytes_before": 109941,
+        "observed_peak_bytes": 192902,
+        "total_root_bytes_after": 83010,
+        "deferred_cleanup_bytes": 0,
+        "write_pause_ns": 91980890,
+        "elapsed_ns": 95264223,
+        "observed_peak_basis": "sampled before CURRENT publication; not a continuous peak"
+      },
+      "post_clean_closed": {
+        "census": {
+          "total_file_logical_bytes": 83010,
+          "file_count": 10,
+          "st_blocks_bytes_informational": 114688,
+          "categories": {
+            "manifest": {
+              "file_count": 1,
+              "logical_bytes": 336
+            },
+            "metadata": {
+              "file_count": 6,
+              "logical_bytes": 171
+            },
+            "sstable": {
+              "file_count": 1,
+              "logical_bytes": 3012
+            },
+            "wal": {
+              "file_count": 2,
+              "logical_bytes": 79491
+            }
+          }
+        },
+        "live_key_value_logical_bytes": 78204,
+        "root_bytes_per_live_logical_byte": 1.0614546570507903,
+        "levels": {
+          "0": 1
+        },
+        "level_evidence": "ceredb_public_manifest_snapshot_while_closed"
+      },
+      "verification_uncleaned": {
+        "full_scan_entries": 19,
+        "deterministic_point_gets": 16,
+        "deleted_probe_missing": true,
+        "never_present_probe_missing": true
+      },
+      "verification_post_clean": {
+        "full_scan_entries": 19,
+        "deterministic_point_gets": 16,
+        "deleted_probe_missing": true,
+        "never_present_probe_missing": true
+      },
+      "warm_reads_natural": {
+        "get_calls": 8,
+        "get_entries": 8,
+        "scan_calls": 1,
+        "scan_entries": 8
+      },
+      "warm_reads_post_clean": {
+        "get_calls": 8,
+        "get_entries": 8,
+        "scan_calls": 1,
+        "scan_entries": 8
+      }
+    },
+    {
+      "case": {
+        "id": "v4096_n20_b1",
+        "records": 20,
+        "key_bytes": 20,
+        "value_bytes": 4096,
+        "batch_size": 1
+      },
+      "store_path": "/home/peacewalker/project/learn/wasm-kv/target/storage-compare-final-20261030T054701Z/pilot/samples/v4096_n20_b1/rocksdb-sample-1",
+      "engine": "rocks_db",
+      "execution_order": [
+        "kv2_inline",
+        "experimental_wal_values",
+        "rocks_db"
+      ],
+      "engine_position": 2,
+      "warmup": false,
+      "sample_ordinal": 1,
+      "append": {
+        "operations": 20,
+        "batch_calls": 20,
+        "logical_bytes": 82320
+      },
+      "mutations": {
+        "operations": 8,
+        "batch_calls": 8,
+        "logical_bytes": 24736
+      },
+      "overwrite_operations": 5,
+      "delete_operations": 2,
+      "reinsert_operations": 1,
+      "live_records": 19,
+      "live_key_value_logical_bytes": 78204,
+      "timings": {
+        "fresh_open_ns": 30964815,
+        "append_ns": 57201804,
+        "mutations_ns": 22513139,
+        "barrier_drain_ns": 4716,
+        "close_ns": 340815,
+        "reopen_uncleaned_ns": 19872586,
+        "warm_get_uncleaned_ns": 8361,
+        "warm_scan_uncleaned_ns": 14215,
+        "warm_get_post_clean_ns": null,
+        "warm_scan_post_clean_ns": null,
+        "barrier_after_clean_ns": null,
+        "close_after_clean_ns": null,
+        "reopen_post_clean_ns": null,
+        "close_after_verification_ns": 125876,
+        "close_post_clean_verification_ns": null,
+        "lifecycle_sum_ns": 131046327
+      },
+      "natural_closed": {
+        "census": {
+          "total_file_logical_bytes": 148214,
+          "file_count": 7,
+          "st_blocks_bytes_informational": 163840,
+          "categories": {
+            "manifest": {
+              "file_count": 1,
+              "logical_bytes": 116
+            },
+            "metadata": {
+              "file_count": 5,
+              "logical_bytes": 40381
+            },
+            "wal": {
+              "file_count": 1,
+              "logical_bytes": 107717
+            }
+          }
+        },
+        "live_key_value_logical_bytes": 78204,
+        "root_bytes_per_live_logical_byte": 1.895222750754437,
+        "levels": {
+          "0": 1
+        },
+        "level_evidence": "rocksdb_live_files_after_reopen"
+      },
+      "clean": null,
+      "post_clean_closed": null,
+      "verification_uncleaned": {
+        "full_scan_entries": 19,
+        "deterministic_point_gets": 16,
+        "deleted_probe_missing": true,
+        "never_present_probe_missing": true
+      },
+      "verification_post_clean": null,
+      "warm_reads_natural": {
+        "get_calls": 8,
+        "get_entries": 8,
+        "scan_calls": 1,
+        "scan_entries": 8
+      },
+      "warm_reads_post_clean": null
+    }
+  ]
+}

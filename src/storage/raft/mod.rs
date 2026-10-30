@@ -58,6 +58,7 @@ impl RaftConsensusLayer {
         config: RaftNodeConfig,
         write_component: Arc<RwLock<WriteComponent>>,
     ) -> Result<Self, DBError> {
+        crate::storage::experimental::ensure_not_experimental_storage(&config.raft_dir)?;
         // ── Log store ─────────────────────────────────────────────────────
         let log_store = LogStore::open(&config.raft_dir).await?;
 

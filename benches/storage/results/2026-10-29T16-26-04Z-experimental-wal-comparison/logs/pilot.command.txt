@@ -1,0 +1,4 @@
+./target/release/examples/experimental_compare
+--pilot
+--data-dir
+/home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/pilot

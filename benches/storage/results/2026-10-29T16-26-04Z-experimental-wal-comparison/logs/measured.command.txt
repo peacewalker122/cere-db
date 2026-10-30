@@ -1,0 +1,9 @@
+./target/release/examples/experimental_compare
+--profile
+small-tables
+--repetitions
+3
+--warmups
+1
+--data-dir
+/home/peacewalker/project/learn/wasm-kv/target/bench-data/experimental-wal-2026-10-29T16-26-04Z/measured
